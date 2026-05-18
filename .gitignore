@@ -1,0 +1,39 @@
+# dependencies
+node_modules/
+py/.venv/
+
+# build output
+dist/
+out/
+release/
+
+# local bundled tool binaries
+resources/bin/ffmpeg
+resources/bin/README.txt
+resources/bin/bgutil-ytdlp-pot-provider/
+resources/bin/yt-dlp-plugins/
+
+# caches
+.eslintcache
+.vite/
+py/.mypy_cache/
+py/.pytest_cache/
+py/**/__pycache__/
+
+# test / coverage
+.coverage
+.coverage.*
+coverage/
+
+# logs
+*.log
+*.log.*
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env / local machine
+.env
+.env.*
+.DS_Store
