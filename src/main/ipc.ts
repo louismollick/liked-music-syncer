@@ -27,6 +27,9 @@ export function registerIpcHandlers(
   ipcMain.handle('auth:getStatus', () => oauthService.getStatus())
   ipcMain.handle('auth:startDeviceAuth', () => oauthService.startDeviceAuth())
   ipcMain.handle('auth:finishDeviceAuth', () => oauthService.finishDeviceAuth())
+  ipcMain.handle('auth:captureBrowserAuth', (_event, browser) =>
+    oauthService.captureBrowserAuth(browser)
+  )
   ipcMain.handle('auth:disconnect', () => oauthService.disconnect())
 
   ipcMain.handle('settings:get', () => settingsService.getView())
@@ -75,6 +78,7 @@ export function registerIpcHandlers(
   ipcMain.handle('sync:cancel', (_event, runId: string) =>
     syncService.cancel(runId)
   )
+  ipcMain.handle('sync:clearSyncData', () => syncService.clearSyncData())
   ipcMain.handle('sync:doctor', () => syncService.doctor())
   ipcMain.handle('sync:listRuns', () => syncService.listRuns())
   ipcMain.handle('sync:getRun', (_event, runId: string) =>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http.cookiejar import Cookie, CookieJar
 
 import liked_music_syncer.auth as auth_module
 from liked_music_syncer.auth import _normalize_error_state, normalize_browser_auth_input
@@ -147,3 +148,81 @@ def test_check_browser_auth_status_rejects_sign_in_prompt(monkeypatch) -> None:
     assert result.ok is False
     assert result.is_authenticated is False
     assert "returned a sign-in prompt" in result.message
+
+
+def test_build_browser_auth_from_browser_cookies(monkeypatch) -> None:
+    jar = CookieJar()
+    jar.set_cookie(
+        Cookie(
+            version=0,
+            name="__Secure-3PAPISID",
+            value="secure-cookie",
+            port=None,
+            port_specified=False,
+            domain=".youtube.com",
+            domain_specified=True,
+            domain_initial_dot=True,
+            path="/",
+            path_specified=True,
+            secure=True,
+            expires=None,
+            discard=True,
+            comment=None,
+            comment_url=None,
+            rest={},
+            rfc2109=False,
+        )
+    )
+    jar.set_cookie(
+        Cookie(
+            version=0,
+            name="VISITOR_INFO1_LIVE",
+            value="visitor-cookie",
+            port=None,
+            port_specified=False,
+            domain=".youtube.com",
+            domain_specified=True,
+            domain_initial_dot=True,
+            path="/",
+            path_specified=True,
+            secure=True,
+            expires=None,
+            discard=True,
+            comment=None,
+            comment_url=None,
+            rest={},
+            rfc2109=False,
+        )
+    )
+
+    monkeypatch.setattr(auth_module, "extract_cookies_from_browser", lambda browser_name: jar)
+    monkeypatch.setattr(auth_module, "get_authorization", lambda auth: f"SAPISIDHASH {auth}")
+
+    payload = json.loads(auth_module.build_browser_auth_from_browser_cookies("firefox"))
+
+    assert payload["cookie"] == "__Secure-3PAPISID=secure-cookie; VISITOR_INFO1_LIVE=visitor-cookie"
+    assert (
+        payload["authorization"]
+        == "SAPISIDHASH secure-cookie https://music.youtube.com"
+    )
+    assert payload["x-goog-authuser"] == "0"
+    assert payload["x-origin"] == "https://music.youtube.com"
+
+
+def test_capture_browser_auth_from_browser_validates_before_returning(monkeypatch) -> None:
+    monkeypatch.setattr(
+        auth_module,
+        "build_browser_auth_from_browser_cookies",
+        lambda browser_name: '{"cookie":"a=b","authorization":"SAPISIDHASH demo","x-goog-authuser":"0"}',
+    )
+    monkeypatch.setattr(
+        auth_module,
+        "_create_validated_browser_auth_client",
+        lambda browser_auth_input: (browser_auth_input, object()),
+    )
+
+    result = auth_module.capture_browser_auth_from_browser("firefox")
+
+    assert result.ok is True
+    assert result.is_authenticated is True
+    assert result.credential_json is not None

@@ -9,6 +9,7 @@ import type {
   SyncRunItemView,
   SyncRunSummary,
   SyncSnapshot,
+  YtDlpCookiesBrowser,
   YtMusicAuthMode,
 } from '@shared/contracts'
 import {
@@ -35,6 +36,7 @@ const EMPTY_SETTINGS: AppSettingsView = {
   hasYtMusicClientSecret: false,
   hasYtMusicOAuthToken: false,
   hasYtMusicBrowserAuth: false,
+  ytDlpCookiesBrowser: 'firefox',
   folderTemplate: '{albumartist}/{album}',
   fileTemplate: '{track:02d} {title}',
   embedUnsyncedLyrics: true,
@@ -81,10 +83,15 @@ function App(): JSX.Element {
   const [message, setMessage] = useState('')
   const [binaryStatus, setBinaryStatus] = useState<BinaryStatus | null>(null)
   const [doctorMessage, setDoctorMessage] = useState('')
+  const [captureInFlight, setCaptureInFlight] = useState(false)
   const [secretDrafts, setSecretDrafts] = useState({
     ytmusicClientSecret: '',
     ytmusicBrowserAuth: '',
   })
+  const selectedRunSummary =
+    selectedRunId != null
+      ? (snapshot.runs.find((run) => run.id === selectedRunId) ?? null)
+      : null
 
   const selectedRun = useMemo(() => {
     if (snapshot.activeRun && snapshot.activeRun.id === selectedRunId) {
@@ -114,6 +121,9 @@ function App(): JSX.Element {
     visibleRun?.items[0] ??
     null
   const headlineRun = snapshot.activeRun ?? snapshot.runs[0] ?? null
+  const currentRunMeta = headlineRun
+    ? `${formatProgress(headlineRun)} · ${headlineRun.status}`
+    : 'Idle'
   const headlineCounts = headlineRun
     ? {
         completed: headlineRun.completedCount,
@@ -134,10 +144,19 @@ function App(): JSX.Element {
     setAuthStatus(nextAuth)
     setSnapshot(nextSnapshot)
 
+    const nextSelectedRunId =
+      selectedRunId ??
+      nextSnapshot.activeRun?.id ??
+      nextSnapshot.runs[0]?.id ??
+      null
     if (!selectedRunId) {
-      setSelectedRunId(
-        nextSnapshot.activeRun?.id ?? nextSnapshot.runs[0]?.id ?? null
-      )
+      setSelectedRunId(nextSelectedRunId)
+    }
+    if (
+      nextSnapshot.activeRun &&
+      nextSnapshot.activeRun.id === nextSelectedRunId
+    ) {
+      setLoadedRun(nextSnapshot.activeRun)
     }
   })
 
@@ -146,16 +165,54 @@ function App(): JSX.Element {
 
     return window.api.sync.subscribe((nextSnapshot) => {
       setSnapshot(nextSnapshot)
+      const nextSelectedRunId =
+        selectedRunId ??
+        nextSnapshot.activeRun?.id ??
+        nextSnapshot.runs[0]?.id ??
+        null
       if (!selectedRunId) {
-        setSelectedRunId(
-          nextSnapshot.activeRun?.id ?? nextSnapshot.runs[0]?.id ?? null
-        )
+        setSelectedRunId(nextSelectedRunId)
       }
-      if (loadedRun && nextSnapshot.activeRun?.id === loadedRun.id) {
+      if (
+        nextSnapshot.activeRun &&
+        nextSnapshot.activeRun.id === nextSelectedRunId
+      ) {
         setLoadedRun(nextSnapshot.activeRun)
       }
     })
-  }, [loadedRun, selectedRunId])
+  }, [selectedRunId])
+
+  useEffect(() => {
+    if (!selectedRunId || snapshot.activeRun?.id === selectedRunId) {
+      return
+    }
+    if (!selectedRunSummary) {
+      return
+    }
+    if (
+      loadedRun?.id === selectedRunId &&
+      loadedRun.status === selectedRunSummary.status &&
+      loadedRun.endedAt === selectedRunSummary.endedAt &&
+      loadedRun.processedCount === selectedRunSummary.processedCount &&
+      loadedRun.totalCount === selectedRunSummary.totalCount &&
+      loadedRun.completedCount === selectedRunSummary.completedCount &&
+      loadedRun.failedCount === selectedRunSummary.failedCount &&
+      loadedRun.skippedCount === selectedRunSummary.skippedCount
+    ) {
+      return
+    }
+
+    let cancelled = false
+    void window.api.sync.getRun(selectedRunId).then((run) => {
+      if (!cancelled && run) {
+        setLoadedRun(run)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [loadedRun, selectedRunId, selectedRunSummary, snapshot.activeRun])
 
   const pollDeviceAuth = useEffectEvent(async () => {
     const result = await window.api.auth.finishDeviceAuth()
@@ -243,7 +300,10 @@ function App(): JSX.Element {
     await refreshAll()
   }
 
-  async function handleSaveSettings() {
+  async function saveCurrentSettings(options?: {
+    refresh?: boolean
+    clearSecretDrafts?: boolean
+  }) {
     const result: SettingsSaveResult = await window.api.settings.save({
       outputDirectory: settings.outputDirectory,
       dryRun: settings.dryRun,
@@ -252,6 +312,7 @@ function App(): JSX.Element {
       ytmusicClientId: settings.ytmusicClientId,
       ytmusicClientSecret: secretDrafts.ytmusicClientSecret.trim() || undefined,
       ytmusicBrowserAuth: secretDrafts.ytmusicBrowserAuth.trim() || undefined,
+      ytDlpCookiesBrowser: settings.ytDlpCookiesBrowser,
       rcloneRemote: settings.rcloneRemote,
       remoteMusicRoot: settings.remoteMusicRoot,
       folderTemplate: settings.folderTemplate,
@@ -259,20 +320,30 @@ function App(): JSX.Element {
       embedUnsyncedLyrics: settings.embedUnsyncedLyrics,
       writeLrcSidecar: settings.writeLrcSidecar,
     })
-    setMessage(
-      result.details ? `${result.message} ${result.details}` : result.message
-    )
 
     if (result.authStatus) {
       setAuthStatus(result.authStatus)
     }
 
-    await refreshSettingsAndSnapshot()
+    if (options?.refresh ?? true) {
+      await refreshSettingsAndSnapshot()
+    }
 
-    setSecretDrafts({
-      ytmusicClientSecret: '',
-      ytmusicBrowserAuth: '',
-    })
+    if (options?.clearSecretDrafts ?? true) {
+      setSecretDrafts({
+        ytmusicClientSecret: '',
+        ytmusicBrowserAuth: '',
+      })
+    }
+
+    return result
+  }
+
+  async function handleSaveSettings() {
+    const result = await saveCurrentSettings()
+    setMessage(
+      result.details ? `${result.message} ${result.details}` : result.message
+    )
   }
 
   async function chooseOutputDirectory() {
@@ -307,17 +378,65 @@ function App(): JSX.Element {
     )
   }
 
+  async function handleClearSyncData() {
+    const confirmed = window.confirm(
+      'Clear sync history and processed-song memory? Settings and auth stay saved.'
+    )
+    if (!confirmed) return
+
+    setLoadedRun(null)
+    setSelectedRunId(null)
+    setSelectedItemId(null)
+    setRunLogs([])
+    setSelectedLogs([])
+    await runAction(window.api.sync.clearSyncData())
+  }
+
   async function handleStartDeviceAuth() {
+    await saveCurrentSettings({
+      refresh: false,
+      clearSecretDrafts: false,
+    })
+
     const result = await window.api.auth.startDeviceAuth()
     setMessage(result.message)
     await refreshAll()
+  }
+
+  async function handleCaptureBrowserAuth() {
+    setCaptureInFlight(true)
+    try {
+      await saveCurrentSettings({
+        refresh: false,
+        clearSecretDrafts: false,
+      })
+
+      const result = await window.api.auth.captureBrowserAuth(
+        settings.ytDlpCookiesBrowser
+      )
+      setAuthStatus(result.authStatus)
+      setMessage(
+        result.details ? `${result.message} ${result.details}` : result.message
+      )
+
+      if (result.ok) {
+        setSecretDrafts((current) => ({
+          ...current,
+          ytmusicBrowserAuth: '',
+        }))
+      }
+
+      await refreshSettingsAndSnapshot()
+    } finally {
+      setCaptureInFlight(false)
+    }
   }
 
   const authActionLabel =
     settings.ytmusicAuthMode === 'browser_headers'
       ? authStatus.isAuthenticated
         ? 'Disconnect account'
-        : 'Open auth settings'
+        : 'Pull from browser'
       : authStatus.isAuthenticated
         ? 'Disconnect account'
         : 'Connect YT Music'
@@ -356,11 +475,7 @@ function App(): JSX.Element {
               <RailButton
                 active={screen === 'current-run'}
                 label="Current Run"
-                meta={
-                  snapshot.activeRun
-                    ? formatProgress(snapshot.activeRun)
-                    : 'Idle'
-                }
+                meta={currentRunMeta}
                 onClick={() => setScreen('current-run')}
               />
               <RailButton
@@ -433,9 +548,10 @@ function App(): JSX.Element {
                 <button
                   className={buttonPrimaryClass}
                   type="button"
+                  disabled={captureInFlight}
                   onClick={() =>
                     settings.ytmusicAuthMode === 'browser_headers'
-                      ? setScreen('settings')
+                      ? void handleCaptureBrowserAuth()
                       : void handleStartDeviceAuth()
                   }
                 >
@@ -563,12 +679,15 @@ function App(): JSX.Element {
               onChooseOutputDirectory={() => void chooseOutputDirectory()}
               onSave={() => void handleSaveSettings()}
               onStartDeviceAuth={() => void handleStartDeviceAuth()}
+              onCaptureBrowserAuth={() => void handleCaptureBrowserAuth()}
               onDisconnect={() => void runAction(window.api.auth.disconnect())}
               onBinaryTest={() => void handleBinaryTest()}
               onRemoteTest={() =>
                 void runAction(window.api.settings.testRemote())
               }
               onDoctor={() => void handleDoctor()}
+              onClearSyncData={() => void handleClearSyncData()}
+              captureInFlight={captureInFlight}
             />
           ) : null}
         </main>
@@ -622,7 +741,7 @@ function OverviewScreen({
           {authStatus.isAuthenticated
             ? 'Worker can fetch liked songs and start exact catalog resolution.'
             : authMode === 'browser_headers'
-              ? 'Paste browser request headers or a browser-auth JSON blob, then start the worker sync.'
+              ? 'Pull auth from your selected browser or paste a browser-auth JSON blob, then start the worker sync.'
               : 'Save client credentials, launch device auth, then start the worker sync.'}
         </p>
         <div className="flex flex-wrap gap-3">
@@ -1019,15 +1138,18 @@ function SettingsScreen({
   secretDrafts,
   binaryStatus,
   doctorMessage,
+  captureInFlight,
   onSettingsChange,
   onSecretDraftsChange,
   onChooseOutputDirectory,
   onSave,
   onStartDeviceAuth,
+  onCaptureBrowserAuth,
   onDisconnect,
   onBinaryTest,
   onRemoteTest,
   onDoctor,
+  onClearSyncData,
 }: {
   settings: AppSettingsView
   authStatus: AuthStatus
@@ -1037,6 +1159,7 @@ function SettingsScreen({
   }
   binaryStatus: BinaryStatus | null
   doctorMessage: string
+  captureInFlight: boolean
   onSettingsChange: Dispatch<SetStateAction<AppSettingsView>>
   onSecretDraftsChange: Dispatch<
     SetStateAction<{
@@ -1047,10 +1170,12 @@ function SettingsScreen({
   onChooseOutputDirectory: () => void
   onSave: () => void
   onStartDeviceAuth: () => void
+  onCaptureBrowserAuth: () => void
   onDisconnect: () => void
   onBinaryTest: () => void
   onRemoteTest: () => void
   onDoctor: () => void
+  onClearSyncData: () => void
 }) {
   return (
     <section className="grid gap-4 xl:grid-cols-2">
@@ -1084,7 +1209,7 @@ function SettingsScreen({
                 value: 'browser_headers',
                 label: 'Browser headers',
                 description:
-                  'Paste YT Music request headers or browser.json. yt-dlp PO tokens are handled separately.',
+                  'Pull from browser cookies or paste browser.json manually. yt-dlp PO tokens are handled separately.',
               },
             ]}
             onChange={(value) =>
@@ -1131,10 +1256,33 @@ function SettingsScreen({
                   ytmusicBrowserAuth: value,
                 }))
               }
-              hint="Paste copied YT Music request headers from a /browse POST, or a browser-auth JSON blob. This is only for YT Music API auth; downloads use the bundled PO-token provider."
+              hint="Click Pull from browser to derive YT Music auth from the selected browser cookies, or paste copied /browse headers/browser-auth JSON manually."
               mono
             />
           )}
+
+          <SelectField
+            label="yt-dlp cookies browser"
+            value={settings.ytDlpCookiesBrowser}
+            options={[
+              'firefox',
+              'chrome',
+              'brave',
+              'chromium',
+              'edge',
+              'opera',
+              'safari',
+              'vivaldi',
+              'whale',
+            ]}
+            onChange={(value) =>
+              onSettingsChange((current) => ({
+                ...current,
+                ytDlpCookiesBrowser: value,
+              }))
+            }
+            hint="Downloads use yt-dlp --cookies-from-browser with this browser, same approach as flux-downloader."
+          />
         </div>
 
         <div className="flex flex-wrap gap-3">
@@ -1146,7 +1294,18 @@ function SettingsScreen({
             >
               Connect YT Music
             </button>
-          ) : null}
+          ) : (
+            <button
+              className={buttonPrimaryClass}
+              type="button"
+              onClick={onCaptureBrowserAuth}
+              disabled={captureInFlight}
+            >
+              {captureInFlight
+                ? 'Pulling from browser...'
+                : 'Pull from browser'}
+            </button>
+          )}
           <button
             className={buttonGhostClass}
             type="button"
@@ -1335,6 +1494,27 @@ function SettingsScreen({
             {authStatus.lastError}
           </p>
         ) : null}
+
+        <div className="grid gap-3 rounded-2xl border border-rose-300/12 bg-rose-300/[0.04] p-4">
+          <div>
+            <p className="text-[0.68rem] uppercase tracking-[0.16em] text-rose-200/80">
+              Danger
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              Clears run history, item logs, and processed-song memory. Settings
+              and saved auth stay intact.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              className={buttonGhostClass}
+              type="button"
+              onClick={onClearSyncData}
+            >
+              Clear sync database
+            </button>
+          </div>
+        </div>
       </article>
     </section>
   )
@@ -1448,6 +1628,42 @@ function TextAreaField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
+      {hint ? <p className="text-sm leading-6 text-slate-400">{hint}</p> : null}
+    </label>
+  )
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+  hint,
+}: {
+  label: string
+  value: YtDlpCookiesBrowser
+  options: YtDlpCookiesBrowser[]
+  onChange: (value: YtDlpCookiesBrowser) => void
+  hint?: string
+}) {
+  return (
+    <label className="grid gap-3">
+      <span className="text-[0.78rem] uppercase tracking-[0.12em] text-slate-500">
+        {label}
+      </span>
+      <select
+        className={inputClass}
+        value={value}
+        onChange={(event) =>
+          onChange(event.target.value as YtDlpCookiesBrowser)
+        }
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
       {hint ? <p className="text-sm leading-6 text-slate-400">{hint}</p> : null}
     </label>
   )
@@ -1658,12 +1874,17 @@ function screenCopy(
       return authStatus.isAuthenticated
         ? 'Connection state, run summary, and the shortest path into a new sync.'
         : authStatus.authMode === 'browser_headers'
-          ? 'Paste browser request headers or a browser-auth JSON blob, then let the Python worker take over.'
+          ? 'Pull auth from your selected browser or paste a browser-auth JSON blob, then let the Python worker take over.'
           : 'Save client credentials, complete device auth, then let the Python worker take over.'
     case 'current-run':
-      return headlineRun
+      if (!headlineRun) {
+        return 'No run loaded yet. Start a sync to populate the inspector.'
+      }
+      return headlineRun.status === 'running'
         ? 'Live NDJSON events stream into the current run view with compact desktop density.'
-        : 'No active run yet. Start a sync to populate the inspector.'
+        : headlineRun.status === 'cancelled'
+          ? 'Latest run stays inspectable here after cancellation.'
+          : 'Latest run stays inspectable here after it finishes.'
     case 'history':
       return 'Prior runs stay inspectable without the old category and YT Music diagnostic tabs.'
     case 'settings':

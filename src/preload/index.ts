@@ -7,6 +7,8 @@ const api: ElectronApi = {
     getStatus: () => ipcRenderer.invoke('auth:getStatus'),
     startDeviceAuth: () => ipcRenderer.invoke('auth:startDeviceAuth'),
     finishDeviceAuth: () => ipcRenderer.invoke('auth:finishDeviceAuth'),
+    captureBrowserAuth: (browser) =>
+      ipcRenderer.invoke('auth:captureBrowserAuth', browser),
     disconnect: () => ipcRenderer.invoke('auth:disconnect'),
   },
   settings: {
@@ -20,6 +22,7 @@ const api: ElectronApi = {
   sync: {
     start: (input) => ipcRenderer.invoke('sync:start', input),
     cancel: (runId) => ipcRenderer.invoke('sync:cancel', runId),
+    clearSyncData: () => ipcRenderer.invoke('sync:clearSyncData'),
     doctor: () => ipcRenderer.invoke('sync:doctor'),
     listRuns: () => ipcRenderer.invoke('sync:listRuns'),
     getRun: (runId) => ipcRenderer.invoke('sync:getRun', runId),

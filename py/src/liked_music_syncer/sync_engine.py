@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
 import traceback
+import unicodedata
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -208,41 +210,140 @@ def _parse_year(value: Any) -> int | None:
         return None
 
 
-def _resolve_exact_catalog(ytmusic: YTMusic, item: SyncItemState) -> str | None:
-    watch = ytmusic.get_watch_playlist(videoId=item.source_video_id, limit=1)
-    if not isinstance(watch, dict):
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold().strip()
+    normalized = re.sub(r"[\s\-_]+", " ", normalized)
+    normalized = re.sub(r"^[^\w]+|[^\w]+$", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _strip_title_adornments(value: str) -> str:
+    cleaned = value.strip()
+    while True:
+        updated = re.sub(
+            r"\s*[\(\[\{（【][^)\]\}）】]*(?:official|music video|official video|official mv|mv|audio|visualizer|lyrics?)[^)\]\}）】]*[\)\]\}）】]\s*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        updated = re.sub(
+            r"\s*(?:-|:|\||/)?\s*(?:official(?:\s+music)?\s+video|official\s+mv|music\s+video|mv|lyrics?|audio|visualizer)\s*$",
+            "",
+            updated,
+            flags=re.IGNORECASE,
+        ).strip()
+        if updated == cleaned:
+            return updated
+        cleaned = updated
+
+
+def _canonicalize_track_title(value: str, artist_names: list[str]) -> str:
+    cleaned = _strip_title_adornments(value)
+    for artist_name in artist_names:
+        artist_name = artist_name.strip()
+        if not artist_name:
+            continue
+        updated = re.sub(
+            rf"^\s*{re.escape(artist_name)}\s*(?:-|:|\||/)\s*",
+            "",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        ).strip()
+        if updated != cleaned:
+            cleaned = updated
+            break
+    return cleaned or value.strip()
+
+
+def _title_variants(value: str, artist_names: list[str]) -> set[str]:
+    cleaned = _canonicalize_track_title(value, artist_names)
+    variants = {_normalize_text(cleaned)}
+    for part in re.split(r"\s*(?:-|:|\||/)\s*", cleaned):
+        normalized = _normalize_text(part)
+        if normalized:
+            variants.add(normalized)
+    variants.discard("")
+    return variants
+
+
+def _parse_duration_seconds(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if not isinstance(value, str):
         return None
 
-    watch_tracks = _extract_tracks(watch)
-    primary = watch_tracks[0] if watch_tracks else {}
-    album_value = primary.get("album")
-    album_info: dict[str, Any]
-    if isinstance(album_value, dict):
-        album_info = album_value
-    else:
-        album_info = {}
-    album_id = album_info.get("id")
+    parts = value.strip().split(":")
+    if not parts or len(parts) > 3:
+        return None
 
-    item.selected_source_url = item.source_url
+    try:
+        numbers = [int(part) for part in parts]
+    except ValueError:
+        return None
+
+    total = 0
+    for number in numbers:
+        total = (total * 60) + number
+    return total
+
+
+def _album_info(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _album_id_for_track(track: dict[str, Any]) -> str | None:
+    album_id = _album_info(track.get("album")).get("id")
+    return str(album_id) if isinstance(album_id, str) and album_id else None
+
+
+def _artist_ids(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    result: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            artist_id = value.get("id")
+            if isinstance(artist_id, str) and artist_id:
+                result.append(artist_id)
+    return result
+
+
+def _first_artist_name(values: Any) -> str | None:
+    names = _string_list_names(values)
+    return names[0] if names else None
+
+
+def _preferred_source_url(item: SyncItemState) -> str:
+    return item.selected_source_url or item.source_url
+
+
+def _is_omv(video_type: str | None) -> bool:
+    return video_type == "MUSIC_VIDEO_TYPE_OMV"
+
+
+def _apply_watch_metadata(item: SyncItemState, track: dict[str, Any]) -> None:
     item.metadata_matched = True
-    item.title = str(primary.get("title") or item.title)
-    artists = _string_list_names(primary.get("artists"))
+    item.title = str(track.get("title") or item.title)
+    artists = _string_list_names(track.get("artists"))
     if artists:
         item.artist = ", ".join(artists)
         item.album_artist = item.artist
-    item.cover_art_url = _pick_thumbnail(primary.get("thumbnails")) or item.cover_art_url
+    item.video_type = str(track.get("videoType")) if track.get("videoType") else item.video_type
+    item.cover_art_url = _pick_thumbnail(track.get("thumbnails") or track.get("thumbnail")) or item.cover_art_url
 
-    lyrics_id = watch.get("lyrics")
-    lyrics_browse_id = lyrics_id if isinstance(lyrics_id, str) else None
 
-    if not album_id:
-        item.resolution_method = "watch_playlist"
-        return lyrics_browse_id
-
-    album = ytmusic.get_album(str(album_id))
+def _apply_album_metadata(
+    ytmusic: YTMusic,
+    item: SyncItemState,
+    album_id: str,
+    preferred_video_ids: list[str],
+    fallback_title: str,
+) -> bool:
+    album = ytmusic.get_album(album_id)
     if not isinstance(album, dict):
-        item.resolution_method = "watch_playlist"
-        return lyrics_browse_id
+        return False
 
     item.album = str(album.get("title") or item.album)
     album_artists = _string_list_names(album.get("artists"))
@@ -256,17 +357,235 @@ def _resolve_exact_catalog(ytmusic: YTMusic, item: SyncItemState) -> str | None:
 
     album_tracks = _extract_tracks(album)
     item.track_total = len(album_tracks) or None
+    normalized_fallback_title = _normalize_text(fallback_title)
 
-    for track_index, track in enumerate(album_tracks, start=1):
-        if str(track.get("videoId")) == item.source_video_id:
+    for preferred_video_id in preferred_video_ids:
+        for track_index, track in enumerate(album_tracks, start=1):
+            if str(track.get("videoId")) != preferred_video_id:
+                continue
             item.track_number = track_index
             track_title = track.get("title")
             if isinstance(track_title, str) and track_title:
                 item.title = track_title
-            break
+            return True
 
-    item.resolution_method = "album_exact"
-    return lyrics_browse_id
+    if len(album_tracks) == 1:
+        only_track = album_tracks[0]
+        track_title = only_track.get("title")
+        if isinstance(track_title, str) and _normalize_text(track_title) == normalized_fallback_title:
+            item.track_number = 1
+            if track_title:
+                item.title = track_title
+
+    return True
+
+
+def _search_song_candidate(
+    ytmusic: YTMusic,
+    item: SyncItemState,
+    primary: dict[str, Any],
+    *,
+    run_id: str | None = None,
+) -> dict[str, Any] | None:
+    original_artist_names = _string_list_names(primary.get("artists"))
+    original_artist_ids = _artist_ids(primary.get("artists"))
+    original_artist_name = _first_artist_name(primary.get("artists")) or item.artist.split(",")[0].strip()
+    search_title = _canonicalize_track_title(item.title, original_artist_names or [original_artist_name])
+    target_title_variants = _title_variants(item.title, original_artist_names or [original_artist_name])
+    original_duration = _parse_duration_seconds(primary.get("length"))
+    query = f"{search_title} {original_artist_name}".strip()
+    duration_tolerance = 15 if _is_omv(item.video_type) else 10
+
+    if run_id:
+        _log(
+            run_id,
+            item,
+            item.stage,
+            "info",
+            "search-catalog-start",
+            "Searching for catalog song candidate.",
+            {
+                "query": query,
+                "search_title": search_title,
+                "video_type": item.video_type,
+                "title": item.title,
+                "artist": original_artist_name,
+            },
+        )
+
+    results = ytmusic.search(query, filter="songs", limit=5, ignore_spelling=False)
+    best_candidate: dict[str, Any] | None = None
+    best_key: tuple[int, int, int] | None = None
+    candidate_logs: list[dict[str, Any]] = []
+
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+
+        candidate_video_id = result.get("videoId")
+        candidate_title = result.get("title")
+        candidate_album_id = _album_info(result.get("album")).get("id")
+        candidate_artist_name = _first_artist_name(result.get("artists"))
+        candidate_artist_ids = _artist_ids(result.get("artists"))
+        candidate_artist_names = _string_list_names(result.get("artists"))
+        candidate_duration = _parse_duration_seconds(result.get("duration"))
+        duration_diff = (
+            abs(candidate_duration - original_duration)
+            if candidate_duration is not None and original_duration is not None
+            else 0
+        )
+        candidate_title_variants = (
+            _title_variants(candidate_title, candidate_artist_names) if isinstance(candidate_title, str) else set()
+        )
+        title_matches = bool(target_title_variants and candidate_title_variants and target_title_variants & candidate_title_variants)
+        artist_id_matches = bool(
+            original_artist_ids and candidate_artist_ids and set(original_artist_ids) & set(candidate_artist_ids)
+        )
+        artist_name_matches = bool(
+            not artist_id_matches
+            and candidate_artist_name
+            and _normalize_text(candidate_artist_name) == _normalize_text(original_artist_name)
+        )
+        artist_matches = artist_id_matches or artist_name_matches
+        duration_matches = original_duration is None or candidate_duration is None or duration_diff <= duration_tolerance
+        video_type = str(result.get("videoType")) if result.get("videoType") else None
+        accepted = bool(
+            isinstance(candidate_video_id, str)
+            and candidate_video_id != item.source_video_id
+            and isinstance(candidate_album_id, str)
+            and candidate_album_id
+            and title_matches
+            and artist_matches
+            and duration_matches
+        )
+
+        if run_id:
+            candidate_logs.append(
+                {
+                    "video_id": candidate_video_id,
+                    "title": candidate_title,
+                    "album_id": candidate_album_id,
+                    "video_type": video_type,
+                    "duration_diff": duration_diff if original_duration is not None and candidate_duration is not None else None,
+                    "accepted": accepted,
+                    "title_match": title_matches,
+                    "artist_match": "id" if artist_id_matches else ("name" if artist_name_matches else "none"),
+                }
+            )
+
+        if not accepted:
+            continue
+
+        sort_key = (
+            0 if video_type == "MUSIC_VIDEO_TYPE_ATV" else 1,
+            duration_diff,
+            0 if artist_id_matches else 1,
+        )
+        if best_key is None or sort_key < best_key:
+            best_key = sort_key
+            best_candidate = result
+
+    if run_id:
+        _log(
+            run_id,
+            item,
+            item.stage,
+            "info",
+            "search-catalog-candidates",
+            "Catalog search candidates evaluated.",
+            {"candidates": candidate_logs},
+        )
+
+    return best_candidate
+
+
+def _resolve_exact_catalog(
+    ytmusic: YTMusic,
+    item: SyncItemState,
+    *,
+    run_id: str | None = None,
+) -> str | None:
+    watch = ytmusic.get_watch_playlist(videoId=item.source_video_id, limit=1)
+    if not isinstance(watch, dict):
+        return None
+
+    watch_tracks = _extract_tracks(watch)
+    primary = watch_tracks[0] if watch_tracks else {}
+    _apply_watch_metadata(item, primary)
+    album_id = _album_id_for_track(primary)
+
+    lyrics_id = watch.get("lyrics")
+    lyrics_browse_id = lyrics_id if isinstance(lyrics_id, str) else None
+
+    if album_id and _apply_album_metadata(
+        ytmusic,
+        item,
+        album_id,
+        [item.source_video_id],
+        item.title,
+    ):
+        item.resolution_method = "album_exact"
+        return lyrics_browse_id
+
+    if not _is_omv(item.video_type):
+        item.resolution_method = "watch_playlist"
+        return lyrics_browse_id
+
+    candidate = _search_song_candidate(ytmusic, item, primary, run_id=run_id)
+    if not candidate:
+        item.resolution_method = "watch_playlist"
+        return lyrics_browse_id
+
+    candidate_video_id = candidate.get("videoId")
+    if not isinstance(candidate_video_id, str) or not candidate_video_id:
+        item.resolution_method = "watch_playlist"
+        return lyrics_browse_id
+
+    candidate_watch = ytmusic.get_watch_playlist(videoId=candidate_video_id, limit=1)
+    if not isinstance(candidate_watch, dict):
+        item.resolution_method = "watch_playlist"
+        return lyrics_browse_id
+
+    candidate_tracks = _extract_tracks(candidate_watch)
+    candidate_primary = candidate_tracks[0] if candidate_tracks else candidate
+    candidate_album_id = _album_id_for_track(candidate_primary) or str(_album_info(candidate.get("album")).get("id") or "")
+    if not candidate_album_id:
+        item.resolution_method = "watch_playlist"
+        return lyrics_browse_id
+
+    item.selected_source_url = f"https://music.youtube.com/watch?v={candidate_video_id}"
+    _apply_watch_metadata(item, candidate_primary)
+
+    candidate_lyrics_id = candidate_watch.get("lyrics")
+    candidate_lyrics_browse_id = candidate_lyrics_id if isinstance(candidate_lyrics_id, str) else None
+
+    if not _apply_album_metadata(
+        ytmusic,
+        item,
+        candidate_album_id,
+        [candidate_video_id, item.source_video_id],
+        item.title,
+    ):
+        item.selected_source_url = None
+        item.resolution_method = "watch_playlist"
+        return lyrics_browse_id
+
+    item.resolution_method = "search_song_exact"
+    if run_id:
+        _log(
+            run_id,
+            item,
+            item.stage,
+            "info",
+            "search-catalog-selected",
+            "Selected alternate catalog source.",
+            {
+                "original_video_id": item.source_video_id,
+                "selected_video_id": candidate_video_id,
+                "selected_source_url": item.selected_source_url,
+            },
+        )
+    return candidate_lyrics_browse_id
 
 def _configure_yt_dlp_plugins(config: SyncConfig) -> None:
     plugin_dir = config.yt_dlp_plugin_dir.strip()
@@ -286,14 +605,19 @@ def _build_yt_dlp_options(config: SyncConfig, *, skip_download: bool) -> dict[st
     _configure_yt_dlp_plugins(config)
     options: dict[str, Any] = {
         "quiet": True,
+        "logtostderr": True,
         "no_warnings": True,
+        "noprogress": True,
         "skip_download": skip_download,
+        "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
                 "player_client": ["mweb", "default"],
             },
         },
     }
+    if config.yt_dlp_cookies_browser.strip():
+        options["cookiesfrombrowser"] = (config.yt_dlp_cookies_browser.strip().lower(),)
     if config.yt_dlp_po_token_base_url.strip():
         options["extractor_args"]["youtubepot-bgutilhttp"] = {
             "base_url": [config.yt_dlp_po_token_base_url.strip()],
@@ -304,7 +628,7 @@ def _build_yt_dlp_options(config: SyncConfig, *, skip_download: bool) -> dict[st
 def _resolve_fallback_metadata(config: SyncConfig, item: SyncItemState) -> None:
     options = _build_yt_dlp_options(config, skip_download=True)
     with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(item.source_url, download=False)
+        info = ydl.extract_info(_preferred_source_url(item), download=False)
 
     if isinstance(info, dict):
         item.title = str(info.get("track") or info.get("title") or item.title)
@@ -371,7 +695,10 @@ def _format_lrc_line(start_ms: int, text: str) -> str:
 def _resolve_lyrics(ytmusic: YTMusic, lyrics_browse_id: str | None) -> tuple[str | None, str | None]:
     if not lyrics_browse_id:
         return None, None
-    payload = ytmusic.get_lyrics(lyrics_browse_id, timestamps=True)
+    try:
+        payload = ytmusic.get_lyrics(lyrics_browse_id, timestamps=True)
+    except Exception:
+        payload = ytmusic.get_lyrics(lyrics_browse_id, timestamps=False)
     if not isinstance(payload, dict):
         return None, None
 
@@ -415,7 +742,7 @@ def _download_audio(
     )
 
     with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(item.source_url, download=True)
+        info = ydl.extract_info(_preferred_source_url(item), download=True)
         if not isinstance(info, dict):
             raise RuntimeError("yt-dlp did not return structured metadata.")
         prepared = Path(ydl.prepare_filename(info))
@@ -455,11 +782,11 @@ def _write_media_tags(
     media.track = item.track_number
     media.tracktotal = item.track_total
     media.year = item.year
-    media.comments = item.source_url
+    media.comments = _preferred_source_url(item)
     if lyrics_text:
         media.lyrics = lyrics_text
     if cover_bytes:
-        media.images = [Image(data=cover_bytes, mime_type="image/jpeg")]
+        media.images = [Image(data=cover_bytes)]
     media.save()
 
 
@@ -539,7 +866,8 @@ def run_sync(config: SyncConfig) -> None:
 
             try:
                 item.stage = "source_resolve"
-                lyrics_browse_id = _resolve_exact_catalog(ytmusic, item)
+                stage = item.stage
+                lyrics_browse_id = _resolve_exact_catalog(ytmusic, item, run_id=config.run_id)
                 _emit_item(config.run_id, item)
                 _log(config.run_id, item, item.stage, "info", "resolve", f"Resolution method: {item.resolution_method}.")
             except Exception as exc:  # noqa: BLE001
@@ -550,13 +878,19 @@ def run_sync(config: SyncConfig) -> None:
 
             try:
                 item.stage = "musicbrainz_enrich"
+                stage = item.stage
                 _musicbrainz_enrich(item)
                 _emit_item(config.run_id, item)
             except Exception as exc:  # noqa: BLE001
                 _log(config.run_id, item, item.stage, "warn", "musicbrainz", str(exc))
 
             item.stage = "lyrics_resolve"
-            lyrics_text, lyrics_source = _resolve_lyrics(ytmusic, lyrics_browse_id)
+            stage = item.stage
+            try:
+                lyrics_text, lyrics_source = _resolve_lyrics(ytmusic, lyrics_browse_id)
+            except Exception as exc:  # noqa: BLE001
+                _log(config.run_id, item, item.stage, "warn", "lyrics", str(exc))
+                lyrics_text, lyrics_source = None, None
             if lyrics_text:
                 item.lyrics_matched = True
                 item.lyrics_source = lyrics_source
@@ -591,12 +925,14 @@ def run_sync(config: SyncConfig) -> None:
                 with tempfile.TemporaryDirectory(prefix="lmsync_") as temp_dir_raw:
                     temp_dir = Path(temp_dir_raw)
                     item.stage = "download"
+                    stage = item.stage
                     _emit_item(config.run_id, item)
                     downloaded_path, info = _download_audio(config, item, temp_dir)
                     codec = info.get("acodec")
                     item.audio_codec = str(codec) if isinstance(codec, str) else item.audio_codec
 
                     item.stage = "fixup"
+                    stage = item.stage
                     _emit_item(config.run_id, item)
                     _normalize_audio(downloaded_path, output_path, config.ffmpeg_path, item.audio_codec)
 
@@ -608,6 +944,7 @@ def run_sync(config: SyncConfig) -> None:
                             _log(config.run_id, item, "tagging", "warn", "cover", str(exc))
 
                     item.stage = "tagging"
+                    stage = item.stage
                     _emit_item(config.run_id, item)
                     embedded_lyrics = lyrics_text if config.embed_unsynced_lyrics or item.lyrics_source else None
                     _write_media_tags(output_path, item, cover_bytes, embedded_lyrics)
@@ -617,6 +954,7 @@ def run_sync(config: SyncConfig) -> None:
                         Path(item.lrc_path).write_text(lyrics_text, encoding="utf-8")
 
                     item.stage = "remote_copy"
+                    stage = item.stage
                     _emit_item(config.run_id, item)
                     _copy_remote(config, output_path)
 

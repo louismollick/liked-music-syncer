@@ -2,15 +2,15 @@
 
 ## Overview
 
-Liked Music Syncer is a desktop app that pulls liked songs from many music platforms and turns them into one clean local library.
+Liked Music Syncer is a desktop app that pulls liked songs from many music platforms, connects to an existing media library, and turns everything into one clean local library.
 
-The main goal is simple: take songs you liked on services like YouTube Music, Spotify, and SoundCloud, download them as local files, and make them ready for music servers and players such as Navidrome or Plex.
+The main goal is simple: take songs you liked on services like YouTube Music, Spotify, and SoundCloud, match them with songs you already have, download the best files, and make the full library ready for music servers and players such as Navidrome or Plex.
 
 ## Problem
 
-Liked songs are spread across many platforms. You do not own those files. The same song may appear many times. Some uploads are fan-made, low quality, or use the wrong version. Metadata is often missing or wrong.
+Liked songs are spread across many platforms. You do not own those files. The same song may appear many times. Some uploads are fan-made, low quality, or use the wrong version. Songs already in your library may also have weak tags or missing lyrics.
 
-This app solves that by building one local library from all of your liked songs. It deduplicates tracks, picks the best version, downloads the audio, and tags it with clean metadata.
+This app solves that by building one local library from all of your liked songs and the files you already keep. It deduplicates tracks, picks the best version, downloads or re-downloads the audio when needed, and tags files with clean metadata.
 
 ## Core Features
 
@@ -46,6 +46,10 @@ The goal is to keep the song the user meant to save, not the exact upload they f
 
 The app downloads each final track as a local audio file. The result should be a usable offline library that the user owns and can move anywhere.
 
+### Connect To An Existing Library
+
+The app should scan an existing music library on disk and match those files to songs in the app's merged collection.
+
 ### Enrich Files With Metadata
 
 Each file should be tagged with clean metadata so it works well in local libraries and media servers.
@@ -63,9 +67,26 @@ Important fields include:
 - album cover
 - synced lyrics
 
+### Re-download Or Re-tag Existing Songs
+
+If a song already exists in the user's library, the app should decide whether to keep the file, re-tag it, or re-download a better copy.
+
+This helps fix old files without making the user rebuild the whole library from scratch.
+
 ### Support Local Music Libraries
 
 The downloaded library should be easy to use with systems like Navidrome or Plex. File layout, tags, and artwork should be good enough for these tools to index with little or no cleanup.
+
+### Show Missing Metadata And Lyrics
+
+The app should show which songs in the library are missing key metadata or synced lyrics.
+
+Examples:
+
+- missing album name
+- missing album cover
+- missing track number
+- missing synced lyrics
 
 ### Transfer Files To A Remote Server
 
@@ -82,10 +103,12 @@ The app should support repeat syncs. New liked songs should be added. Existing s
 ## Ideal User Flow
 
 1. Connect music accounts.
-2. Import liked songs from each platform.
-3. Let the app merge duplicates and pick the best version of each song.
-4. Download the songs with clean tags and lyrics.
-5. Save them to the local library and, if enabled, push them to a remote VPS over SSH.
+2. Connect the existing local media library, if the user has one.
+3. Import liked songs from each platform.
+4. Let the app merge duplicates, match existing files, and pick the best version of each song.
+5. Download new songs and re-tag or re-download existing ones when needed.
+6. Review which songs still have missing metadata or lyrics.
+7. Save the library and, if enabled, push it to a remote VPS over SSH.
 
 ## Appendix: Decided Technologies And Methods
 

@@ -4,11 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from liked_music_syncer.models import SyncConfig
+from liked_music_syncer.models import SyncConfig, SyncItemState
 from liked_music_syncer.sync_engine import (
     _build_yt_dlp_options,
     _build_ytmusic_client,
     _configure_yt_dlp_plugins,
+    _download_audio,
+    _resolve_exact_catalog,
+    _resolve_lyrics,
 )
 
 
@@ -27,6 +30,7 @@ def _config(tmp_path: Path) -> SyncConfig:
         ytmusic_client_secret="client-secret",
         ytmusic_oauth_token_json="{}",
         ytmusic_browser_auth="",
+        yt_dlp_cookies_browser="firefox",
         folder_template="{albumartist}/{album}",
         file_template="{track:02d} {title}",
         embed_unsynced_lyrics=True,
@@ -34,6 +38,25 @@ def _config(tmp_path: Path) -> SyncConfig:
         ffmpeg_path="ffmpeg",
         yt_dlp_plugin_dir=str(plugin_dir),
         yt_dlp_po_token_base_url="http://127.0.0.1:4416",
+    )
+
+
+def _item(
+    *,
+    source_video_id: str = "source123",
+    title: str = "blackout",
+    artist: str = "yeti let you notice",
+) -> SyncItemState:
+    return SyncItemState(
+        id="item_123",
+        source_video_id=source_video_id,
+        title=title,
+        artist=artist,
+        album="_Singles",
+        album_artist=artist,
+        source_url=f"https://music.youtube.com/watch?v={source_video_id}",
+        cover_art_url=None,
+        stage="source_resolve",
     )
 
 
@@ -45,11 +68,28 @@ def test_build_yt_dlp_options_enables_mweb_and_bgutil(monkeypatch: pytest.Monkey
 
     options = _build_yt_dlp_options(_config(tmp_path), skip_download=True)
 
+    assert options["logtostderr"] is True
+    assert options["noprogress"] is True
     assert options["skip_download"] is True
+    assert options["remote_components"] == ["ejs:github"]
+    assert options["cookiesfrombrowser"] == ("firefox",)
     assert options["extractor_args"]["youtube"]["player_client"] == ["mweb", "default"]
     assert options["extractor_args"]["youtubepot-bgutilhttp"]["base_url"] == [
         "http://127.0.0.1:4416"
     ]
+
+
+def test_build_yt_dlp_options_uses_selected_cookie_browser(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._configure_yt_dlp_plugins",
+        lambda config: None,
+    )
+    config = _config(tmp_path)
+    config.yt_dlp_cookies_browser = "firefox"
+
+    options = _build_yt_dlp_options(config, skip_download=True)
+
+    assert options["cookiesfrombrowser"] == ("firefox",)
 
 
 def test_configure_yt_dlp_plugins_rejects_missing_directory(tmp_path: Path) -> None:
@@ -77,3 +117,378 @@ def test_build_ytmusic_client_validates_browser_auth(monkeypatch: pytest.MonkeyP
     )
 
     assert client is sentinel
+
+
+def test_resolve_lyrics_falls_back_to_plain_lyrics() -> None:
+    class FakeYTMusic:
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def get_lyrics(self, browse_id: str, timestamps: bool = False) -> dict[str, object]:
+            assert browse_id == "MPLYt_demo"
+            self.calls.append(timestamps)
+            if timestamps:
+                raise RuntimeError("timed lyrics unavailable")
+            return {
+                "lyrics": "line one\nline two",
+                "source": "Source: LyricFind",
+                "hasTimestamps": False,
+            }
+
+    ytmusic = FakeYTMusic()
+
+    lyrics, source = _resolve_lyrics(ytmusic, "MPLYt_demo")
+
+    assert ytmusic.calls == [True, False]
+    assert lyrics == "line one\nline two\n"
+    assert source == "Source: LyricFind"
+
+
+def test_resolve_exact_catalog_keeps_direct_album_match() -> None:
+    class FakeYTMusic:
+        def __init__(self) -> None:
+            self.search_calls = 0
+
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            assert videoId == "source123"
+            assert limit == 1
+            return {
+                "tracks": [
+                    {
+                        "videoId": "source123",
+                        "title": "blackout",
+                        "artists": [{"name": "yeti let you notice", "id": "artist1"}],
+                        "album": {"name": "blackout", "id": "album123"},
+                        "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                        "length": "3:39",
+                    }
+                ],
+                "lyrics": "MPLYt_direct",
+            }
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            assert browseId == "album123"
+            return {
+                "title": "blackout",
+                "artists": [{"name": "yeti let you notice"}],
+                "year": "2021",
+                "tracks": [{"videoId": "source123", "title": "blackout"}],
+            }
+
+        def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            self.search_calls += 1
+            return []
+
+    item = _item()
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert lyrics_browse_id == "MPLYt_direct"
+    assert item.resolution_method == "album_exact"
+    assert item.album == "blackout"
+    assert item.track_number == 1
+    assert item.track_total == 1
+    assert item.selected_source_url is None
+
+
+def test_resolve_exact_catalog_promotes_omv_to_catalog_song() -> None:
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            assert limit == 1
+            if videoId == "source123":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "source123",
+                            "title": "blackout",
+                            "artists": [{"name": "yeti let you notice", "id": "artist1"}],
+                            "videoType": "MUSIC_VIDEO_TYPE_OMV",
+                            "length": "3:43",
+                        }
+                    ],
+                    "lyrics": None,
+                }
+            if videoId == "catalog456":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "catalog456",
+                            "title": "blackout",
+                            "artists": [{"name": "yeti let you notice", "id": "artist1"}],
+                            "album": {"name": "blackout", "id": "album123"},
+                            "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                            "length": "3:39",
+                        }
+                    ],
+                    "lyrics": "MPLYt_catalog",
+                }
+            raise AssertionError(videoId)
+
+        def search(
+            self,
+            query: str,
+            filter: str | None = None,
+            limit: int = 20,
+            ignore_spelling: bool = False,
+        ) -> list[dict[str, object]]:
+            assert query == "blackout yeti let you notice"
+            assert filter == "songs"
+            assert limit == 5
+            assert ignore_spelling is False
+            return [
+                {
+                    "videoId": "catalog456",
+                    "title": "blackout",
+                    "artists": [{"name": "yeti let you notice", "id": "artist1"}],
+                    "album": {"name": "blackout", "id": "album123"},
+                    "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                    "duration": "3:39",
+                }
+            ]
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            assert browseId == "album123"
+            return {
+                "title": "blackout",
+                "artists": [{"name": "yeti let you notice"}],
+                "year": "2021",
+                "tracks": [{"videoId": "source123", "title": "blackout"}],
+            }
+
+    item = _item()
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert lyrics_browse_id == "MPLYt_catalog"
+    assert item.resolution_method == "search_song_exact"
+    assert item.album == "blackout"
+    assert item.track_number == 1
+    assert item.track_total == 1
+    assert item.video_type == "MUSIC_VIDEO_TYPE_ATV"
+    assert item.selected_source_url == "https://music.youtube.com/watch?v=catalog456"
+
+
+def test_resolve_exact_catalog_strips_omv_title_noise_and_matches_bilingual_song_title() -> None:
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            assert limit == 1
+            if videoId == "source123":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "source123",
+                            "title": "Blurred City Lights - 月光 (Official Music Video)",
+                            "artists": [{"name": "Blurred City Lights", "id": "artist1"}],
+                            "videoType": "MUSIC_VIDEO_TYPE_OMV",
+                            "length": "5:58",
+                        }
+                    ],
+                    "lyrics": None,
+                }
+            if videoId == "catalog456":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "catalog456",
+                            "title": "月光 - Gekkou",
+                            "artists": [{"name": "Blurred City Lights", "id": "artist1"}],
+                            "album": {"name": "Gekkou", "id": "album123"},
+                            "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                            "length": "5:50",
+                        }
+                    ],
+                    "lyrics": "MPLYt_catalog",
+                }
+            raise AssertionError(videoId)
+
+        def search(
+            self,
+            query: str,
+            filter: str | None = None,
+            limit: int = 20,
+            ignore_spelling: bool = False,
+        ) -> list[dict[str, object]]:
+            assert query == "月光 Blurred City Lights"
+            assert filter == "songs"
+            assert limit == 5
+            assert ignore_spelling is False
+            return [
+                {
+                    "videoId": "catalog456",
+                    "title": "月光 - Gekkou",
+                    "artists": [{"name": "Blurred City Lights", "id": "artist1"}],
+                    "album": {"name": "Gekkou", "id": "album123"},
+                    "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                    "duration": "5:50",
+                }
+            ]
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            assert browseId == "album123"
+            return {
+                "title": "Gekkou",
+                "artists": [{"name": "Blurred City Lights"}],
+                "year": "2024",
+                "tracks": [{"videoId": "catalog456", "title": "月光 - Gekkou"}],
+            }
+
+    item = _item(title="Blurred City Lights - 月光 (Official Music Video)", artist="Blurred City Lights")
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert lyrics_browse_id == "MPLYt_catalog"
+    assert item.resolution_method == "search_song_exact"
+    assert item.album == "Gekkou"
+    assert item.track_number == 1
+    assert item.track_total == 1
+    assert item.title == "月光 - Gekkou"
+    assert item.selected_source_url == "https://music.youtube.com/watch?v=catalog456"
+
+
+def test_resolve_exact_catalog_allows_small_omv_intro_duration_gap() -> None:
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            assert limit == 1
+            if videoId == "source123":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "source123",
+                            "title": "透明",
+                            "artists": [{"name": "sokoninaru", "id": "artist1"}],
+                            "videoType": "MUSIC_VIDEO_TYPE_OMV",
+                            "length": "3:02",
+                        }
+                    ],
+                    "lyrics": None,
+                }
+            if videoId == "catalog456":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "catalog456",
+                            "title": "透明",
+                            "artists": [{"name": "そこに鳴る", "id": "artist1"}],
+                            "album": {"name": "透明", "id": "album123"},
+                            "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                            "length": "2:51",
+                        }
+                    ],
+                    "lyrics": "MPLYt_catalog",
+                }
+            raise AssertionError(videoId)
+
+        def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "videoId": "catalog456",
+                    "title": "透明",
+                    "artists": [{"name": "そこに鳴る", "id": "artist1"}],
+                    "album": {"name": "透明", "id": "album123"},
+                    "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                    "duration": "2:51",
+                }
+            ]
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            assert browseId == "album123"
+            return {
+                "title": "透明",
+                "artists": [{"name": "そこに鳴る"}],
+                "year": "2015",
+                "tracks": [{"videoId": "catalog456", "title": "透明"}],
+            }
+
+    item = _item(title="透明", artist="sokoninaru")
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert lyrics_browse_id == "MPLYt_catalog"
+    assert item.resolution_method == "search_song_exact"
+    assert item.album == "透明"
+    assert item.track_number == 1
+    assert item.track_total == 1
+    assert item.selected_source_url == "https://music.youtube.com/watch?v=catalog456"
+
+
+def test_resolve_exact_catalog_rejects_loose_duration_match() -> None:
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            assert videoId == "source123"
+            assert limit == 1
+            return {
+                "tracks": [
+                    {
+                        "videoId": "source123",
+                        "title": "blackout",
+                        "artists": [{"name": "yeti let you notice", "id": "artist1"}],
+                        "videoType": "MUSIC_VIDEO_TYPE_OMV",
+                        "length": "3:00",
+                    }
+                ],
+                "lyrics": None,
+            }
+
+        def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "videoId": "catalog456",
+                    "title": "blackout",
+                    "artists": [{"name": "yeti let you notice", "id": "artist1"}],
+                    "album": {"name": "blackout", "id": "album123"},
+                    "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                    "duration": "3:20",
+                }
+            ]
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            raise AssertionError(browseId)
+
+    item = _item()
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert lyrics_browse_id is None
+    assert item.resolution_method == "watch_playlist"
+    assert item.selected_source_url is None
+    assert item.album == "_Singles"
+
+
+def test_download_audio_uses_selected_source_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._build_yt_dlp_options",
+        lambda config, *, skip_download: {"skip_download": skip_download},
+    )
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured["options"] = options
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            captured["url"] = url
+            captured["download"] = download
+            return {"id": "catalog456", "ext": "m4a", "acodec": "aac"}
+
+        def prepare_filename(self, info: dict[str, object]) -> str:
+            assert info["id"] == "catalog456"
+            return str(tmp_path / "catalog456.m4a")
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.YoutubeDL", FakeYoutubeDL)
+
+    item = _item()
+    item.selected_source_url = "https://music.youtube.com/watch?v=catalog456"
+
+    prepared, info = _download_audio(_config(tmp_path), item, tmp_path)
+
+    assert captured["url"] == "https://music.youtube.com/watch?v=catalog456"
+    assert captured["download"] is True
+    assert prepared == tmp_path / "catalog456.m4a"
+    assert info["acodec"] == "aac"

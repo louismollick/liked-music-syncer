@@ -45,6 +45,7 @@ class SyncConfig:
     ytmusic_client_secret: str
     ytmusic_oauth_token_json: str
     ytmusic_browser_auth: str
+    yt_dlp_cookies_browser: str
     folder_template: str
     file_template: str
     embed_unsynced_lyrics: bool
@@ -67,6 +68,7 @@ class SyncConfig:
             ytmusic_client_secret=str(payload["ytmusic_client_secret"]),
             ytmusic_oauth_token_json=str(payload["ytmusic_oauth_token_json"]),
             ytmusic_browser_auth=str(payload.get("ytmusic_browser_auth", "")),
+            yt_dlp_cookies_browser=str(payload.get("yt_dlp_cookies_browser", "firefox")),
             folder_template=str(payload["folder_template"]),
             file_template=str(payload["file_template"]),
             embed_unsynced_lyrics=bool(payload["embed_unsynced_lyrics"]),

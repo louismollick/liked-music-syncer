@@ -1,9 +1,11 @@
 import type {
   AuthStatus,
+  BrowserAuthCaptureResult,
   CommandResult,
   DeviceAuthFinishResult,
   DeviceAuthSessionView,
   DeviceAuthStartResult,
+  YtDlpCookiesBrowser,
 } from '@shared/contracts'
 import { shell } from 'electron'
 import type { AppDatabase } from '../db/database'
@@ -276,6 +278,36 @@ export class OAuthService {
       ok: result.ok,
       message: result.message,
       state: result.state,
+      authStatus: await this.getStatus(),
+    }
+  }
+
+  async captureBrowserAuth(
+    browser: YtDlpCookiesBrowser
+  ): Promise<BrowserAuthCaptureResult> {
+    const result =
+      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+        'auth-capture-browser',
+        {
+          browser,
+        }
+      )
+
+    if (result.ok && result.credential_json) {
+      await this.settingsService.saveYtMusicBrowserAuth(result.credential_json)
+      this.lastError = null
+    } else {
+      this.lastError = result.message
+      await this.persistAuthFailure(
+        'browser_cookie_capture',
+        'browser_headers',
+        result.message
+      )
+    }
+
+    return {
+      ok: result.ok,
+      message: result.message,
       authStatus: await this.getStatus(),
     }
   }

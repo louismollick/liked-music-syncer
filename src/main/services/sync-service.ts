@@ -107,6 +107,8 @@ export class SyncService {
   private readonly logsDirectory = path.join(app.getPath('userData'), 'logs')
   private activeRunId: string | null = null
   private activeProcess: ChildProcessWithoutNullStreams | null = null
+  private cancelKillTimer: NodeJS.Timeout | null = null
+  private cancelRequestedRunId: string | null = null
 
   constructor(
     private readonly db: AppDatabase,
@@ -229,6 +231,7 @@ export class SyncService {
       ytmusic_client_secret: settings.ytmusicClientSecret,
       ytmusic_oauth_token_json: oauthTokenJson,
       ytmusic_browser_auth: browserAuthInput,
+      yt_dlp_cookies_browser: settings.ytDlpCookiesBrowser,
       folder_template: settings.folderTemplate,
       file_template: settings.fileTemplate,
       embed_unsynced_lyrics: settings.embedUnsyncedLyrics,
@@ -256,6 +259,11 @@ export class SyncService {
     ) => {
       if (finalized) return
       finalized = true
+      if (this.cancelKillTimer) {
+        clearTimeout(this.cancelKillTimer)
+        this.cancelKillTimer = null
+      }
+      this.cancelRequestedRunId = null
       this.activeRunId = null
       this.activeProcess = null
       await this.updateRun(runId, {
@@ -297,7 +305,7 @@ export class SyncService {
       while (nextNewline >= 0) {
         const line = stdoutBuffer.slice(0, nextNewline).trim()
         stdoutBuffer = stdoutBuffer.slice(nextNewline + 1)
-        if (line) {
+        if (line.startsWith('{')) {
           void this.handleWorkerEvent(runId, line)
         }
         nextNewline = stdoutBuffer.indexOf('\n')
@@ -315,17 +323,18 @@ export class SyncService {
     })
 
     child.on('exit', (code, signal) => {
-      void finalize(
-        code === 0
-          ? 'completed'
-          : signal === 'SIGTERM'
-            ? 'cancelled'
-            : 'failed',
-        {
-          code,
-          signal,
-        }
-      )
+      const status =
+        this.cancelRequestedRunId === runId
+          ? 'cancelled'
+          : code === 0
+            ? 'completed'
+            : signal === 'SIGTERM'
+              ? 'cancelled'
+              : 'failed'
+      void finalize(status, {
+        code,
+        signal,
+      })
     })
     child.on('error', (error) => {
       void finalize('failed', { errorMessage: error.message })
@@ -340,8 +349,59 @@ export class SyncService {
       return { ok: false, message: 'That run is not active.' }
     }
 
-    this.activeProcess.kill('SIGTERM')
+    const child = this.activeProcess
+    const killed = this.killActiveRun('SIGTERM')
+    if (!killed) {
+      return { ok: false, message: 'Unable to stop the active run.' }
+    }
+
+    if (this.cancelKillTimer) {
+      clearTimeout(this.cancelKillTimer)
+    }
+    this.cancelRequestedRunId = runId
+    this.activeRunId = null
+    this.cancelKillTimer = setTimeout(() => {
+      if (this.activeProcess === child) {
+        this.killActiveRun('SIGKILL')
+      }
+    }, 5_000)
+
+    await this.updateRun(runId, {
+      status: 'cancelled',
+      endedAt: nowIso(),
+    })
+
+    await this.insertRunLog(
+      runId,
+      'warn',
+      'finalize',
+      'cancel-requested',
+      'Cancellation requested.'
+    )
+    await this.emitSnapshot()
+
     return { ok: true, message: 'Cancellation requested.' }
+  }
+
+  async clearSyncData(): Promise<CommandResult> {
+    if (this.activeRunId || this.activeProcess) {
+      return {
+        ok: false,
+        message: 'Stop the active run before clearing sync data.',
+      }
+    }
+
+    await this.db.delete(artifactsTable)
+    await this.db.delete(songLogsTable)
+    await this.db.delete(syncRunItemsTable)
+    await this.db.delete(syncRunsTable)
+    await this.db.delete(processedSongsTable)
+    await this.emitSnapshot()
+
+    return {
+      ok: true,
+      message: 'Sync database cleared. Settings and auth left intact.',
+    }
   }
 
   async doctor(): Promise<CommandResult> {
@@ -477,6 +537,10 @@ export class SyncService {
           event.message,
           event.context
         )
+      }
+      if (this.cancelRequestedRunId === runId) {
+        await this.emitSnapshot()
+        return
       }
       if (event.event === 'failed') {
         await this.updateRun(runId, {
@@ -757,6 +821,22 @@ export class SyncService {
     const snapshot = await this.getSnapshot()
     for (const listener of this.listeners) {
       listener(snapshot)
+    }
+  }
+
+  private killActiveRun(signal: NodeJS.Signals) {
+    const child = this.activeProcess
+    if (!child) return false
+
+    try {
+      if (process.platform !== 'win32' && child.pid) {
+        process.kill(-child.pid, signal)
+      } else {
+        child.kill(signal)
+      }
+      return true
+    } catch {
+      return false
     }
   }
 }

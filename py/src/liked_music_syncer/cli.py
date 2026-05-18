@@ -9,6 +9,7 @@ from typing import Any
 from .auth import (
     check_auth_status,
     check_browser_auth_status,
+    capture_browser_auth_from_browser,
     finish_device_auth,
     start_device_auth,
 )
@@ -87,6 +88,14 @@ def main() -> int:
                     token_json=str(payload["token_json"]),
                 )
             )
+        return 0
+
+    if command == "auth-capture-browser":
+        write_json(
+            capture_browser_auth_from_browser(
+                browser_name=str(payload.get("browser", "firefox")),
+            )
+        )
         return 0
 
     if command == "doctor":

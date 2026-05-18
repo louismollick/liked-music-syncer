@@ -168,6 +168,8 @@ If you package without the bgutil plugin/provider bundle, `yt-dlp` will fall bac
 
 `yt-dlp` playback/download auth is separate. The app now handles that through the bundled bgutil PO-token plugin/provider automatically. You do not need to paste a manual PO token into the UI.
 
+In `Browser headers` mode, the app can now derive YT Music auth from the selected `yt-dlp cookies browser` using the same browser-cookie extraction path as `yt-dlp`. Manual header paste remains available as fallback.
+
 ## Install
 
 ```bash

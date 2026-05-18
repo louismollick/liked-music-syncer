@@ -33,6 +33,16 @@ export type RunStatus =
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type YtMusicAuthMode = 'oauth_device' | 'browser_headers'
+export type YtDlpCookiesBrowser =
+  | 'brave'
+  | 'chrome'
+  | 'chromium'
+  | 'edge'
+  | 'firefox'
+  | 'opera'
+  | 'safari'
+  | 'vivaldi'
+  | 'whale'
 
 export interface DeviceAuthSessionView {
   verificationUrl: string
@@ -64,6 +74,7 @@ export interface AppSettingsView {
   hasYtMusicClientSecret: boolean
   hasYtMusicOAuthToken: boolean
   hasYtMusicBrowserAuth: boolean
+  ytDlpCookiesBrowser: YtDlpCookiesBrowser
   folderTemplate: string
   fileTemplate: string
   embedUnsyncedLyrics: boolean
@@ -78,6 +89,7 @@ export interface SaveSettingsInput {
   ytmusicClientId: string
   ytmusicClientSecret?: string
   ytmusicBrowserAuth?: string
+  ytDlpCookiesBrowser: YtDlpCookiesBrowser
   rcloneRemote: string
   remoteMusicRoot: string
   folderTemplate: string
@@ -102,6 +114,10 @@ export interface DeviceAuthStartResult extends CommandResult {
 
 export interface DeviceAuthFinishResult extends CommandResult {
   state: 'pending' | 'authorized' | 'expired' | 'failed'
+  authStatus: AuthStatus
+}
+
+export interface BrowserAuthCaptureResult extends CommandResult {
   authStatus: AuthStatus
 }
 
@@ -183,6 +199,9 @@ export interface ElectronApi {
     getStatus: () => Promise<AuthStatus>
     startDeviceAuth: () => Promise<DeviceAuthStartResult>
     finishDeviceAuth: () => Promise<DeviceAuthFinishResult>
+    captureBrowserAuth: (
+      browser: YtDlpCookiesBrowser
+    ) => Promise<BrowserAuthCaptureResult>
     disconnect: () => Promise<CommandResult>
   }
   settings: {
@@ -195,6 +214,7 @@ export interface ElectronApi {
   sync: {
     start: (input?: { mode?: SyncTriggerMode }) => Promise<CommandResult>
     cancel: (runId: string) => Promise<CommandResult>
+    clearSyncData: () => Promise<CommandResult>
     doctor: () => Promise<CommandResult>
     listRuns: () => Promise<SyncRunSummary[]>
     getRun: (runId: string) => Promise<SyncRunDetail | null>

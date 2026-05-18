@@ -62,6 +62,7 @@ export class PythonWorkerService {
       ],
       {
         cwd: process.cwd(),
+        detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
       }
     )

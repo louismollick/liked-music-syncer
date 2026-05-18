@@ -3,6 +3,7 @@ import type {
   BinaryStatus,
   CommandResult,
   SaveSettingsInput,
+  YtDlpCookiesBrowser,
 } from '@shared/contracts'
 import { eq } from 'drizzle-orm'
 import { safeStorage } from 'electron'
@@ -22,11 +23,15 @@ const DEFAULT_SETTINGS: AppSettingsView = {
   hasYtMusicClientSecret: false,
   hasYtMusicOAuthToken: false,
   hasYtMusicBrowserAuth: false,
+  ytDlpCookiesBrowser: 'firefox',
   folderTemplate: '{albumartist}/{album}',
   fileTemplate: '{track:02d} {title}',
   embedUnsyncedLyrics: true,
   writeLrcSidecar: true,
 }
+
+const COOKIES_BROWSER_KEY = 'ytDlpCookiesBrowser'
+const COOKIES_BROWSER_EXPLICIT_KEY = 'ytDlpCookiesBrowserExplicit'
 
 export interface RuntimeSettings {
   outputDirectory: string
@@ -39,6 +44,7 @@ export interface RuntimeSettings {
   ytmusicClientSecret: string
   ytmusicOAuthTokenJson: string
   ytmusicBrowserAuth: string
+  ytDlpCookiesBrowser: YtDlpCookiesBrowser
   folderTemplate: string
   fileTemplate: string
   embedUnsyncedLyrics: boolean
@@ -67,6 +73,7 @@ export class SettingsService {
       ),
       hasYtMusicOAuthToken: this.hasStoredSecret(rowMap, 'ytmusicOAuthToken'),
       hasYtMusicBrowserAuth: this.hasStoredSecret(rowMap, 'ytmusicBrowserAuth'),
+      ytDlpCookiesBrowser: this.getCookiesBrowserValue(rowMap),
       folderTemplate:
         this.getPlainValue(rowMap, 'folderTemplate') ||
         DEFAULT_SETTINGS.folderTemplate,
@@ -91,6 +98,8 @@ export class SettingsService {
     await this.writeValue('remoteCopyEnabled', String(input.remoteCopyEnabled))
     await this.writeValue('ytmusicAuthMode', input.ytmusicAuthMode)
     await this.writeValue('ytmusicClientId', input.ytmusicClientId.trim())
+    await this.writeValue(COOKIES_BROWSER_KEY, input.ytDlpCookiesBrowser)
+    await this.writeValue(COOKIES_BROWSER_EXPLICIT_KEY, 'true')
     await this.writeValue('rcloneRemote', input.rcloneRemote.trim())
     await this.writeValue('remoteMusicRoot', input.remoteMusicRoot.trim())
     await this.writeValue(
@@ -128,6 +137,11 @@ export class SettingsService {
   }
 
   async getRuntimeSettings(): Promise<RuntimeSettings> {
+    const storedCookiesBrowser =
+      await this.getSecretOrPlain(COOKIES_BROWSER_KEY)
+    const cookiesBrowserExplicit =
+      (await this.getSecretOrPlain(COOKIES_BROWSER_EXPLICIT_KEY)) === 'true'
+
     return {
       outputDirectory: (await this.getSecretOrPlain('outputDirectory')) ?? '',
       dryRun: ((await this.getSecretOrPlain('dryRun')) ?? 'false') === 'true',
@@ -147,6 +161,10 @@ export class SettingsService {
         (await this.getSecretOrPlain('ytmusicOAuthToken')) ?? '',
       ytmusicBrowserAuth:
         (await this.getSecretOrPlain('ytmusicBrowserAuth')) ?? '',
+      ytDlpCookiesBrowser: this.normalizeCookiesBrowserValue(
+        storedCookiesBrowser,
+        cookiesBrowserExplicit
+      ),
       folderTemplate:
         (await this.getSecretOrPlain('folderTemplate')) ??
         DEFAULT_SETTINGS.folderTemplate,
@@ -283,6 +301,39 @@ export class SettingsService {
   ): AppSettingsView['ytmusicAuthMode'] {
     const value = rowMap.get('ytmusicAuthMode')?.value
     return value === 'browser_headers' ? 'browser_headers' : 'oauth_device'
+  }
+
+  private getCookiesBrowserValue(
+    rowMap: Map<string, { value: string }>
+  ): YtDlpCookiesBrowser {
+    return this.normalizeCookiesBrowserValue(
+      rowMap.get(COOKIES_BROWSER_KEY)?.value ?? null,
+      rowMap.get(COOKIES_BROWSER_EXPLICIT_KEY)?.value === 'true'
+    )
+  }
+
+  private normalizeCookiesBrowserValue(
+    value: string | null,
+    explicit = false
+  ): YtDlpCookiesBrowser {
+    if (value === 'chrome' && !explicit) {
+      return DEFAULT_SETTINGS.ytDlpCookiesBrowser
+    }
+
+    switch (value) {
+      case 'brave':
+      case 'chrome':
+      case 'chromium':
+      case 'edge':
+      case 'firefox':
+      case 'opera':
+      case 'safari':
+      case 'vivaldi':
+      case 'whale':
+        return value
+      default:
+        return DEFAULT_SETTINGS.ytDlpCookiesBrowser
+    }
   }
 
   private hasStoredSecret(
