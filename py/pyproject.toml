@@ -5,6 +5,7 @@ description = "YT Music worker for liked-music-syncer"
 requires-python = ">=3.12"
 dependencies = [
   "httpx>=0.28.1",
+  "lingua-language-detector>=2.2.0",
   "mediafile>=0.13.0",
   "mypy>=1.18.2",
   "pillow>=11.2.1",

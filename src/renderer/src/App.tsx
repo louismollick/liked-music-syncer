@@ -3,6 +3,7 @@ import type {
   AuthStatus,
   BinaryStatus,
   CommandResult,
+  LikedArtistView,
   SettingsSaveResult,
   SongLogEntry,
   SyncRunDetail,
@@ -10,7 +11,6 @@ import type {
   SyncRunSummary,
   SyncSnapshot,
   YtDlpCookiesBrowser,
-  YtMusicAuthMode,
 } from '@shared/contracts'
 import {
   type Dispatch,
@@ -22,7 +22,12 @@ import {
   useState,
 } from 'react'
 
-type Screen = 'overview' | 'current-run' | 'history' | 'settings'
+type Screen =
+  | 'overview'
+  | 'current-run'
+  | 'history'
+  | 'settings'
+  | 'library-artists'
 
 const EMPTY_SETTINGS: AppSettingsView = {
   outputDirectory: '',
@@ -31,10 +36,6 @@ const EMPTY_SETTINGS: AppSettingsView = {
   outputFormat: 'm4a',
   rcloneRemote: '',
   remoteMusicRoot: '',
-  ytmusicAuthMode: 'oauth_device',
-  ytmusicClientId: '',
-  hasYtMusicClientSecret: false,
-  hasYtMusicOAuthToken: false,
   hasYtMusicBrowserAuth: false,
   ytDlpCookiesBrowser: 'firefox',
   folderTemplate: '{albumartist}/{album}',
@@ -45,11 +46,8 @@ const EMPTY_SETTINGS: AppSettingsView = {
 
 const EMPTY_AUTH: AuthStatus = {
   authMode: 'none',
-  hasClientConfig: false,
   isAuthenticated: false,
-  hasOAuthToken: false,
   hasBrowserAuth: false,
-  pendingDeviceAuth: null,
   lastError: null,
 }
 
@@ -84,8 +82,12 @@ function App(): JSX.Element {
   const [binaryStatus, setBinaryStatus] = useState<BinaryStatus | null>(null)
   const [doctorMessage, setDoctorMessage] = useState('')
   const [captureInFlight, setCaptureInFlight] = useState(false)
+  const [artists, setArtists] = useState<LikedArtistView[]>([])
+  const [selectedArtistIds, setSelectedArtistIds] = useState<string[]>([])
+  const [refreshArtistsInFlight, setRefreshArtistsInFlight] = useState(false)
+  const [syncMissingRemoteInFlight, setSyncMissingRemoteInFlight] =
+    useState(false)
   const [secretDrafts, setSecretDrafts] = useState({
-    ytmusicClientSecret: '',
     ytmusicBrowserAuth: '',
   })
   const selectedRunSummary =
@@ -134,15 +136,21 @@ function App(): JSX.Element {
     : { completed: 0, failed: 0, skipped: 0, total: 0 }
 
   const refreshAll = useEffectEvent(async () => {
-    const [nextSettings, nextAuth, nextSnapshot] = await Promise.all([
-      window.api.settings.get(),
-      window.api.auth.getStatus(),
-      window.api.sync.getSnapshot(),
-    ])
+    const [nextSettings, nextAuth, nextSnapshot, nextArtists] =
+      await Promise.all([
+        window.api.settings.get(),
+        window.api.auth.getStatus(),
+        window.api.sync.getSnapshot(),
+        window.api.library.listArtists(),
+      ])
 
     setSettings(nextSettings)
     setAuthStatus(nextAuth)
     setSnapshot(nextSnapshot)
+    setArtists(nextArtists)
+    setSelectedArtistIds((current) =>
+      current.filter((id) => nextArtists.some((artist) => artist.id === id))
+    )
 
     const nextSelectedRunId =
       selectedRunId ??
@@ -214,28 +222,6 @@ function App(): JSX.Element {
     }
   }, [loadedRun, selectedRunId, selectedRunSummary, snapshot.activeRun])
 
-  const pollDeviceAuth = useEffectEvent(async () => {
-    const result = await window.api.auth.finishDeviceAuth()
-    setAuthStatus(result.authStatus)
-    setMessage(result.message)
-
-    if (result.state !== 'pending') {
-      await refreshAll()
-    }
-  })
-
-  useEffect(() => {
-    const pending = authStatus.pendingDeviceAuth
-    if (!pending) return
-
-    const intervalMs = Math.max(pending.intervalSeconds, 5) * 1000
-    const timer = window.setInterval(() => {
-      void pollDeviceAuth()
-    }, intervalMs)
-
-    return () => window.clearInterval(timer)
-  }, [authStatus.pendingDeviceAuth])
-
   const refreshSettingsAndSnapshot = useEffectEvent(async () => {
     const [nextSettings, nextSnapshot] = await Promise.all([
       window.api.settings.get(),
@@ -273,7 +259,7 @@ function App(): JSX.Element {
     void window.api.sync
       .getSongLogs({
         runId: run.id,
-        sourceVideoId: item.sourceVideoId,
+        youtubeMusicTrackId: item.youtubeMusicTrackId,
       })
       .then(setSelectedLogs)
   }, [selectedItem, visibleRun])
@@ -308,9 +294,6 @@ function App(): JSX.Element {
       outputDirectory: settings.outputDirectory,
       dryRun: settings.dryRun,
       remoteCopyEnabled: settings.remoteCopyEnabled,
-      ytmusicAuthMode: settings.ytmusicAuthMode,
-      ytmusicClientId: settings.ytmusicClientId,
-      ytmusicClientSecret: secretDrafts.ytmusicClientSecret.trim() || undefined,
       ytmusicBrowserAuth: secretDrafts.ytmusicBrowserAuth.trim() || undefined,
       ytDlpCookiesBrowser: settings.ytDlpCookiesBrowser,
       rcloneRemote: settings.rcloneRemote,
@@ -331,7 +314,6 @@ function App(): JSX.Element {
 
     if (options?.clearSecretDrafts ?? true) {
       setSecretDrafts({
-        ytmusicClientSecret: '',
         ytmusicBrowserAuth: '',
       })
     }
@@ -392,17 +374,6 @@ function App(): JSX.Element {
     await runAction(window.api.sync.clearSyncData())
   }
 
-  async function handleStartDeviceAuth() {
-    await saveCurrentSettings({
-      refresh: false,
-      clearSecretDrafts: false,
-    })
-
-    const result = await window.api.auth.startDeviceAuth()
-    setMessage(result.message)
-    await refreshAll()
-  }
-
   async function handleCaptureBrowserAuth() {
     setCaptureInFlight(true)
     try {
@@ -432,14 +403,47 @@ function App(): JSX.Element {
     }
   }
 
-  const authActionLabel =
-    settings.ytmusicAuthMode === 'browser_headers'
-      ? authStatus.isAuthenticated
-        ? 'Disconnect account'
-        : 'Pull from browser'
-      : authStatus.isAuthenticated
-        ? 'Disconnect account'
-        : 'Connect YT Music'
+  async function handleRefreshArtists() {
+    setRefreshArtistsInFlight(true)
+    try {
+      const result = await window.api.library.refreshArtists()
+      setMessage(
+        result.details ? `${result.message} ${result.details}` : result.message
+      )
+      const nextArtists = await window.api.library.listArtists()
+      setArtists(nextArtists)
+      setSelectedArtistIds((current) =>
+        current.filter((id) => nextArtists.some((artist) => artist.id === id))
+      )
+    } finally {
+      setRefreshArtistsInFlight(false)
+    }
+  }
+
+  async function handleReprocessArtists() {
+    if (selectedArtistIds.length === 0) return
+    const result = await window.api.sync.reprocessArtists(selectedArtistIds)
+    setMessage(
+      result.details ? `${result.message} ${result.details}` : result.message
+    )
+    await refreshAll()
+    if (result.ok) {
+      setScreen('current-run')
+    }
+  }
+
+  async function handleSyncMissingToRemote() {
+    setSyncMissingRemoteInFlight(true)
+    try {
+      await runAction(window.api.sync.syncMissingToRemote())
+    } finally {
+      setSyncMissingRemoteInFlight(false)
+    }
+  }
+
+  const authActionLabel = authStatus.isAuthenticated
+    ? 'Disconnect account'
+    : 'Pull from browser'
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#07090d] font-['IBM_Plex_Sans'] text-slate-100 antialiased">
@@ -490,6 +494,15 @@ function App(): JSX.Element {
                 meta={settings.outputDirectory ? 'Configured' : 'Needs output'}
                 onClick={() => setScreen('settings')}
               />
+              <div className="px-2 pt-3 text-[0.68rem] uppercase tracking-[0.16em] text-slate-500">
+                Library
+              </div>
+              <RailButton
+                active={screen === 'library-artists'}
+                label="Artists"
+                meta={`${artists.length} cached`}
+                onClick={() => setScreen('library-artists')}
+              />
             </nav>
 
             <div className="grid content-end gap-3">
@@ -512,13 +525,26 @@ function App(): JSX.Element {
                   Stop active run
                 </button>
               ) : (
-                <button
-                  className={buttonPrimaryClass}
-                  type="button"
-                  onClick={() => runAction(window.api.sync.start())}
-                >
-                  Start sync
-                </button>
+                <div className="grid gap-2">
+                  <button
+                    className={buttonPrimaryClass}
+                    type="button"
+                    onClick={() => runAction(window.api.sync.start())}
+                  >
+                    Start sync
+                  </button>
+                  <button
+                    className={buttonClass}
+                    type="button"
+                    disabled={syncMissingRemoteInFlight}
+                    onClick={() => void handleSyncMissingToRemote()}
+                    title="Copies only missing local tracks to remote. No delete/retag."
+                  >
+                    {syncMissingRemoteInFlight
+                      ? 'Syncing missing to remote...'
+                      : 'Sync Missing to Remote'}
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -549,11 +575,7 @@ function App(): JSX.Element {
                   className={buttonPrimaryClass}
                   type="button"
                   disabled={captureInFlight}
-                  onClick={() =>
-                    settings.ytmusicAuthMode === 'browser_headers'
-                      ? void handleCaptureBrowserAuth()
-                      : void handleStartDeviceAuth()
-                  }
+                  onClick={() => void handleCaptureBrowserAuth()}
                 >
                   {authActionLabel}
                 </button>
@@ -601,39 +623,9 @@ function App(): JSX.Element {
             </div>
           ) : null}
 
-          {authStatus.pendingDeviceAuth ? (
-            <section className={cn(panelClass, 'grid gap-5 p-6')}>
-              <div>
-                <p className="text-[0.68rem] uppercase tracking-[0.16em] text-slate-500">
-                  Device flow active
-                </p>
-                <h3 className="mt-2 font-['Syne'] text-2xl tracking-[-0.04em] text-slate-50">
-                  Enter this code in Google’s consent screen
-                </h3>
-              </div>
-
-              <div className="rounded-[18px] border border-cyan-300/30 bg-[#11171d] px-5 py-4 font-['IBM_Plex_Mono'] text-[2rem] tracking-[0.18em] text-slate-50">
-                {authStatus.pendingDeviceAuth.userCode}
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <MetaRow
-                  label="Verification URL"
-                  value={authStatus.pendingDeviceAuth.verificationUrl}
-                  mono
-                />
-                <MetaRow
-                  label="Expires"
-                  value={formatDateTime(authStatus.pendingDeviceAuth.expiresAt)}
-                />
-              </div>
-            </section>
-          ) : null}
-
           {screen === 'overview' ? (
             <OverviewScreen
               authStatus={authStatus}
-              authMode={settings.ytmusicAuthMode}
               headlineRun={headlineRun}
               onOpenRun={() => {
                 setScreen('current-run')
@@ -642,6 +634,9 @@ function App(): JSX.Element {
                 }
               }}
               onStartSync={() => runAction(window.api.sync.start())}
+              onSyncMissingToRemote={() => void handleSyncMissingToRemote()}
+              syncMissingRemoteInFlight={syncMissingRemoteInFlight}
+              runActive={Boolean(snapshot.activeRun)}
               onOpenSettings={() => setScreen('settings')}
             />
           ) : null}
@@ -678,7 +673,6 @@ function App(): JSX.Element {
               onSecretDraftsChange={setSecretDrafts}
               onChooseOutputDirectory={() => void chooseOutputDirectory()}
               onSave={() => void handleSaveSettings()}
-              onStartDeviceAuth={() => void handleStartDeviceAuth()}
               onCaptureBrowserAuth={() => void handleCaptureBrowserAuth()}
               onDisconnect={() => void runAction(window.api.auth.disconnect())}
               onBinaryTest={() => void handleBinaryTest()}
@@ -690,25 +684,170 @@ function App(): JSX.Element {
               captureInFlight={captureInFlight}
             />
           ) : null}
+          {screen === 'library-artists' ? (
+            <LibraryArtistsScreen
+              artists={artists}
+              selectedArtistIds={selectedArtistIds}
+              onToggleArtist={(artistId) =>
+                setSelectedArtistIds((current) =>
+                  current.includes(artistId)
+                    ? current.filter((id) => id !== artistId)
+                    : [...current, artistId]
+                )
+              }
+              onRefreshArtists={() => void handleRefreshArtists()}
+              onReprocessArtists={() => void handleReprocessArtists()}
+              refreshInFlight={refreshArtistsInFlight}
+              authReady={authStatus.isAuthenticated}
+              runActive={Boolean(snapshot.activeRun)}
+            />
+          ) : null}
         </main>
       </div>
     </div>
   )
 }
 
+function LibraryArtistsScreen({
+  artists,
+  selectedArtistIds,
+  onToggleArtist,
+  onRefreshArtists,
+  onReprocessArtists,
+  refreshInFlight,
+  authReady,
+  runActive,
+}: {
+  artists: LikedArtistView[]
+  selectedArtistIds: string[]
+  onToggleArtist: (artistId: string) => void
+  onRefreshArtists: () => void
+  onReprocessArtists: () => void
+  refreshInFlight: boolean
+  authReady: boolean
+  runActive: boolean
+}) {
+  const selectedArtists = artists.filter((artist) =>
+    selectedArtistIds.includes(artist.id)
+  )
+  const totalLiked = selectedArtists.reduce(
+    (sum, artist) => sum + artist.likedTrackCount,
+    0
+  )
+  const sortedArtists = [...artists].sort(
+    (a, b) =>
+      b.likedTrackCount - a.likedTrackCount || a.name.localeCompare(b.name)
+  )
+  return (
+    <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+      <article className={cn(panelClass, 'grid gap-5 p-6')}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-['Syne'] text-2xl tracking-[-0.04em] text-slate-50">
+            Liked artists
+          </h3>
+          <button
+            className={buttonClass}
+            type="button"
+            disabled={refreshInFlight}
+            onClick={onRefreshArtists}
+          >
+            {refreshInFlight ? 'Refreshing...' : 'Refresh liked artists'}
+          </button>
+        </div>
+        <div className="grid max-h-[620px] gap-2 overflow-auto pr-1">
+          {sortedArtists.map((artist) => (
+            <button
+              key={artist.id}
+              className={cn(
+                'flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition duration-200',
+                selectedArtistIds.includes(artist.id)
+                  ? 'border-cyan-300/35 bg-[#10171d]'
+                  : 'border-white/6 bg-white/[0.03] hover:border-white/14'
+              )}
+              type="button"
+              onClick={() => onToggleArtist(artist.id)}
+            >
+              <span className="min-w-0">
+                <strong className="block truncate text-sm text-slate-50">
+                  {artist.name}
+                </strong>
+                <small className="mt-1 block text-xs text-slate-400">
+                  {artist.likedTrackCount} liked
+                </small>
+              </span>
+              {artist.photoUrl ? (
+                <img
+                  src={artist.photoUrl}
+                  alt={artist.name}
+                  className="h-11 w-11 rounded-full object-cover"
+                />
+              ) : (
+                <div className="grid h-11 w-11 place-content-center rounded-full border border-white/10 bg-white/[0.03] text-xs text-slate-300">
+                  {artist.name.slice(0, 2).toUpperCase()}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      </article>
+
+      <article className={cn(panelClass, 'grid gap-5 p-6')}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-['Syne'] text-2xl tracking-[-0.04em] text-slate-50">
+            Selection
+          </h3>
+          <button
+            className={buttonPrimaryClass}
+            type="button"
+            disabled={selectedArtistIds.length === 0 || !authReady || runActive}
+            onClick={onReprocessArtists}
+          >
+            Reprocess Artist Songs
+          </button>
+        </div>
+        <MetaRow
+          label="Selected artists"
+          value={String(selectedArtists.length)}
+        />
+        <MetaRow label="Combined liked tracks" value={String(totalLiked)} />
+        <div className="grid gap-2">
+          {selectedArtists.length === 0 ? (
+            <p className="text-sm leading-6 text-slate-400">
+              Select one or more artists from the list.
+            </p>
+          ) : (
+            selectedArtists.map((artist) => (
+              <div
+                key={artist.id}
+                className="rounded-2xl border border-white/6 bg-white/[0.03] px-3 py-2 text-sm text-slate-200"
+              >
+                {artist.name}
+              </div>
+            ))
+          )}
+        </div>
+      </article>
+    </section>
+  )
+}
+
 function OverviewScreen({
   authStatus,
-  authMode,
   headlineRun,
   onOpenRun,
   onStartSync,
+  onSyncMissingToRemote,
+  syncMissingRemoteInFlight,
+  runActive,
   onOpenSettings,
 }: {
   authStatus: AuthStatus
-  authMode: YtMusicAuthMode
   headlineRun: SyncRunSummary | null
   onOpenRun: () => void
   onStartSync: () => void
+  onSyncMissingToRemote: () => void
+  syncMissingRemoteInFlight: boolean
+  runActive: boolean
   onOpenSettings: () => void
 }) {
   return (
@@ -727,9 +866,7 @@ function OverviewScreen({
             <h3 className="mt-2 font-['Syne'] text-2xl tracking-[-0.04em] text-slate-50">
               {authStatus.isAuthenticated
                 ? 'YT Music ready'
-                : authMode === 'browser_headers'
-                  ? 'Needs browser headers'
-                  : 'Needs device auth'}
+                : 'Pull auth from browser'}
             </h3>
           </div>
           <StatusChip
@@ -740,9 +877,7 @@ function OverviewScreen({
         <p className="max-w-2xl text-sm leading-6 text-slate-400">
           {authStatus.isAuthenticated
             ? 'Worker can fetch liked songs and start exact catalog resolution.'
-            : authMode === 'browser_headers'
-              ? 'Pull auth from your selected browser or paste a browser-auth JSON blob, then start the worker sync.'
-              : 'Save client credentials, launch device auth, then start the worker sync.'}
+            : 'Use the selected browser as the default source for YT Music auth. Manual headers stay available in settings as an override.'}
         </p>
         <div className="flex flex-wrap gap-3">
           <button
@@ -758,6 +893,17 @@ function OverviewScreen({
             onClick={onOpenSettings}
           >
             Open settings
+          </button>
+          <button
+            className={buttonClass}
+            type="button"
+            disabled={runActive || syncMissingRemoteInFlight}
+            onClick={onSyncMissingToRemote}
+            title="Copies only missing local tracks to remote. No delete/retag."
+          >
+            {syncMissingRemoteInFlight
+              ? 'Syncing missing to remote...'
+              : 'Sync Missing to Remote'}
           </button>
         </div>
       </article>
@@ -1143,7 +1289,6 @@ function SettingsScreen({
   onSecretDraftsChange,
   onChooseOutputDirectory,
   onSave,
-  onStartDeviceAuth,
   onCaptureBrowserAuth,
   onDisconnect,
   onBinaryTest,
@@ -1154,7 +1299,6 @@ function SettingsScreen({
   settings: AppSettingsView
   authStatus: AuthStatus
   secretDrafts: {
-    ytmusicClientSecret: string
     ytmusicBrowserAuth: string
   }
   binaryStatus: BinaryStatus | null
@@ -1163,13 +1307,11 @@ function SettingsScreen({
   onSettingsChange: Dispatch<SetStateAction<AppSettingsView>>
   onSecretDraftsChange: Dispatch<
     SetStateAction<{
-      ytmusicClientSecret: string
       ytmusicBrowserAuth: string
     }>
   >
   onChooseOutputDirectory: () => void
   onSave: () => void
-  onStartDeviceAuth: () => void
   onCaptureBrowserAuth: () => void
   onDisconnect: () => void
   onBinaryTest: () => void
@@ -1196,73 +1338,28 @@ function SettingsScreen({
         </div>
 
         <div className="grid gap-4">
-          <ModeField
-            label="Auth mode"
-            value={settings.ytmusicAuthMode}
-            options={[
-              {
-                value: 'oauth_device',
-                label: 'OAuth device',
-                description: 'Google client ID + secret, then device login.',
-              },
-              {
-                value: 'browser_headers',
-                label: 'Browser headers',
-                description:
-                  'Pull from browser cookies or paste browser.json manually. yt-dlp PO tokens are handled separately.',
-              },
-            ]}
-            onChange={(value) =>
-              onSettingsChange((current) => ({
-                ...current,
-                ytmusicAuthMode: value,
-              }))
-            }
-          />
-
-          {settings.ytmusicAuthMode === 'oauth_device' ? (
-            <>
-              <Field
-                label="Client ID"
-                value={settings.ytmusicClientId}
-                onChange={(value) =>
-                  onSettingsChange((current) => ({
-                    ...current,
-                    ytmusicClientId: value,
-                  }))
+          <div className="grid gap-3 rounded-[22px] border border-cyan-300/12 bg-[linear-gradient(180deg,rgba(26,42,49,0.52),rgba(11,17,22,0.22))] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <span className="text-[0.78rem] uppercase tracking-[0.12em] text-cyan-200/70">
+                  Default flow
+                </span>
+                <p className="text-sm leading-6 text-slate-300">
+                  Pull auth from the browser below. This is the main path now.
+                </p>
+              </div>
+              <StatusChip
+                tone={settings.hasYtMusicBrowserAuth ? 'accent' : 'neutral'}
+                label={
+                  settings.hasYtMusicBrowserAuth ? 'saved auth' : 'no auth'
                 }
-                mono
+                compact
               />
-              <Field
-                label={`Client Secret ${settings.hasYtMusicClientSecret ? '(stored)' : ''}`}
-                value={secretDrafts.ytmusicClientSecret}
-                onChange={(value) =>
-                  onSecretDraftsChange((current) => ({
-                    ...current,
-                    ytmusicClientSecret: value,
-                  }))
-                }
-                mono
-                secret
-              />
-            </>
-          ) : (
-            <TextAreaField
-              label={`Browser Auth ${settings.hasYtMusicBrowserAuth ? '(stored)' : ''}`}
-              value={secretDrafts.ytmusicBrowserAuth}
-              onChange={(value) =>
-                onSecretDraftsChange((current) => ({
-                  ...current,
-                  ytmusicBrowserAuth: value,
-                }))
-              }
-              hint="Click Pull from browser to derive YT Music auth from the selected browser cookies, or paste copied /browse headers/browser-auth JSON manually."
-              mono
-            />
-          )}
+            </div>
+          </div>
 
           <SelectField
-            label="yt-dlp cookies browser"
+            label="Browser source"
             value={settings.ytDlpCookiesBrowser}
             options={[
               'firefox',
@@ -1281,31 +1378,51 @@ function SettingsScreen({
                 ytDlpCookiesBrowser: value,
               }))
             }
-            hint="Downloads use yt-dlp --cookies-from-browser with this browser, same approach as flux-downloader."
+            hint="Used for both YT Music auth pull and yt-dlp cookie extraction."
           />
+
+          <details className="group rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+            <summary className="cursor-pointer list-none">
+              <div className="flex items-center justify-between gap-3">
+                <div className="grid gap-1">
+                  <span className="text-[0.78rem] uppercase tracking-[0.12em] text-slate-500">
+                    Manual override
+                  </span>
+                  <p className="text-sm leading-6 text-slate-300">
+                    Paste browser-auth JSON or copied `/browse` headers only if
+                    browser pull fails.
+                  </p>
+                </div>
+                <span className="text-xs uppercase tracking-[0.14em] text-slate-500 transition group-open:rotate-45">
+                  +
+                </span>
+              </div>
+            </summary>
+            <div className="mt-4 border-t border-white/6 pt-4">
+              <TextAreaField
+                label={`Browser auth override ${settings.hasYtMusicBrowserAuth ? '(stored auth exists)' : ''}`}
+                value={secretDrafts.ytmusicBrowserAuth}
+                onChange={(value) =>
+                  onSecretDraftsChange(() => ({
+                    ytmusicBrowserAuth: value,
+                  }))
+                }
+                hint="Save or pull again to replace the stored auth."
+                mono
+              />
+            </div>
+          </details>
         </div>
 
         <div className="flex flex-wrap gap-3">
-          {settings.ytmusicAuthMode === 'oauth_device' ? (
-            <button
-              className={buttonPrimaryClass}
-              type="button"
-              onClick={onStartDeviceAuth}
-            >
-              Connect YT Music
-            </button>
-          ) : (
-            <button
-              className={buttonPrimaryClass}
-              type="button"
-              onClick={onCaptureBrowserAuth}
-              disabled={captureInFlight}
-            >
-              {captureInFlight
-                ? 'Pulling from browser...'
-                : 'Pull from browser'}
-            </button>
-          )}
+          <button
+            className={buttonPrimaryClass}
+            type="button"
+            onClick={onCaptureBrowserAuth}
+            disabled={captureInFlight}
+          >
+            {captureInFlight ? 'Pulling from browser...' : 'Pull from browser'}
+          </button>
           <button
             className={buttonGhostClass}
             type="button"
@@ -1669,50 +1786,6 @@ function SelectField({
   )
 }
 
-function ModeField({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string
-  value: YtMusicAuthMode
-  options: Array<{
-    value: YtMusicAuthMode
-    label: string
-    description: string
-  }>
-  onChange: (value: YtMusicAuthMode) => void
-}) {
-  return (
-    <div className="grid gap-3">
-      <span className="text-[0.78rem] uppercase tracking-[0.12em] text-slate-500">
-        {label}
-      </span>
-      <div className="grid gap-3">
-        {options.map((option) => (
-          <button
-            key={option.value}
-            className={cn(
-              'grid gap-1 rounded-2xl border px-4 py-3 text-left transition duration-200',
-              value === option.value
-                ? 'border-cyan-300/30 bg-cyan-300/10 text-slate-50'
-                : 'border-white/6 bg-white/[0.03] text-slate-200 hover:border-white/12'
-            )}
-            type="button"
-            onClick={() => onChange(option.value)}
-          >
-            <span className="text-sm font-medium">{option.label}</span>
-            <span className="text-sm leading-6 text-slate-400">
-              {option.description}
-            </span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function ToggleField({
   label,
   checked,
@@ -1861,6 +1934,8 @@ function screenTitle(screen: Screen) {
       return 'History'
     case 'settings':
       return 'Settings'
+    case 'library-artists':
+      return 'Library Artists'
   }
 }
 
@@ -1873,9 +1948,7 @@ function screenCopy(
     case 'overview':
       return authStatus.isAuthenticated
         ? 'Connection state, run summary, and the shortest path into a new sync.'
-        : authStatus.authMode === 'browser_headers'
-          ? 'Pull auth from your selected browser or paste a browser-auth JSON blob, then let the Python worker take over.'
-          : 'Save client credentials, complete device auth, then let the Python worker take over.'
+        : 'Pull auth from your selected browser, then let the Python worker take over.'
     case 'current-run':
       if (!headlineRun) {
         return 'No run loaded yet. Start a sync to populate the inspector.'
@@ -1888,7 +1961,9 @@ function screenCopy(
     case 'history':
       return 'Prior runs stay inspectable without the old category and YT Music diagnostic tabs.'
     case 'settings':
-      return 'Auth mode, credential storage, output, templates, remote copy, and worker doctor checks.'
+      return 'Browser auth, output, templates, remote copy, and worker doctor checks.'
+    case 'library-artists':
+      return 'Cached artist list from liked songs with multi-select reprocess.'
   }
 }
 

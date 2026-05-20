@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,6 +11,8 @@ from liked_music_syncer.sync_engine import (
     _build_ytmusic_client,
     _configure_yt_dlp_plugins,
     _download_audio,
+    _musicbrainz_enrich,
+    run_sync,
     _resolve_exact_catalog,
     _resolve_lyrics,
 )
@@ -25,11 +28,7 @@ def _config(tmp_path: Path) -> SyncConfig:
         remote_copy_enabled=False,
         rclone_remote="",
         remote_music_root="",
-        ytmusic_auth_mode="oauth_device",
-        ytmusic_client_id="client-id",
-        ytmusic_client_secret="client-secret",
-        ytmusic_oauth_token_json="{}",
-        ytmusic_browser_auth="",
+        ytmusic_browser_auth="cookie: a=b",
         yt_dlp_cookies_browser="firefox",
         folder_template="{albumartist}/{album}",
         file_template="{track:02d} {title}",
@@ -58,6 +57,75 @@ def _item(
         cover_art_url=None,
         stage="source_resolve",
     )
+
+
+def _liked_track(video_id: str = "source123") -> dict[str, object]:
+    return {
+        "videoId": video_id,
+        "title": "blackout",
+        "artists": [{"name": "yeti let you notice"}],
+        "thumbnails": [],
+    }
+
+
+def _run_sync_for_lyrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    lyrics_text: str | None,
+    embed_unsynced_lyrics: bool = True,
+) -> tuple[dict[str, Any], list[tuple[str | None, str | None]]]:
+    events: list[dict[str, Any]] = []
+    tag_calls: list[tuple[str | None, str | None]] = []
+    config = _config(tmp_path)
+    config.embed_unsynced_lyrics = embed_unsynced_lyrics
+    config.write_lrc_sidecar = False
+
+    class FakeYTMusic:
+        def get_liked_songs(self, limit: int = 5000) -> dict[str, object]:
+            assert limit == 5000
+            return {"tracks": [_liked_track()]}
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.emit_event", events.append)
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._build_ytmusic_client",
+        lambda *args, **kwargs: FakeYTMusic(),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._resolve_exact_catalog",
+        lambda *args, **kwargs: "MPLYt_demo",
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._resolve_lyrics",
+        lambda *args, **kwargs: (lyrics_text, "Source: LyricFind"),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._musicbrainz_enrich",
+        lambda item: None,
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._download_audio",
+        lambda *args, **kwargs: (tmp_path / "downloaded.m4a", {"acodec": "aac"}),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._normalize_audio",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._copy_remote",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine.write_media_tags",
+        lambda output_path, item, cover_bytes, embedded_lyrics: tag_calls.append(
+            (item.language, embedded_lyrics)
+        ),
+    )
+
+    run_sync(config)
+
+    item_events = [event["item"] for event in events if event.get("type") == "item"]
+    return item_events[-1], tag_calls
 
 
 def test_build_yt_dlp_options_enables_mweb_and_bgutil(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -108,13 +176,7 @@ def test_build_ytmusic_client_validates_browser_auth(monkeypatch: pytest.MonkeyP
         lambda browser_auth_input: sentinel,
     )
 
-    client = _build_ytmusic_client(
-        "browser_headers",
-        "client-id",
-        "client-secret",
-        "{}",
-        "cookie: a=b",
-    )
+    client = _build_ytmusic_client("cookie: a=b")
 
     assert client is sentinel
 
@@ -142,6 +204,54 @@ def test_resolve_lyrics_falls_back_to_plain_lyrics() -> None:
     assert ytmusic.calls == [True, False]
     assert lyrics == "line one\nline two\n"
     assert source == "Source: LyricFind"
+
+
+def test_run_sync_sets_language_from_plain_lyrics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    final_item, tag_calls = _run_sync_for_lyrics(
+        monkeypatch,
+        tmp_path,
+        lyrics_text="Hello from the other side\nI must have called a thousand times\n",
+    )
+
+    assert final_item["language"] == "en"
+    assert final_item["lyrics_status"] == "plain"
+    assert tag_calls == [
+        (
+            "en",
+            "Hello from the other side\nI must have called a thousand times\n",
+        )
+    ]
+
+
+def test_run_sync_keeps_language_none_without_lyrics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    final_item, tag_calls = _run_sync_for_lyrics(
+        monkeypatch,
+        tmp_path,
+        lyrics_text=None,
+    )
+
+    assert final_item["language"] is None
+    assert final_item["lyrics_status"] == "missing"
+    assert tag_calls == [(None, None)]
+
+
+def test_run_sync_sets_language_for_unsynced_lyrics_even_when_embed_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    final_item, tag_calls = _run_sync_for_lyrics(
+        monkeypatch,
+        tmp_path,
+        lyrics_text="Hello from the other side\nI must have called a thousand times\n",
+        embed_unsynced_lyrics=False,
+    )
+
+    assert final_item["language"] == "en"
+    assert final_item["lyrics_status"] == "plain"
+    assert tag_calls == [("en", None)]
 
 
 def test_resolve_exact_catalog_keeps_direct_album_match() -> None:
@@ -188,6 +298,8 @@ def test_resolve_exact_catalog_keeps_direct_album_match() -> None:
     assert item.album == "blackout"
     assert item.track_number == 1
     assert item.track_total == 1
+    assert item.year == 2021
+    assert item.date is None
     assert item.selected_source_url is None
 
 
@@ -264,6 +376,8 @@ def test_resolve_exact_catalog_promotes_omv_to_catalog_song() -> None:
     assert item.album == "blackout"
     assert item.track_number == 1
     assert item.track_total == 1
+    assert item.year == 2021
+    assert item.date is None
     assert item.video_type == "MUSIC_VIDEO_TYPE_ATV"
     assert item.selected_source_url == "https://music.youtube.com/watch?v=catalog456"
 
@@ -492,3 +606,164 @@ def test_download_audio_uses_selected_source_url(monkeypatch: pytest.MonkeyPatch
     assert captured["download"] is True
     assert prepared == tmp_path / "catalog456.m4a"
     assert info["acodec"] == "aac"
+
+
+def test_musicbrainz_enrich_keeps_exact_resolved_album(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "recordings": [
+                    {
+                        "id": "recording123",
+                        "title": "evergreen",
+                        "score": 100,
+                        "releases": [
+                            {
+                                "id": "release123",
+                                "title": "MusicBrainz Album",
+                                "date": "2025-09-10",
+                                "release-group": {"id": "group123"},
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine.httpx.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    item = _item(title="evergreen", artist="kurayamisaka")
+    item.album = "YT Album"
+    item.resolution_method = "album_exact"
+
+    _musicbrainz_enrich(item)
+
+    assert item.album == "YT Album"
+    assert item.mb_track_id == "recording123"
+    assert item.mb_album_id == "release123"
+    assert item.mb_releasegroup_id == "group123"
+    assert item.date == "2025-09-10"
+
+
+def test_musicbrainz_enrich_fills_album_when_still_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "recordings": [
+                    {
+                        "id": "recording123",
+                        "title": "evergreen",
+                        "score": 100,
+                        "releases": [
+                            {
+                                "id": "release123",
+                                "title": "MusicBrainz Album",
+                                "date": "2025-09-10",
+                                "release-group": {"id": "group123"},
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine.httpx.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    item = _item(title="evergreen", artist="kurayamisaka")
+    item.album = "_Singles"
+    item.resolution_method = "watch_playlist"
+
+    _musicbrainz_enrich(item)
+
+    assert item.album == "MusicBrainz Album"
+    assert item.mb_track_id == "recording123"
+    assert item.mb_album_id == "release123"
+    assert item.mb_releasegroup_id == "group123"
+    assert item.date == "2025-09-10"
+
+
+def test_musicbrainz_enrich_uses_title_variants_and_stable_release_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self.payload
+
+    def fake_get(url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float) -> FakeResponse:
+        assert url == "https://musicbrainz.org/ws/2/recording/"
+        assert headers["User-Agent"] == "liked-music-syncer/0.1.0"
+        assert timeout == 10.0
+
+        query = params["query"]
+        if query == 'recording:"ハイウェイ - highway" AND artist:"kurayamisaka"':
+            return FakeResponse({"recordings": []})
+        if query == 'recording:"ハイウェイ" AND artist:"kurayamisaka"':
+            return FakeResponse(
+                {
+                    "recordings": [
+                        {
+                            "id": "single123",
+                            "title": "ハイウェイ",
+                            "score": 100,
+                            "releases": [{"id": "single-release", "title": "ハイウェイ"}],
+                        },
+                        {
+                            "id": "album123",
+                            "title": "ハイウェイ",
+                            "score": 100,
+                            "isrcs": ["JPL542500741"],
+                            "releases": [
+                                {
+                                    "id": "xw-release",
+                                    "title": "kurayamisaka yori ai wo komete",
+                                    "date": "2025-09-10",
+                                    "country": "XW",
+                                    "packaging": "None",
+                                    "release-group": {"id": "group123"},
+                                },
+                                {
+                                    "id": "jp-release",
+                                    "title": "kurayamisaka yori ai wo komete",
+                                    "date": "2025-09-10",
+                                    "country": "JP",
+                                    "packaging": "Jewel Case",
+                                    "release-group": {"id": "group123"},
+                                },
+                            ],
+                        },
+                    ]
+                }
+            )
+        raise AssertionError(query)
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.httpx.get", fake_get)
+
+    item = _item(title="ハイウェイ - highway", artist="kurayamisaka")
+    item.album = "kurayamisaka yori ai wo komete"
+    item.year = 2025
+    item.resolution_method = "album_exact"
+
+    _musicbrainz_enrich(item)
+
+    assert item.album == "kurayamisaka yori ai wo komete"
+    assert item.mb_track_id == "album123"
+    assert item.mb_album_id == "jp-release"
+    assert item.mb_releasegroup_id == "group123"
+    assert item.date == "2025-09-10"
+    assert item.isrc == "JPL542500741"

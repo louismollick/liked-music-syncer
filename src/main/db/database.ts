@@ -4,14 +4,17 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
 
-const SCHEMA_VERSION = '2'
+const SCHEMA_VERSION = '4'
 
 const ALL_TABLES = [
   'song_logs',
   'artifacts',
-  'processed_songs',
+  'library_files',
+  'library_tracks',
+  'library_roots',
   'sync_run_items',
   'sync_runs',
+  'liked_artists',
   'settings',
   'ytmusic_decisions',
   'meta',
@@ -35,6 +38,18 @@ function resetSchema(sqlite: Database.Database) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE liked_artists (
+      id TEXT PRIMARY KEY,
+      channel_id TEXT,
+      name TEXT NOT NULL,
+      normalized_name TEXT NOT NULL,
+      photo_url TEXT,
+      liked_track_count INTEGER NOT NULL,
+      last_refreshed_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE sync_runs (
       id TEXT PRIMARY KEY,
       trigger_mode TEXT NOT NULL,
@@ -48,7 +63,10 @@ function resetSchema(sqlite: Database.Database) {
     CREATE TABLE sync_run_items (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
-      source_video_id TEXT NOT NULL,
+      youtube_music_track_id TEXT NOT NULL,
+      spotify_track_id TEXT,
+      soundcloud_track_id TEXT,
+      resolved_youtube_music_track_id TEXT,
       title TEXT NOT NULL,
       artist TEXT NOT NULL,
       album TEXT NOT NULL,
@@ -64,8 +82,17 @@ function resetSchema(sqlite: Database.Database) {
       resolution_method TEXT NOT NULL,
       track_number INTEGER,
       track_total INTEGER,
+      disc_number INTEGER,
+      disc_total INTEGER,
       year INTEGER,
       date TEXT,
+      genre TEXT,
+      language TEXT,
+      isrc TEXT,
+      mb_track_id TEXT,
+      mb_album_id TEXT,
+      mb_releasegroup_id TEXT,
+      lyrics_status TEXT NOT NULL DEFAULT 'missing',
       audio_codec TEXT,
       metadata_matched INTEGER NOT NULL DEFAULT 0,
       musicbrainz_matched INTEGER NOT NULL DEFAULT 0,
@@ -78,15 +105,85 @@ function resetSchema(sqlite: Database.Database) {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE processed_songs (
-      source_video_id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      artist TEXT NOT NULL,
-      album TEXT NOT NULL,
-      album_artist TEXT NOT NULL,
-      output_path TEXT,
-      processed_at TEXT NOT NULL
+    CREATE TABLE library_roots (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      transport TEXT NOT NULL,
+      label TEXT NOT NULL,
+      uri TEXT NOT NULL UNIQUE,
+      writable INTEGER NOT NULL,
+      managed_output INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_scanned_at TEXT,
+      last_scan_status TEXT
     );
+
+    CREATE TABLE library_tracks (
+      id TEXT PRIMARY KEY,
+      identity_kind TEXT NOT NULL,
+      identity_value TEXT NOT NULL,
+      managed_by_app INTEGER NOT NULL,
+      tag_schema_version INTEGER,
+      youtube_music_track_id TEXT,
+      spotify_track_id TEXT,
+      soundcloud_track_id TEXT,
+      resolved_youtube_music_track_id TEXT,
+      title TEXT,
+      artist TEXT,
+      album TEXT,
+      album_artist TEXT,
+      track_number INTEGER,
+      track_total INTEGER,
+      disc_number INTEGER,
+      disc_total INTEGER,
+      year INTEGER,
+      date TEXT,
+      genre TEXT,
+      language TEXT,
+      isrc TEXT,
+      mb_track_id TEXT,
+      mb_album_id TEXT,
+      mb_releasegroup_id TEXT,
+      lyrics_status TEXT NOT NULL,
+      has_embedded_lyrics INTEGER NOT NULL,
+      has_sidecar_lyrics INTEGER NOT NULL,
+      cover_art_present INTEGER NOT NULL,
+      missing_fields_json TEXT NOT NULL DEFAULT '[]',
+      preferred_file_id TEXT,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX library_tracks_identity_key_unique
+      ON library_tracks (identity_kind, identity_value);
+
+    CREATE TABLE library_files (
+      id TEXT PRIMARY KEY,
+      track_id TEXT NOT NULL,
+      root_id TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      absolute_path_snapshot TEXT,
+      lrc_path TEXT,
+      format TEXT NOT NULL,
+      size_bytes INTEGER,
+      duration_seconds REAL,
+      bitrate INTEGER,
+      modified_at TEXT,
+      audio_sha256 TEXT,
+      tag_fingerprint TEXT,
+      embedded_lyrics_status TEXT NOT NULL,
+      sidecar_lyrics_status TEXT NOT NULL,
+      missing_fields_json TEXT NOT NULL DEFAULT '[]',
+      discovered_via TEXT NOT NULL,
+      last_scanned_at TEXT NOT NULL,
+      first_seen_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX library_files_root_path_unique
+      ON library_files (root_id, relative_path);
 
     CREATE TABLE artifacts (
       id TEXT PRIMARY KEY,
@@ -100,7 +197,7 @@ function resetSchema(sqlite: Database.Database) {
     CREATE TABLE song_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       run_id TEXT NOT NULL,
-      source_video_id TEXT NOT NULL,
+      youtube_music_track_id TEXT NOT NULL,
       item_id TEXT NOT NULL,
       timestamp TEXT NOT NULL,
       level TEXT NOT NULL,

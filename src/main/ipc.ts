@@ -5,15 +5,19 @@ import type {
 } from '@shared/contracts'
 import type { BrowserWindow } from 'electron'
 import { dialog, ipcMain } from 'electron'
-import type { OAuthService } from './services/oauth-service'
+import type { AuthService } from './services/auth-service'
+import type { LibraryService } from './services/library-service'
+import type { LikedArtistsService } from './services/liked-artists-service'
 import type { SettingsService } from './services/settings-service'
 import type { SyncService } from './services/sync-service'
 
 export function registerIpcHandlers(
   window: BrowserWindow,
   settingsService: SettingsService,
-  oauthService: OAuthService,
+  authService: AuthService,
   syncService: SyncService,
+  libraryService: LibraryService,
+  likedArtistsService: LikedArtistsService,
   getBundledFfmpegPath: () => string
 ) {
   const eventChannel = 'sync:snapshot'
@@ -24,30 +28,24 @@ export function registerIpcHandlers(
     }
   })
 
-  ipcMain.handle('auth:getStatus', () => oauthService.getStatus())
-  ipcMain.handle('auth:startDeviceAuth', () => oauthService.startDeviceAuth())
-  ipcMain.handle('auth:finishDeviceAuth', () => oauthService.finishDeviceAuth())
+  ipcMain.handle('auth:getStatus', () => authService.getStatus())
   ipcMain.handle('auth:captureBrowserAuth', (_event, browser) =>
-    oauthService.captureBrowserAuth(browser)
+    authService.captureBrowserAuth(browser)
   )
-  ipcMain.handle('auth:disconnect', () => oauthService.disconnect())
+  ipcMain.handle('auth:disconnect', () => authService.disconnect())
 
   ipcMain.handle('settings:get', () => settingsService.getView())
   ipcMain.handle(
     'settings:save',
     async (_event, input): Promise<SettingsSaveResult> => {
-      const previousSettings = await settingsService.getView()
       const saveResult = await settingsService.save(input)
-      const shouldValidateAuth =
-        input.ytmusicAuthMode === 'browser_headers' &&
-        (Boolean(input.ytmusicBrowserAuth?.trim()) ||
-          previousSettings.ytmusicAuthMode !== 'browser_headers')
+      const shouldValidateAuth = Boolean(input.ytmusicBrowserAuth?.trim())
 
       if (!shouldValidateAuth) {
         return saveResult
       }
 
-      const authStatus = await oauthService.getStatus({
+      const authStatus = await authService.getStatus({
         persistFailureSource: 'settings_save',
       })
 
@@ -75,10 +73,16 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('sync:start', (_event, input) => syncService.start(input))
+  ipcMain.handle('sync:reprocessArtists', (_event, artistIds: string[]) =>
+    syncService.reprocessArtists(artistIds)
+  )
   ipcMain.handle('sync:cancel', (_event, runId: string) =>
     syncService.cancel(runId)
   )
   ipcMain.handle('sync:clearSyncData', () => syncService.clearSyncData())
+  ipcMain.handle('sync:syncMissingToRemote', () =>
+    syncService.syncMissingToRemote()
+  )
   ipcMain.handle('sync:doctor', () => syncService.doctor())
   ipcMain.handle('sync:listRuns', () => syncService.listRuns())
   ipcMain.handle('sync:getRun', (_event, runId: string) =>
@@ -90,9 +94,24 @@ export function registerIpcHandlers(
   )
   ipcMain.handle(
     'sync:getSongLogs',
-    (_event, input: { runId: string; sourceVideoId: string }) =>
-      syncService.getSongLogs(input.runId, input.sourceVideoId)
+    (_event, input: { runId: string; youtubeMusicTrackId: string }) =>
+      syncService.getSongLogs(input.runId, input.youtubeMusicTrackId)
   )
+  ipcMain.handle('library:scanRoots', () => libraryService.scanRoots())
+  ipcMain.handle('library:refreshArtists', () =>
+    likedArtistsService.refreshArtists()
+  )
+  ipcMain.handle('library:listArtists', () => likedArtistsService.listArtists())
+  ipcMain.handle('library:listTracks', (_event, filter) =>
+    libraryService.listTracks(filter)
+  )
+  ipcMain.handle('library:getTrack', (_event, trackId: string) =>
+    libraryService.getTrack(trackId)
+  )
+  ipcMain.handle('library:getDriftSummary', () =>
+    libraryService.getDriftSummary()
+  )
+  ipcMain.handle('library:listRoots', () => libraryService.listRoots())
 
   return {
     eventChannel,
