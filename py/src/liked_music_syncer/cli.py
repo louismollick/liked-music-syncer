@@ -7,13 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from .auth import (
-    check_auth_status,
     check_browser_auth_status,
     capture_browser_auth_from_browser,
-    finish_device_auth,
-    start_device_auth,
 )
 from .json_io import read_stdin_json, write_json
+from .liked_artists import fetch_liked_artists
+from .library_scan import scan_root
 from .models import SyncConfig
 from .sync_engine import run_sync
 
@@ -28,9 +27,7 @@ def _doctor(payload: dict[str, Any]) -> dict[str, Any]:
     details = {
         "output_directory_exists": output_directory.exists() if output_directory else False,
         "ffmpeg": shutil.which(ffmpeg_path) or ffmpeg_path,
-        "has_client_id": bool(payload.get("ytmusic_client_id")),
-        "has_client_secret": bool(payload.get("has_client_secret")),
-        "has_oauth_token": bool(payload.get("has_oauth_token")),
+        "has_browser_auth": bool(payload.get("has_browser_auth")),
         "remote_copy_enabled": remote_copy_enabled,
         "remote_target": f"{rclone_remote}:{remote_music_root}" if remote_copy_enabled else "",
         "yt_dlp_plugin_dir": str(payload.get("yt_dlp_plugin_dir", "")),
@@ -53,41 +50,12 @@ def main() -> int:
     command = sys.argv[1]
     payload = read_stdin_json()
 
-    if command == "auth-start":
-        write_json(
-            start_device_auth(
-                client_id=str(payload["client_id"]),
-                client_secret=str(payload["client_secret"]),
-            )
-        )
-        return 0
-
-    if command == "auth-finish":
-        write_json(
-            finish_device_auth(
-                client_id=str(payload["client_id"]),
-                client_secret=str(payload["client_secret"]),
-                device_code=str(payload["device_code"]),
-            )
-        )
-        return 0
-
     if command == "auth-status":
-        mode = str(payload.get("mode", "oauth_device"))
-        if mode == "browser_headers":
-            write_json(
-                check_browser_auth_status(
-                    browser_auth_input=str(payload.get("browser_auth_input", "")),
-                )
+        write_json(
+            check_browser_auth_status(
+                browser_auth_input=str(payload.get("browser_auth_input", "")),
             )
-        else:
-            write_json(
-                check_auth_status(
-                    client_id=str(payload["client_id"]),
-                    client_secret=str(payload["client_secret"]),
-                    token_json=str(payload["token_json"]),
-                )
-            )
+        )
         return 0
 
     if command == "auth-capture-browser":
@@ -100,6 +68,18 @@ def main() -> int:
 
     if command == "doctor":
         write_json(_doctor(payload))
+        return 0
+
+    if command == "library-scan-root":
+        write_json(scan_root(payload))
+        return 0
+
+    if command == "liked-artists":
+        write_json(
+            fetch_liked_artists(
+                browser_auth_input=str(payload.get("ytmusic_browser_auth", "")),
+            )
+        )
         return 0
 
     if command == "sync-run":

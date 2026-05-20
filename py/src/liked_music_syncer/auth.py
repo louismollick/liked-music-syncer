@@ -1,51 +1,19 @@
 from __future__ import annotations
 
 import json
-import time
 from http.cookiejar import CookieJar
 from typing import Any, Iterator
 from urllib.request import Request
 
 import ytmusicapi
 from ytmusicapi import YTMusic
-from ytmusicapi.auth.oauth import OAuthCredentials
 from ytmusicapi.helpers import get_authorization, initialize_headers, sapisid_from_cookie
 from yt_dlp.cookies import extract_cookies_from_browser
 
-from .models import AuthFinishResult, AuthStartResult, AuthStatusResult
-
-REQUIRED_TOKEN_FIELDS = {
-    "access_token",
-    "refresh_token",
-    "token_type",
-    "scope",
-    "expires_in",
-}
+from .models import AuthStatusResult
 AUTH_CHECK_BROWSE_ID = "FEmusic_history"
 YTMUSIC_ORIGIN = "https://music.youtube.com"
 SIGN_IN_PROMPT_MESSAGE = "YT Music rejected the provided browser auth headers and returned a sign-in prompt."
-
-
-def _normalize_error_state(message: str) -> str:
-    lower = message.lower()
-    if "authorization_pending" in lower:
-        return "pending"
-    if "slow_down" in lower:
-        return "pending"
-    if "expired_token" in lower or "expired" in lower:
-        return "expired"
-    return "failed"
-
-
-def _token_error_message(payload: dict[str, Any]) -> str | None:
-    error = payload.get("error")
-    if not error:
-        return None
-
-    description = payload.get("error_description")
-    if description:
-        return f"{error}: {description}"
-    return str(error)
 
 
 def normalize_browser_auth_input(browser_auth_input: str) -> str:
@@ -175,91 +143,6 @@ def build_browser_auth_from_browser_cookies(browser_name: str) -> str:
         }
     )
     return json.dumps(headers)
-
-
-def start_device_auth(client_id: str, client_secret: str) -> AuthStartResult:
-    try:
-        credentials = OAuthCredentials(client_id=client_id, client_secret=client_secret)
-        code = credentials.get_code()
-        return AuthStartResult(
-            ok=True,
-            message="YT Music device auth started.",
-            verification_url=str(code["verification_url"]),
-            user_code=str(code["user_code"]),
-            device_code=str(code["device_code"]),
-            interval=int(code["interval"]),
-            expires_in=int(code["expires_in"]),
-        )
-    except Exception as exc:  # noqa: BLE001
-        return AuthStartResult(ok=False, message=str(exc))
-
-
-def finish_device_auth(client_id: str, client_secret: str, device_code: str) -> AuthFinishResult:
-    try:
-        credentials = OAuthCredentials(client_id=client_id, client_secret=client_secret)
-        token = dict(credentials.token_from_code(device_code))
-        token_error = _token_error_message(token)
-        if token_error:
-            state = _normalize_error_state(token_error)
-            return AuthFinishResult(ok=state == "pending", state=state, message=token_error)
-
-        missing_fields = sorted(REQUIRED_TOKEN_FIELDS - set(token))
-        if missing_fields:
-            return AuthFinishResult(
-                ok=False,
-                state="failed",
-                message=f"OAuth token response missing fields: {', '.join(missing_fields)}",
-            )
-
-        return AuthFinishResult(
-            ok=True,
-            state="authorized",
-            message="YT Music device auth complete.",
-            token_json=json.dumps(token),
-        )
-    except Exception as exc:  # noqa: BLE001
-        message = str(exc)
-        state = _normalize_error_state(message)
-        return AuthFinishResult(ok=state == "pending", state=state, message=message)
-
-
-def check_auth_status(client_id: str, client_secret: str, token_json: str) -> AuthStatusResult:
-    try:
-        token = json.loads(token_json)
-        token_error = _token_error_message(token)
-        if token_error:
-            return AuthStatusResult(
-                ok=False,
-                is_authenticated=False,
-                message=token_error,
-            )
-
-        refresh_token = str(token.get("refresh_token", "")).strip()
-        if not refresh_token:
-            return AuthStatusResult(
-                ok=False,
-                is_authenticated=False,
-                message="Saved OAuth token is incomplete: missing refresh_token.",
-            )
-
-        credentials = OAuthCredentials(client_id=client_id, client_secret=client_secret)
-        fresh = credentials.refresh_token(refresh_token)
-        refreshed_token: dict[str, Any] = dict(token)
-        refreshed_token.update(dict(fresh))
-        refreshed_token["refresh_token"] = refresh_token
-        refreshed_token["expires_at"] = int(time.time()) + int(fresh["expires_in"])
-        return AuthStatusResult(
-            ok=True,
-            is_authenticated=True,
-            message="OAuth token refresh succeeded.",
-            credential_json=json.dumps(refreshed_token),
-        )
-    except Exception as exc:  # noqa: BLE001
-        return AuthStatusResult(
-            ok=False,
-            is_authenticated=False,
-            message=str(exc),
-        )
 
 
 def check_browser_auth_status(browser_auth_input: str) -> AuthStatusResult:

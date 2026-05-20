@@ -11,16 +11,16 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from mediafile import Image, MediaFile
 from yt_dlp import YoutubeDL
 from yt_dlp.globals import all_plugins_loaded, plugin_dirs
 from yt_dlp.plugins import load_all_plugins
 from ytmusicapi import YTMusic
-from ytmusicapi.auth.oauth import OAuthCredentials
 
 from .auth import build_browser_auth_client
 from .cover_art import make_square_cover
 from .json_io import emit_event
+from .lyrics_language import detect_primary_lyrics_language
+from .media_tags import write_media_tags
 from .models import SyncConfig, SyncItemState
 from .templating import OutputLayout
 
@@ -52,7 +52,7 @@ def _log(
             "type": "log",
             "run_id": run_id,
             "item_id": item.id,
-            "source_video_id": item.source_video_id,
+            "youtube_music_track_id": item.youtube_music_track_id,
             "timestamp": _now_iso(),
             "level": level,
             "stage": stage,
@@ -76,7 +76,7 @@ def _run_log(
             "type": "log",
             "run_id": run_id,
             "item_id": RUN_LOG_ITEM_ID,
-            "source_video_id": RUN_LOG_SOURCE_VIDEO_ID,
+            "youtube_music_track_id": RUN_LOG_SOURCE_VIDEO_ID,
             "timestamp": _now_iso(),
             "level": level,
             "stage": stage,
@@ -170,6 +170,10 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
     return SyncItemState(
         id=_slug("item"),
         source_video_id=video_id,
+        youtube_music_track_id=video_id,
+        spotify_track_id=None,
+        soundcloud_track_id=None,
+        resolved_youtube_music_track_id=video_id,
         title=title,
         artist=artist,
         album=album,
@@ -181,25 +185,8 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
     )
 
 
-def _build_ytmusic_client(
-    auth_mode: str,
-    client_id: str,
-    client_secret: str,
-    token_json: str,
-    browser_auth_input: str,
-) -> YTMusic:
-    if auth_mode == "browser_headers":
-        return build_browser_auth_client(browser_auth_input)
-
-    credentials = OAuthCredentials(client_id=client_id, client_secret=client_secret)
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".json") as handle:
-        handle.write(token_json)
-        token_path = Path(handle.name)
-
-    try:
-        return YTMusic(str(token_path), oauth_credentials=credentials)
-    finally:
-        token_path.unlink(missing_ok=True)
+def _build_ytmusic_client(browser_auth_input: str) -> YTMusic:
+    return build_browser_auth_client(browser_auth_input)
 
 
 def _parse_year(value: Any) -> int | None:
@@ -332,6 +319,9 @@ def _apply_watch_metadata(item: SyncItemState, track: dict[str, Any]) -> None:
         item.album_artist = item.artist
     item.video_type = str(track.get("videoType")) if track.get("videoType") else item.video_type
     item.cover_art_url = _pick_thumbnail(track.get("thumbnails") or track.get("thumbnail")) or item.cover_art_url
+    isrc = track.get("isrc")
+    if isinstance(isrc, str) and isrc:
+        item.isrc = isrc
 
 
 def _apply_album_metadata(
@@ -353,7 +343,6 @@ def _apply_album_metadata(
     year = _parse_year(album.get("year"))
     if year is not None:
         item.year = year
-        item.date = str(year)
 
     album_tracks = _extract_tracks(album)
     item.track_total = len(album_tracks) or None
@@ -554,6 +543,7 @@ def _resolve_exact_catalog(
         return lyrics_browse_id
 
     item.selected_source_url = f"https://music.youtube.com/watch?v={candidate_video_id}"
+    item.resolved_youtube_music_track_id = candidate_video_id
     _apply_watch_metadata(item, candidate_primary)
 
     candidate_lyrics_id = candidate_watch.get("lyrics")
@@ -646,50 +636,231 @@ def _resolve_fallback_metadata(config: SyncConfig, item: SyncItemState) -> None:
     item.resolution_method = "yt_dlp_fallback"
 
 
+def _ordered_title_search_queries(value: str, artist_names: list[str]) -> list[str]:
+    queries: list[str] = []
+    seen: set[str] = set()
+
+    def _add(candidate: str) -> None:
+        cleaned = candidate.strip()
+        if cleaned and cleaned not in seen:
+            seen.add(cleaned)
+            queries.append(cleaned)
+
+    raw_title = value.strip()
+    _add(raw_title)
+
+    canonical_title = _canonicalize_track_title(value, artist_names)
+    _add(canonical_title)
+
+    for part in re.split(r"\s*(?:-|:|\||/)\s*", canonical_title):
+        _add(part)
+
+    return queries
+
+
+def _musicbrainz_release_sort_key(item: SyncItemState, release: dict[str, Any]) -> tuple[int, int, int, int, str]:
+    target_album = _normalize_text(item.album) if item.album else ""
+    release_title = release.get("title")
+    normalized_release_title = _normalize_text(release_title) if isinstance(release_title, str) and release_title else ""
+    title_match_rank = 0 if target_album and normalized_release_title == target_album else 1
+
+    release_date = release.get("date")
+    full_date_rank = 0 if isinstance(release_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", release_date) else 1
+
+    year_match_rank = 1
+    if item.year is not None and isinstance(release_date, str) and release_date.startswith(str(item.year)):
+        year_match_rank = 0
+
+    country = release.get("country")
+    if isinstance(country, str) and country and country != "XW":
+        country_rank = 0
+    elif country == "XW":
+        country_rank = 1
+    else:
+        country_rank = 2
+
+    release_id = str(release.get("id") or "")
+    return (title_match_rank, full_date_rank, year_match_rank, country_rank, release_id)
+
+
+def _select_musicbrainz_release(item: SyncItemState, release_list: Any) -> dict[str, Any] | None:
+    if not isinstance(release_list, list):
+        return None
+
+    releases = [release for release in release_list if isinstance(release, dict)]
+    if not releases:
+        return None
+
+    return min(releases, key=lambda release: _musicbrainz_release_sort_key(item, release))
+
+
+def _select_musicbrainz_recording(
+    item: SyncItemState,
+    recordings: Any,
+    artist_names: list[str],
+) -> dict[str, Any] | None:
+    if not isinstance(recordings, list):
+        return None
+
+    target_title_variants = _title_variants(item.title, artist_names)
+    canonical_title = _normalize_text(_canonicalize_track_title(item.title, artist_names))
+    target_album = _normalize_text(item.album) if item.album else ""
+
+    best_recording: dict[str, Any] | None = None
+    best_key: tuple[int, int, int, str] | None = None
+
+    for recording in recordings:
+        if not isinstance(recording, dict):
+            continue
+
+        score = int(recording.get("score", 0) or 0)
+        if score < 90:
+            continue
+
+        candidate_title = recording.get("title")
+        if not isinstance(candidate_title, str) or not candidate_title:
+            continue
+
+        candidate_title_variants = _title_variants(candidate_title, artist_names)
+        if not target_title_variants & candidate_title_variants:
+            continue
+
+        selected_release = _select_musicbrainz_release(item, recording.get("releases"))
+        selected_release_title = selected_release.get("title") if isinstance(selected_release, dict) else None
+        album_match_rank = 1
+        if target_album and isinstance(selected_release_title, str):
+            album_match_rank = 0 if _normalize_text(selected_release_title) == target_album else 1
+
+        exact_title_rank = 0 if _normalize_text(candidate_title) == canonical_title else 1
+        recording_id = str(recording.get("id") or "")
+        sort_key = (album_match_rank, exact_title_rank, -score, recording_id)
+
+        if best_key is None or sort_key < best_key:
+            best_key = sort_key
+            best_recording = recording
+
+    return best_recording
+
+
 def _musicbrainz_enrich(item: SyncItemState) -> None:
-    query = {
-        "query": f'recording:"{item.title}" AND artist:"{item.artist.split(",")[0]}"',
-        "fmt": "json",
-        "limit": "1",
-    }
-    response = httpx.get(
-        "https://musicbrainz.org/ws/2/recording/",
-        params=query,
-        headers={"User-Agent": "liked-music-syncer/0.1.0"},
-        timeout=10.0,
+    preserve_resolved_album = bool(
+        item.album
+        and item.album != "_Singles"
+        and item.resolution_method in {"album_exact", "search_song_exact"}
     )
-    response.raise_for_status()
-    payload = response.json()
-    if not isinstance(payload, dict):
+    primary_artist = item.artist.split(",")[0].strip()
+    recording: dict[str, Any] | None = None
+
+    for title_query in _ordered_title_search_queries(item.title, [primary_artist]):
+        query = {
+            "query": f'recording:"{title_query}" AND artist:"{primary_artist}"',
+            "fmt": "json",
+            "limit": "5",
+        }
+        response = httpx.get(
+            "https://musicbrainz.org/ws/2/recording/",
+            params=query,
+            headers={"User-Agent": "liked-music-syncer/0.1.0"},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            continue
+
+        recording = _select_musicbrainz_recording(
+            item,
+            payload.get("recordings"),
+            [primary_artist],
+        )
+        if recording is not None:
+            break
+
+    if recording is None:
         return
-    recordings = payload.get("recordings")
-    if not isinstance(recordings, list) or not recordings:
-        return
-    recording = recordings[0]
-    if not isinstance(recording, dict):
-        return
-    score = int(recording.get("score", 0) or 0)
-    if score < 90:
-        return
+
     item.musicbrainz_matched = True
-    release_list = recording.get("releases")
-    if isinstance(release_list, list) and release_list:
-        release = release_list[0]
-        if isinstance(release, dict):
-            date = release.get("date")
-            if isinstance(date, str) and date:
-                item.date = date
-                if item.year is None:
-                    item.year = _parse_year(date.split("-")[0])
-            title = release.get("title")
-            if isinstance(title, str) and title:
-                item.album = title
+    recording_id = recording.get("id")
+    if isinstance(recording_id, str) and recording_id:
+        item.mb_track_id = recording_id
+    first_isrc = recording.get("isrcs")
+    if isinstance(first_isrc, list) and first_isrc and isinstance(first_isrc[0], str) and first_isrc[0]:
+        item.isrc = item.isrc or first_isrc[0]
+    release = _select_musicbrainz_release(item, recording.get("releases"))
+    if release is None:
+        return
+
+    release_id = release.get("id")
+    if isinstance(release_id, str) and release_id:
+        item.mb_album_id = release_id
+    release_group = release.get("release-group")
+    if isinstance(release_group, dict):
+        release_group_id = release_group.get("id")
+        if isinstance(release_group_id, str) and release_group_id:
+            item.mb_releasegroup_id = release_group_id
+    date = release.get("date")
+    if isinstance(date, str) and date:
+        item.date = date
+        if item.year is None:
+            item.year = _parse_year(date.split("-")[0])
+    title = release.get("title")
+    if isinstance(title, str) and title and not preserve_resolved_album:
+        item.album = title
 
 
 def _format_lrc_line(start_ms: int, text: str) -> str:
     minutes = start_ms // 60000
     seconds = (start_ms % 60000) / 1000
     return f"[{minutes:02d}:{seconds:05.2f}]{text}"
+
+
+def _classify_lyrics_text(lyrics_text: str | None) -> str:
+    if not lyrics_text or not lyrics_text.strip():
+        return "missing"
+    return "synced" if re.search(r"^\[\d{2}:\d{2}(?:\.\d{2})?\]", lyrics_text, flags=re.MULTILINE) else "plain"
+
+
+def _should_skip_existing(config: SyncConfig, item: SyncItemState) -> bool:
+    if config.force_reprocess:
+        return False
+    source_id = item.youtube_music_track_id
+    resolved_id = item.resolved_youtube_music_track_id or source_id
+    return (
+        bool(source_id and source_id in config.existing_local_youtube_music_track_ids)
+        or bool(resolved_id and resolved_id in config.existing_local_resolved_youtube_music_track_ids)
+    )
+
+
+def _should_skip_existing_by_source_id(config: SyncConfig, item: SyncItemState) -> bool:
+    if config.force_reprocess:
+        return False
+    source_id = item.youtube_music_track_id
+    return bool(source_id and source_id in config.existing_local_youtube_music_track_ids)
+
+
+def _normalize_artist_name(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]+", " ", value.lower())).strip()
+
+
+def _track_matches_artist_filters(track: dict[str, Any], config: SyncConfig) -> bool:
+    if not config.artist_filter_channel_ids and not config.artist_filter_names_normalized:
+        return True
+
+    channel_ids = set(config.artist_filter_channel_ids)
+    names = set(config.artist_filter_names_normalized)
+    artists = track.get("artists")
+    if not isinstance(artists, list):
+        return False
+    for artist in artists:
+        if not isinstance(artist, dict):
+            continue
+        artist_id = artist.get("id")
+        if isinstance(artist_id, str) and artist_id and artist_id in channel_ids:
+            return True
+        artist_name = artist.get("name")
+        if isinstance(artist_name, str) and _normalize_artist_name(artist_name) in names:
+            return True
+    return False
 
 
 def _resolve_lyrics(ytmusic: YTMusic, lyrics_browse_id: str | None) -> tuple[str | None, str | None]:
@@ -768,28 +939,6 @@ def _normalize_audio(input_path: Path, output_path: Path, ffmpeg_path: str, code
     subprocess.run(command, check=True, capture_output=True)
 
 
-def _write_media_tags(
-    output_path: Path,
-    item: SyncItemState,
-    cover_bytes: bytes | None,
-    lyrics_text: str | None,
-) -> None:
-    media = MediaFile(str(output_path))
-    media.title = item.title
-    media.artist = item.artist
-    media.album = item.album
-    media.albumartist = item.album_artist
-    media.track = item.track_number
-    media.tracktotal = item.track_total
-    media.year = item.year
-    media.comments = _preferred_source_url(item)
-    if lyrics_text:
-        media.lyrics = lyrics_text
-    if cover_bytes:
-        media.images = [Image(data=cover_bytes)]
-    media.save()
-
-
 def _copy_remote(config: SyncConfig, output_path: Path) -> None:
     if not config.remote_copy_enabled or not config.rclone_remote or not config.remote_music_root:
         return
@@ -811,18 +960,11 @@ def run_sync(config: SyncConfig) -> None:
                 "output_directory": str(config.output_directory),
                 "dry_run": config.dry_run,
                 "remote_copy_enabled": config.remote_copy_enabled,
-                "ytmusic_auth_mode": config.ytmusic_auth_mode,
                 "write_lrc_sidecar": config.write_lrc_sidecar,
                 "embed_unsynced_lyrics": config.embed_unsynced_lyrics,
             },
         )
-        ytmusic = _build_ytmusic_client(
-            config.ytmusic_auth_mode,
-            config.ytmusic_client_id,
-            config.ytmusic_client_secret,
-            config.ytmusic_oauth_token_json,
-            config.ytmusic_browser_auth,
-        )
+        ytmusic = _build_ytmusic_client(config.ytmusic_browser_auth)
         _run_log(config.run_id, stage, "info", "auth-ready", "YT Music client ready.")
 
         stage = "liked_songs_fetch"
@@ -836,13 +978,15 @@ def run_sync(config: SyncConfig) -> None:
         )
         liked = ytmusic.get_liked_songs(limit=5000)
         tracks = _extract_tracks(liked if isinstance(liked, dict) else {})
+        raw_count = len(tracks)
+        tracks = [track for track in tracks if _track_matches_artist_filters(track, config)]
         _run_log(
             config.run_id,
             stage,
             "info",
             "liked-fetch-complete",
             "Liked songs fetch complete.",
-            {"total_count": len(tracks)},
+            {"total_count": len(tracks), "raw_total_count": raw_count},
         )
         _emit_run_event(
             config.run_id,
@@ -863,6 +1007,24 @@ def run_sync(config: SyncConfig) -> None:
             item.status = "processing"
             _emit_item(config.run_id, item)
             _log(config.run_id, item, item.stage, "info", "fetch", "Fetched liked item.")
+
+            context = {
+                "albumartist": item.album_artist,
+                "album": item.album,
+                "track": item.track_number or index,
+                "title": item.title,
+                "artist": item.artist,
+            }
+            output_path = layout.build_path(config.output_directory, context)
+
+            if _should_skip_existing_by_source_id(config, item):
+                item.status = "skipped_existing"
+                item.stage = "finalize"
+                item.output_path = str(output_path)
+                item.reason_code = "existing_library_identity"
+                item.reason_detail = "Matching managed local library source identity already scanned."
+                _emit_item(config.run_id, item)
+                continue
 
             try:
                 item.stage = "source_resolve"
@@ -891,21 +1053,23 @@ def run_sync(config: SyncConfig) -> None:
             except Exception as exc:  # noqa: BLE001
                 _log(config.run_id, item, item.stage, "warn", "lyrics", str(exc))
                 lyrics_text, lyrics_source = None, None
+            item.lyrics_status = _classify_lyrics_text(lyrics_text)
+            item.language = detect_primary_lyrics_language(lyrics_text)
             if lyrics_text:
                 item.lyrics_matched = True
                 item.lyrics_source = lyrics_source
             _emit_item(config.run_id, item)
 
-            context = {
-                "albumartist": item.album_artist,
-                "album": item.album,
-                "track": item.track_number or index,
-                "title": item.title,
-                "artist": item.artist,
-            }
-            output_path = layout.build_path(config.output_directory, context)
+            if _should_skip_existing(config, item):
+                item.status = "skipped_existing"
+                item.stage = "finalize"
+                item.output_path = str(output_path)
+                item.reason_code = "existing_library_identity"
+                item.reason_detail = "Matching managed local library identity already scanned."
+                _emit_item(config.run_id, item)
+                continue
 
-            if output_path.exists():
+            if (not config.force_reprocess) and output_path.exists():
                 item.status = "skipped_existing"
                 item.stage = "finalize"
                 item.output_path = str(output_path)
@@ -946,12 +1110,16 @@ def run_sync(config: SyncConfig) -> None:
                     item.stage = "tagging"
                     stage = item.stage
                     _emit_item(config.run_id, item)
-                    embedded_lyrics = lyrics_text if config.embed_unsynced_lyrics or item.lyrics_source else None
-                    _write_media_tags(output_path, item, cover_bytes, embedded_lyrics)
+                    embedded_lyrics = lyrics_text if (lyrics_text and (item.lyrics_status == "synced" or config.embed_unsynced_lyrics)) else None
+                    write_media_tags(output_path, item, cover_bytes, embedded_lyrics)
 
                     if config.write_lrc_sidecar and lyrics_text:
                         item.lrc_path = str(output_path.with_suffix(".lrc"))
                         Path(item.lrc_path).write_text(lyrics_text, encoding="utf-8")
+                    elif config.force_reprocess:
+                        stale_lrc = output_path.with_suffix(".lrc")
+                        if stale_lrc.exists():
+                            stale_lrc.unlink()
 
                     item.stage = "remote_copy"
                     stage = item.stage

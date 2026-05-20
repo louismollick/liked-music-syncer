@@ -5,8 +5,6 @@ import { contextBridge, ipcRenderer } from 'electron'
 const api: ElectronApi = {
   auth: {
     getStatus: () => ipcRenderer.invoke('auth:getStatus'),
-    startDeviceAuth: () => ipcRenderer.invoke('auth:startDeviceAuth'),
-    finishDeviceAuth: () => ipcRenderer.invoke('auth:finishDeviceAuth'),
     captureBrowserAuth: (browser) =>
       ipcRenderer.invoke('auth:captureBrowserAuth', browser),
     disconnect: () => ipcRenderer.invoke('auth:disconnect'),
@@ -21,8 +19,11 @@ const api: ElectronApi = {
   },
   sync: {
     start: (input) => ipcRenderer.invoke('sync:start', input),
+    reprocessArtists: (artistIds) =>
+      ipcRenderer.invoke('sync:reprocessArtists', artistIds),
     cancel: (runId) => ipcRenderer.invoke('sync:cancel', runId),
     clearSyncData: () => ipcRenderer.invoke('sync:clearSyncData'),
+    syncMissingToRemote: () => ipcRenderer.invoke('sync:syncMissingToRemote'),
     doctor: () => ipcRenderer.invoke('sync:doctor'),
     listRuns: () => ipcRenderer.invoke('sync:listRuns'),
     getRun: (runId) => ipcRenderer.invoke('sync:getRun', runId),
@@ -38,6 +39,15 @@ const api: ElectronApi = {
         ipcRenderer.removeListener('sync:snapshot', wrapped)
       }
     },
+  },
+  library: {
+    scanRoots: () => ipcRenderer.invoke('library:scanRoots'),
+    refreshArtists: () => ipcRenderer.invoke('library:refreshArtists'),
+    listArtists: () => ipcRenderer.invoke('library:listArtists'),
+    listTracks: (filter) => ipcRenderer.invoke('library:listTracks', filter),
+    getTrack: (trackId) => ipcRenderer.invoke('library:getTrack', trackId),
+    getDriftSummary: () => ipcRenderer.invoke('library:getDriftSummary'),
+    listRoots: () => ipcRenderer.invoke('library:listRoots'),
   },
 }
 

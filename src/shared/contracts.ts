@@ -1,4 +1,4 @@
-export type SyncTriggerMode = 'manual'
+export type SyncTriggerMode = 'manual' | 'artist_reprocess'
 
 export type SyncStage =
   | 'idle'
@@ -32,7 +32,13 @@ export type RunStatus =
   | 'cancelled'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
-export type YtMusicAuthMode = 'oauth_device' | 'browser_headers'
+export type LyricsStatus = 'missing' | 'plain' | 'synced'
+export type IdentityKind =
+  | 'lms_source'
+  | 'mb_track'
+  | 'isrc'
+  | 'heuristic'
+  | 'path'
 export type YtDlpCookiesBrowser =
   | 'brave'
   | 'chrome'
@@ -44,21 +50,10 @@ export type YtDlpCookiesBrowser =
   | 'vivaldi'
   | 'whale'
 
-export interface DeviceAuthSessionView {
-  verificationUrl: string
-  userCode: string
-  intervalSeconds: number
-  expiresAt: string
-  startedAt: string
-}
-
 export interface AuthStatus {
-  authMode: YtMusicAuthMode | 'none'
-  hasClientConfig: boolean
+  authMode: 'browser_headers' | 'none'
   isAuthenticated: boolean
-  hasOAuthToken: boolean
   hasBrowserAuth: boolean
-  pendingDeviceAuth: DeviceAuthSessionView | null
   lastError: string | null
 }
 
@@ -69,10 +64,6 @@ export interface AppSettingsView {
   outputFormat: 'm4a'
   rcloneRemote: string
   remoteMusicRoot: string
-  ytmusicAuthMode: YtMusicAuthMode
-  ytmusicClientId: string
-  hasYtMusicClientSecret: boolean
-  hasYtMusicOAuthToken: boolean
   hasYtMusicBrowserAuth: boolean
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
   folderTemplate: string
@@ -85,9 +76,6 @@ export interface SaveSettingsInput {
   outputDirectory: string
   dryRun: boolean
   remoteCopyEnabled: boolean
-  ytmusicAuthMode: YtMusicAuthMode
-  ytmusicClientId: string
-  ytmusicClientSecret?: string
   ytmusicBrowserAuth?: string
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
   rcloneRemote: string
@@ -108,15 +96,6 @@ export interface SettingsSaveResult extends CommandResult {
   authStatus?: AuthStatus
 }
 
-export interface DeviceAuthStartResult extends CommandResult {
-  pendingDeviceAuth: DeviceAuthSessionView | null
-}
-
-export interface DeviceAuthFinishResult extends CommandResult {
-  state: 'pending' | 'authorized' | 'expired' | 'failed'
-  authStatus: AuthStatus
-}
-
 export interface BrowserAuthCaptureResult extends CommandResult {
   authStatus: AuthStatus
 }
@@ -124,7 +103,7 @@ export interface BrowserAuthCaptureResult extends CommandResult {
 export interface SongLogEntry {
   id: number
   runId: string
-  sourceVideoId: string
+  youtubeMusicTrackId: string
   itemId: string
   timestamp: string
   level: LogLevel
@@ -137,7 +116,10 @@ export interface SongLogEntry {
 export interface SyncRunItemView {
   id: string
   runId: string
-  sourceVideoId: string
+  youtubeMusicTrackId: string
+  spotifyTrackId: string | null
+  soundcloudTrackId: string | null
+  resolvedYoutubeMusicTrackId: string | null
   title: string
   artist: string
   album: string
@@ -153,8 +135,17 @@ export interface SyncRunItemView {
   resolutionMethod: string
   trackNumber: number | null
   trackTotal: number | null
+  discNumber: number | null
+  discTotal: number | null
   year: number | null
   date: string | null
+  genre: string | null
+  language: string | null
+  isrc: string | null
+  mbTrackId: string | null
+  mbAlbumId: string | null
+  mbReleaseGroupId: string | null
+  lyricsStatus: LyricsStatus
   audioCodec: string | null
   metadataMatched: boolean
   musicBrainzMatched: boolean
@@ -188,17 +179,116 @@ export interface SyncSnapshot {
   runs: SyncRunSummary[]
 }
 
+export interface LibraryRootView {
+  id: string
+  kind: 'local' | 'remote'
+  transport: 'filesystem' | 'rclone'
+  label: string
+  uri: string
+  writable: boolean
+  managedOutput: boolean
+  createdAt: string
+  updatedAt: string
+  lastScannedAt: string | null
+  lastScanStatus: string | null
+}
+
+export interface LibraryFileView {
+  id: string
+  trackId: string
+  rootId: string
+  relativePath: string
+  absolutePathSnapshot: string | null
+  lrcPath: string | null
+  format: string
+  sizeBytes: number | null
+  durationSeconds: number | null
+  bitrate: number | null
+  modifiedAt: string | null
+  audioSha256: string | null
+  tagFingerprint: string | null
+  embeddedLyricsStatus: LyricsStatus
+  sidecarLyricsStatus: LyricsStatus
+  missingFields: string[]
+  discoveredVia: IdentityKind | 'lms_tags'
+  lastScannedAt: string
+  firstSeenAt: string
+  updatedAt: string
+}
+
+export interface LibraryTrackView {
+  id: string
+  identityKind: IdentityKind
+  identityValue: string
+  managedByApp: boolean
+  tagSchemaVersion: number | null
+  youtubeMusicTrackId: string | null
+  spotifyTrackId: string | null
+  soundcloudTrackId: string | null
+  resolvedYoutubeMusicTrackId: string | null
+  title: string | null
+  artist: string | null
+  album: string | null
+  albumArtist: string | null
+  trackNumber: number | null
+  trackTotal: number | null
+  discNumber: number | null
+  discTotal: number | null
+  year: number | null
+  date: string | null
+  genre: string | null
+  language: string | null
+  isrc: string | null
+  mbTrackId: string | null
+  mbAlbumId: string | null
+  mbReleaseGroupId: string | null
+  lyricsStatus: LyricsStatus
+  hasEmbeddedLyrics: boolean
+  hasSidecarLyrics: boolean
+  coverArtPresent: boolean
+  missingFields: string[]
+  preferredFileId: string | null
+  firstSeenAt: string
+  lastSeenAt: string
+  updatedAt: string
+  files?: LibraryFileView[]
+}
+
+export interface LibraryTrackFilter {
+  managedByApp?: boolean
+  identityKind?: IdentityKind
+  rootKind?: 'local' | 'remote'
+  lyricsStatus?: LyricsStatus
+  missingField?: string
+}
+
+export interface DriftSummary {
+  totalManagedTracks: number
+  inSyncTracks: number
+  localOnlyTracks: number
+  remoteOnlyTracks: number
+  missingEverywhereTracks: number
+}
+
 export interface BinaryStatus {
   uv: string | null
   ffmpeg: string | null
   rclone: string | null
 }
 
+export interface LikedArtistView {
+  id: string
+  channelId: string | null
+  name: string
+  normalizedName: string
+  photoUrl: string | null
+  likedTrackCount: number
+  lastRefreshedAt: string
+}
+
 export interface ElectronApi {
   auth: {
     getStatus: () => Promise<AuthStatus>
-    startDeviceAuth: () => Promise<DeviceAuthStartResult>
-    finishDeviceAuth: () => Promise<DeviceAuthFinishResult>
     captureBrowserAuth: (
       browser: YtDlpCookiesBrowser
     ) => Promise<BrowserAuthCaptureResult>
@@ -213,8 +303,10 @@ export interface ElectronApi {
   }
   sync: {
     start: (input?: { mode?: SyncTriggerMode }) => Promise<CommandResult>
+    reprocessArtists: (artistIds: string[]) => Promise<CommandResult>
     cancel: (runId: string) => Promise<CommandResult>
     clearSyncData: () => Promise<CommandResult>
+    syncMissingToRemote: () => Promise<CommandResult>
     doctor: () => Promise<CommandResult>
     listRuns: () => Promise<SyncRunSummary[]>
     getRun: (runId: string) => Promise<SyncRunDetail | null>
@@ -222,8 +314,17 @@ export interface ElectronApi {
     getRunLogs: (runId: string) => Promise<SongLogEntry[]>
     getSongLogs: (input: {
       runId: string
-      sourceVideoId: string
+      youtubeMusicTrackId: string
     }) => Promise<SongLogEntry[]>
     subscribe: (listener: (snapshot: SyncSnapshot) => void) => () => void
+  }
+  library: {
+    scanRoots: () => Promise<CommandResult>
+    refreshArtists: () => Promise<CommandResult>
+    listArtists: () => Promise<LikedArtistView[]>
+    listTracks: (filter?: LibraryTrackFilter) => Promise<LibraryTrackView[]>
+    getTrack: (trackId: string) => Promise<LibraryTrackView | null>
+    getDriftSummary: () => Promise<DriftSummary>
+    listRoots: () => Promise<LibraryRootView[]>
   }
 }

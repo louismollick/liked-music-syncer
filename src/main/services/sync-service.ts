@@ -1,8 +1,9 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { access, appendFile, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   CommandResult,
+  LikedArtistView,
   LogLevel,
   SongLogEntry,
   SyncItemStatus,
@@ -15,14 +16,19 @@ import type {
 } from '@shared/contracts'
 import { and, asc, desc, eq } from 'drizzle-orm'
 import { app } from 'electron'
+import { execa } from 'execa'
 import type { AppDatabase } from '../db/database'
 import {
   artifactsTable,
-  processedSongsTable,
+  libraryFilesTable,
+  libraryRootsTable,
+  libraryTracksTable,
   songLogsTable,
   syncRunItemsTable,
   syncRunsTable,
 } from '../db/schema'
+import type { LibraryService } from './library-service'
+import type { LikedArtistsService } from './liked-artists-service'
 import type { PoTokenService } from './po-token-service'
 import type { PythonWorkerService } from './python-worker'
 import type { SettingsService } from './settings-service'
@@ -45,7 +51,10 @@ interface WorkerRunEvent {
 
 interface WorkerItemPayload {
   id: string
-  source_video_id: string
+  youtube_music_track_id: string
+  spotify_track_id?: string | null
+  soundcloud_track_id?: string | null
+  resolved_youtube_music_track_id?: string | null
   title: string
   artist: string
   album: string
@@ -61,8 +70,17 @@ interface WorkerItemPayload {
   resolution_method?: string
   track_number?: number | null
   track_total?: number | null
+  disc_number?: number | null
+  disc_total?: number | null
   year?: number | null
   date?: string | null
+  genre?: string | null
+  language?: string | null
+  isrc?: string | null
+  mb_track_id?: string | null
+  mb_album_id?: string | null
+  mb_releasegroup_id?: string | null
+  lyrics_status?: SyncRunItemView['lyricsStatus']
   audio_codec?: string | null
   metadata_matched?: boolean
   musicbrainz_matched?: boolean
@@ -84,7 +102,7 @@ interface WorkerLogEvent {
   type: 'log'
   run_id: string
   item_id: string
-  source_video_id: string
+  youtube_music_track_id: string
   timestamp: string
   level: LogLevel
   stage: SyncStage
@@ -102,6 +120,22 @@ interface WorkerAuthStatusResponse {
   credential_json?: string
 }
 
+interface RunStartOptions {
+  mode: SyncTriggerMode
+  artistChannelIds?: string[]
+  artistNamesNormalized?: string[]
+  forceReprocess?: boolean
+}
+
+interface ManagedFileRow {
+  trackId: string
+  artist: string | null
+  rootKind: string
+  rootUri: string
+  absolutePathSnapshot: string | null
+  relativePath: string
+}
+
 export class SyncService {
   private readonly listeners = new Set<SyncListener>()
   private readonly logsDirectory = path.join(app.getPath('userData'), 'logs')
@@ -109,11 +143,18 @@ export class SyncService {
   private activeProcess: ChildProcessWithoutNullStreams | null = null
   private cancelKillTimer: NodeJS.Timeout | null = null
   private cancelRequestedRunId: string | null = null
+  private readonly runSelectedArtists = new Map<string, LikedArtistView[]>()
+  private readonly runPreexistingManagedFiles = new Map<
+    string,
+    ManagedFileRow[]
+  >()
 
   constructor(
     private readonly db: AppDatabase,
     private readonly settingsService: SettingsService,
     private readonly pythonWorker: PythonWorkerService,
+    private readonly libraryService: LibraryService,
+    private readonly likedArtistsService: LikedArtistsService,
     private readonly poTokenService: PoTokenService,
     private readonly getBundledFfmpegPath: () => string
   ) {}
@@ -124,6 +165,43 @@ export class SyncService {
   }
 
   async start(input?: { mode?: SyncTriggerMode }): Promise<CommandResult> {
+    return this.startRun({ mode: input?.mode ?? 'manual' })
+  }
+
+  async reprocessArtists(artistIds: string[]): Promise<CommandResult> {
+    const uniqueIds = [...new Set(artistIds.filter(Boolean))]
+    if (uniqueIds.length === 0) {
+      return { ok: false, message: 'Select at least one artist.' }
+    }
+    const selectedArtists =
+      await this.likedArtistsService.listArtistsByIds(uniqueIds)
+    if (selectedArtists.length !== uniqueIds.length) {
+      return {
+        ok: false,
+        message: 'Some selected artists are missing. Refresh artists first.',
+      }
+    }
+    const artistChannelIds = selectedArtists
+      .map((artist) => artist.channelId)
+      .filter((value): value is string => Boolean(value))
+    const artistNamesNormalized = selectedArtists.map(
+      (artist) => artist.normalizedName
+    )
+    return this.startRun(
+      {
+        mode: 'artist_reprocess',
+        artistChannelIds,
+        artistNamesNormalized,
+        forceReprocess: true,
+      },
+      selectedArtists
+    )
+  }
+
+  private async startRun(
+    options: RunStartOptions,
+    selectedArtists: LikedArtistView[] = []
+  ): Promise<CommandResult> {
     if (this.activeRunId || this.activeProcess) {
       return { ok: false, message: 'A sync run is already active.' }
     }
@@ -136,22 +214,10 @@ export class SyncService {
       }
     }
 
-    if (settings.ytmusicAuthMode === 'browser_headers') {
-      if (!settings.ytmusicBrowserAuth) {
-        return {
-          ok: false,
-          message: 'Browser auth headers must be configured first.',
-        }
-      }
-    } else {
-      if (!settings.ytmusicClientId || !settings.ytmusicClientSecret) {
-        return {
-          ok: false,
-          message: 'YT Music client ID and secret are required.',
-        }
-      }
-      if (!settings.ytmusicOAuthTokenJson) {
-        return { ok: false, message: 'Connect a YT Music account first.' }
+    if (!settings.ytmusicBrowserAuth) {
+      return {
+        ok: false,
+        message: 'Pull YT Music auth from your browser first.',
       }
     }
 
@@ -159,10 +225,6 @@ export class SyncService {
       await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
         'auth-status',
         {
-          mode: settings.ytmusicAuthMode,
-          client_id: settings.ytmusicClientId,
-          client_secret: settings.ytmusicClientSecret,
-          token_json: settings.ytmusicOAuthTokenJson,
           browser_auth_input: settings.ytmusicBrowserAuth,
         }
       )
@@ -184,25 +246,19 @@ export class SyncService {
     }
 
     const poTokenBundle = this.poTokenService.getBundleStatus()
-    const oauthTokenJson =
-      settings.ytmusicAuthMode === 'oauth_device'
-        ? (authResult.credential_json ?? settings.ytmusicOAuthTokenJson)
-        : settings.ytmusicOAuthTokenJson
+    const scanResult = await this.libraryService.scanRoots()
+    if (!scanResult.ok) {
+      return scanResult
+    }
+    const existingLocalIds =
+      await this.libraryService.getManagedLocalYoutubeIds()
     const browserAuthInput =
-      settings.ytmusicAuthMode === 'browser_headers'
-        ? (authResult.credential_json ?? settings.ytmusicBrowserAuth)
-        : settings.ytmusicBrowserAuth
+      authResult.credential_json ?? settings.ytmusicBrowserAuth
 
     if (authResult.credential_json) {
-      if (settings.ytmusicAuthMode === 'browser_headers') {
-        await this.settingsService.saveYtMusicBrowserAuth(
-          authResult.credential_json
-        )
-      } else {
-        await this.settingsService.saveYtMusicOAuthToken(
-          authResult.credential_json
-        )
-      }
+      await this.settingsService.saveYtMusicBrowserAuth(
+        authResult.credential_json
+      )
     }
 
     const runId = createId('run')
@@ -211,7 +267,7 @@ export class SyncService {
 
     await this.db.insert(syncRunsTable).values({
       id: runId,
-      triggerMode: input?.mode ?? 'manual',
+      triggerMode: options.mode,
       status: 'running',
       startedAt: nowIso(),
       endedAt: null,
@@ -226,16 +282,21 @@ export class SyncService {
       remote_copy_enabled: settings.remoteCopyEnabled,
       rclone_remote: settings.rcloneRemote,
       remote_music_root: settings.remoteMusicRoot,
-      ytmusic_auth_mode: settings.ytmusicAuthMode,
-      ytmusic_client_id: settings.ytmusicClientId,
-      ytmusic_client_secret: settings.ytmusicClientSecret,
-      ytmusic_oauth_token_json: oauthTokenJson,
       ytmusic_browser_auth: browserAuthInput,
       yt_dlp_cookies_browser: settings.ytDlpCookiesBrowser,
       folder_template: settings.folderTemplate,
       file_template: settings.fileTemplate,
       embed_unsynced_lyrics: settings.embedUnsyncedLyrics,
       write_lrc_sidecar: settings.writeLrcSidecar,
+      existing_local_youtube_music_track_ids: [...existingLocalIds.sourceIds],
+      existing_local_resolved_youtube_music_track_ids: [
+        ...existingLocalIds.resolvedIds,
+      ],
+      artist_filter_channel_ids: [...(options.artistChannelIds ?? [])],
+      artist_filter_names_normalized: [
+        ...(options.artistNamesNormalized ?? []),
+      ],
+      force_reprocess: Boolean(options.forceReprocess),
       ffmpeg_path: this.getBundledFfmpegPath(),
       yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
       yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
@@ -243,6 +304,13 @@ export class SyncService {
 
     this.activeRunId = runId
     this.activeProcess = child
+    if (selectedArtists.length > 0) {
+      this.runSelectedArtists.set(runId, selectedArtists)
+      this.runPreexistingManagedFiles.set(
+        runId,
+        await this.getManagedFilesForArtists(selectedArtists)
+      )
+    }
 
     const ndjsonPath = path.join(runDirectory, 'worker.ndjson')
     let stdoutBuffer = ''
@@ -266,10 +334,15 @@ export class SyncService {
       this.cancelRequestedRunId = null
       this.activeRunId = null
       this.activeProcess = null
+      if (status === 'completed') {
+        await this.cleanupArtistReprocessFiles(runId)
+      }
       await this.updateRun(runId, {
         status,
         endedAt: nowIso(),
       })
+      this.runSelectedArtists.delete(runId)
+      this.runPreexistingManagedFiles.delete(runId)
 
       if (status !== 'completed') {
         const stderrText = stderrBuffer.trim()
@@ -341,7 +414,13 @@ export class SyncService {
     })
 
     await this.emitSnapshot()
-    return { ok: true, message: 'Sync started.' }
+    return {
+      ok: true,
+      message:
+        options.mode === 'artist_reprocess'
+          ? 'Artist reprocess started.'
+          : 'Sync started.',
+    }
   }
 
   async cancel(runId: string): Promise<CommandResult> {
@@ -392,15 +471,202 @@ export class SyncService {
     }
 
     await this.db.delete(artifactsTable)
+    await this.db.delete(libraryFilesTable)
+    await this.db.delete(libraryTracksTable)
+    await this.db.delete(libraryRootsTable)
     await this.db.delete(songLogsTable)
     await this.db.delete(syncRunItemsTable)
     await this.db.delete(syncRunsTable)
-    await this.db.delete(processedSongsTable)
     await this.emitSnapshot()
 
     return {
       ok: true,
       message: 'Sync database cleared. Settings and auth left intact.',
+    }
+  }
+
+  async syncMissingToRemote(): Promise<CommandResult> {
+    if (this.activeRunId || this.activeProcess) {
+      return { ok: false, message: 'A sync run is already active.' }
+    }
+
+    const settings = await this.settingsService.getRuntimeSettings()
+    if (
+      !settings.remoteCopyEnabled ||
+      !settings.rcloneRemote.trim() ||
+      !settings.remoteMusicRoot.trim()
+    ) {
+      return {
+        ok: false,
+        message: 'Remote copy settings are incomplete.',
+      }
+    }
+
+    const scanResult = await this.libraryService.scanRoots()
+    if (!scanResult.ok) {
+      return scanResult
+    }
+
+    const localRootUri = settings.outputDirectory.trim()
+    const remoteRootUri = `${settings.rcloneRemote.trim()}:${settings.remoteMusicRoot.trim()}`
+    const roots = await this.db.select().from(libraryRootsTable)
+    const localRoot = roots.find(
+      (root) => root.kind === 'local' && root.uri === localRootUri
+    )
+    const remoteRoot = roots.find(
+      (root) => root.kind === 'remote' && root.uri === remoteRootUri
+    )
+    if (!localRoot) {
+      return {
+        ok: false,
+        message: 'Local output root not found in library scan.',
+      }
+    }
+    if (!remoteRoot) {
+      return {
+        ok: false,
+        message:
+          'Remote root not found in library scan. Check rclone settings.',
+      }
+    }
+
+    const tracks = (await this.db.select().from(libraryTracksTable)).filter(
+      (track) => track.managedByApp
+    )
+    const files = await this.db.select().from(libraryFilesTable)
+    const filesByTrackId = new Map<string, typeof files>()
+    for (const file of files) {
+      const list = filesByTrackId.get(file.trackId) ?? []
+      list.push(file)
+      filesByTrackId.set(file.trackId, list)
+    }
+
+    const remoteTrackIds = new Set(
+      files
+        .filter((file) => file.rootId === remoteRoot.id)
+        .map((file) => file.trackId)
+    )
+    const remoteIdentityIds = new Set<string>()
+    for (const track of tracks) {
+      if (!remoteTrackIds.has(track.id)) continue
+      if (track.youtubeMusicTrackId) {
+        remoteIdentityIds.add(track.youtubeMusicTrackId)
+      }
+      if (track.resolvedYoutubeMusicTrackId) {
+        remoteIdentityIds.add(track.resolvedYoutubeMusicTrackId)
+      }
+    }
+
+    let copied = 0
+    let skippedExisting = 0
+    let skippedNoLocal = 0
+    let failed = 0
+
+    for (const track of tracks) {
+      const sourceId = track.youtubeMusicTrackId
+      const resolvedId = track.resolvedYoutubeMusicTrackId
+      if (
+        (sourceId && remoteIdentityIds.has(sourceId)) ||
+        (resolvedId && remoteIdentityIds.has(resolvedId))
+      ) {
+        skippedExisting += 1
+        continue
+      }
+
+      const localFiles = (filesByTrackId.get(track.id) ?? []).filter(
+        (file) => file.rootId === localRoot.id
+      )
+      if (localFiles.length === 0) {
+        skippedNoLocal += 1
+        continue
+      }
+
+      localFiles.sort((left, right) => {
+        const leftPreferred = left.id === track.preferredFileId ? 1 : 0
+        const rightPreferred = right.id === track.preferredFileId ? 1 : 0
+        if (leftPreferred !== rightPreferred)
+          return rightPreferred - leftPreferred
+        const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
+        const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
+        if (leftAbsolute !== rightAbsolute) return rightAbsolute - leftAbsolute
+        return left.relativePath.localeCompare(right.relativePath)
+      })
+
+      const selected = localFiles[0]
+      if (!selected) {
+        skippedNoLocal += 1
+        continue
+      }
+
+      const localAudioPath =
+        selected.absolutePathSnapshot ||
+        path.join(localRoot.uri, selected.relativePath)
+      const remoteAudioPath = `${remoteRoot.uri.replace(/\/$/, '')}/${selected.relativePath}`
+
+      const audioCopy = await execa(
+        'rclone',
+        ['copyto', localAudioPath, remoteAudioPath],
+        {
+          reject: false,
+        }
+      )
+      if (audioCopy.exitCode !== 0) {
+        failed += 1
+        console.error('backfill-copy-failed', {
+          track_id: track.id,
+          local_audio_path: localAudioPath,
+          remote_audio_path: remoteAudioPath,
+          stderr: audioCopy.stderr || null,
+        })
+        continue
+      }
+
+      const lrcCandidates = [
+        selected.lrcPath,
+        localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
+      ].filter((value): value is string => Boolean(value))
+      let lrcPath: string | null = null
+      for (const candidate of [...new Set(lrcCandidates)]) {
+        try {
+          await access(candidate)
+          lrcPath = candidate
+          break
+        } catch {
+          // ignore missing candidate
+        }
+      }
+
+      if (lrcPath) {
+        const remoteLrcPath = `${remoteRoot.uri.replace(/\/$/, '')}/${selected.relativePath.replace(/\.[^/.]+$/, '.lrc')}`
+        const lrcCopy = await execa(
+          'rclone',
+          ['copyto', lrcPath, remoteLrcPath],
+          {
+            reject: false,
+          }
+        )
+        if (lrcCopy.exitCode !== 0) {
+          failed += 1
+          console.error('backfill-copy-lrc-failed', {
+            track_id: track.id,
+            local_lrc_path: lrcPath,
+            remote_lrc_path: remoteLrcPath,
+            stderr: lrcCopy.stderr || null,
+          })
+          continue
+        }
+      }
+
+      copied += 1
+    }
+
+    return {
+      ok: failed === 0,
+      message:
+        failed === 0
+          ? 'Remote backfill complete.'
+          : 'Remote backfill completed with failures.',
+      details: `Copied ${copied}; skipped existing ${skippedExisting}; skipped no local ${skippedNoLocal}; failed ${failed}.`,
     }
   }
 
@@ -413,9 +679,7 @@ export class SyncService {
       details?: string
     }>('doctor', {
       output_directory: runtime.outputDirectory,
-      ytmusic_client_id: runtime.ytmusicClientId,
-      has_client_secret: Boolean(runtime.ytmusicClientSecret),
-      has_oauth_token: Boolean(runtime.ytmusicOAuthTokenJson),
+      has_browser_auth: Boolean(runtime.ytmusicBrowserAuth),
       ffmpeg_path: this.getBundledFfmpegPath(),
       remote_copy_enabled: runtime.remoteCopyEnabled,
       rclone_remote: runtime.rcloneRemote,
@@ -475,7 +739,7 @@ export class SyncService {
       .where(
         and(
           eq(songLogsTable.runId, runId),
-          eq(songLogsTable.sourceVideoId, RUN_LOG_SOURCE_VIDEO_ID)
+          eq(songLogsTable.youtubeMusicTrackId, RUN_LOG_SOURCE_VIDEO_ID)
         )
       )
       .orderBy(asc(songLogsTable.id))
@@ -485,7 +749,7 @@ export class SyncService {
 
   async getSongLogs(
     runId: string,
-    sourceVideoId: string
+    youtubeMusicTrackId: string
   ): Promise<SongLogEntry[]> {
     const rows = await this.db
       .select()
@@ -493,7 +757,7 @@ export class SyncService {
       .where(
         and(
           eq(songLogsTable.runId, runId),
-          eq(songLogsTable.sourceVideoId, sourceVideoId)
+          eq(songLogsTable.youtubeMusicTrackId, youtubeMusicTrackId)
         )
       )
       .orderBy(asc(songLogsTable.id))
@@ -566,7 +830,7 @@ export class SyncService {
 
     await this.db.insert(songLogsTable).values({
       runId: event.run_id,
-      sourceVideoId: event.source_video_id,
+      youtubeMusicTrackId: event.youtube_music_track_id,
       itemId: event.item_id,
       timestamp: event.timestamp,
       level: event.level,
@@ -587,7 +851,7 @@ export class SyncService {
   ) {
     await this.db.insert(songLogsTable).values({
       runId,
-      sourceVideoId: RUN_LOG_SOURCE_VIDEO_ID,
+      youtubeMusicTrackId: RUN_LOG_SOURCE_VIDEO_ID,
       itemId: RUN_LOG_ITEM_ID,
       timestamp: nowIso(),
       level,
@@ -602,7 +866,7 @@ export class SyncService {
     return {
       id: row.id,
       runId: row.runId,
-      sourceVideoId: row.sourceVideoId,
+      youtubeMusicTrackId: row.youtubeMusicTrackId,
       itemId: row.itemId,
       timestamp: row.timestamp,
       level: row.level as LogLevel,
@@ -620,7 +884,11 @@ export class SyncService {
       .values({
         id: item.id,
         runId,
-        sourceVideoId: item.source_video_id,
+        youtubeMusicTrackId: item.youtube_music_track_id,
+        spotifyTrackId: item.spotify_track_id ?? null,
+        soundcloudTrackId: item.soundcloud_track_id ?? null,
+        resolvedYoutubeMusicTrackId:
+          item.resolved_youtube_music_track_id ?? null,
         title: item.title,
         artist: item.artist,
         album: item.album,
@@ -636,8 +904,17 @@ export class SyncService {
         resolutionMethod: item.resolution_method ?? 'unresolved',
         trackNumber: item.track_number ?? null,
         trackTotal: item.track_total ?? null,
+        discNumber: item.disc_number ?? null,
+        discTotal: item.disc_total ?? null,
         year: item.year ?? null,
         date: item.date ?? null,
+        genre: item.genre ?? null,
+        language: item.language ?? null,
+        isrc: item.isrc ?? null,
+        mbTrackId: item.mb_track_id ?? null,
+        mbAlbumId: item.mb_album_id ?? null,
+        mbReleaseGroupId: item.mb_releasegroup_id ?? null,
+        lyricsStatus: item.lyrics_status ?? 'missing',
         audioCodec: item.audio_codec ?? null,
         metadataMatched: item.metadata_matched ?? false,
         musicBrainzMatched: item.musicbrainz_matched ?? false,
@@ -652,6 +929,11 @@ export class SyncService {
       .onConflictDoUpdate({
         target: syncRunItemsTable.id,
         set: {
+          youtubeMusicTrackId: item.youtube_music_track_id,
+          spotifyTrackId: item.spotify_track_id ?? null,
+          soundcloudTrackId: item.soundcloud_track_id ?? null,
+          resolvedYoutubeMusicTrackId:
+            item.resolved_youtube_music_track_id ?? null,
           title: item.title,
           artist: item.artist,
           album: item.album,
@@ -667,8 +949,17 @@ export class SyncService {
           resolutionMethod: item.resolution_method ?? 'unresolved',
           trackNumber: item.track_number ?? null,
           trackTotal: item.track_total ?? null,
+          discNumber: item.disc_number ?? null,
+          discTotal: item.disc_total ?? null,
           year: item.year ?? null,
           date: item.date ?? null,
+          genre: item.genre ?? null,
+          language: item.language ?? null,
+          isrc: item.isrc ?? null,
+          mbTrackId: item.mb_track_id ?? null,
+          mbAlbumId: item.mb_album_id ?? null,
+          mbReleaseGroupId: item.mb_releasegroup_id ?? null,
+          lyricsStatus: item.lyrics_status ?? 'missing',
           audioCodec: item.audio_codec ?? null,
           metadataMatched: item.metadata_matched ?? false,
           musicBrainzMatched: item.musicbrainz_matched ?? false,
@@ -682,29 +973,6 @@ export class SyncService {
       })
 
     if (item.output_path && item.status === 'completed') {
-      await this.db
-        .insert(processedSongsTable)
-        .values({
-          sourceVideoId: item.source_video_id,
-          title: item.title,
-          artist: item.artist,
-          album: item.album,
-          albumArtist: item.album_artist,
-          outputPath: item.output_path,
-          processedAt: timestamp,
-        })
-        .onConflictDoUpdate({
-          target: processedSongsTable.sourceVideoId,
-          set: {
-            title: item.title,
-            artist: item.artist,
-            album: item.album,
-            albumArtist: item.album_artist,
-            outputPath: item.output_path,
-            processedAt: timestamp,
-          },
-        })
-
       await this.db
         .insert(artifactsTable)
         .values({
@@ -788,7 +1056,10 @@ export class SyncService {
     return {
       id: item.id,
       runId: item.runId,
-      sourceVideoId: item.sourceVideoId,
+      youtubeMusicTrackId: item.youtubeMusicTrackId,
+      spotifyTrackId: item.spotifyTrackId,
+      soundcloudTrackId: item.soundcloudTrackId,
+      resolvedYoutubeMusicTrackId: item.resolvedYoutubeMusicTrackId,
       title: item.title,
       artist: item.artist,
       album: item.album,
@@ -804,8 +1075,17 @@ export class SyncService {
       resolutionMethod: item.resolutionMethod,
       trackNumber: item.trackNumber,
       trackTotal: item.trackTotal,
+      discNumber: item.discNumber,
+      discTotal: item.discTotal,
       year: item.year,
       date: item.date,
+      genre: item.genre,
+      language: item.language,
+      isrc: item.isrc,
+      mbTrackId: item.mbTrackId,
+      mbAlbumId: item.mbAlbumId,
+      mbReleaseGroupId: item.mbReleaseGroupId,
+      lyricsStatus: item.lyricsStatus as SyncRunItemView['lyricsStatus'],
       audioCodec: item.audioCodec,
       metadataMatched: item.metadataMatched,
       musicBrainzMatched: item.musicBrainzMatched,
@@ -837,6 +1117,108 @@ export class SyncService {
       return true
     } catch {
       return false
+    }
+  }
+
+  private normalizeArtistName(value: string) {
+    return value
+      .toLowerCase()
+      .replace(/[^\w\s]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  private trackMatchesSelectedArtists(
+    artist: string | null,
+    selected: LikedArtistView[]
+  ) {
+    if (!artist) return false
+    const parts = artist
+      .split(',')
+      .map((part) => this.normalizeArtistName(part))
+      .filter(Boolean)
+    if (parts.length === 0) return false
+    const wanted = new Set(
+      selected.map((item) => this.normalizeArtistName(item.name))
+    )
+    return parts.some((part) => wanted.has(part))
+  }
+
+  private async getManagedFilesForArtists(
+    selected: LikedArtistView[]
+  ): Promise<ManagedFileRow[]> {
+    const tracks = await this.db.select().from(libraryTracksTable)
+    const matchedTrackIds = new Set(
+      tracks
+        .filter(
+          (track) =>
+            track.managedByApp &&
+            this.trackMatchesSelectedArtists(track.artist, selected)
+        )
+        .map((track) => track.id)
+    )
+    if (matchedTrackIds.size === 0) return []
+    const files = await this.db.select().from(libraryFilesTable)
+    const roots = await this.db.select().from(libraryRootsTable)
+    const rootById = new Map(roots.map((root) => [root.id, root]))
+    return files
+      .filter((file) => matchedTrackIds.has(file.trackId))
+      .map((file) => {
+        const root = rootById.get(file.rootId)
+        return {
+          trackId: file.trackId,
+          artist:
+            tracks.find((track) => track.id === file.trackId)?.artist ?? null,
+          rootKind: root?.kind ?? 'local',
+          rootUri: root?.uri ?? '',
+          absolutePathSnapshot: file.absolutePathSnapshot,
+          relativePath: file.relativePath,
+        }
+      })
+  }
+
+  private async cleanupArtistReprocessFiles(runId: string) {
+    const selected = this.runSelectedArtists.get(runId)
+    if (!selected || selected.length === 0) return
+    const previous = this.runPreexistingManagedFiles.get(runId) ?? []
+    if (previous.length === 0) return
+
+    await this.libraryService.scanRoots()
+    const current = await this.getManagedFilesForArtists(selected)
+    const currentLocal = new Set(
+      current
+        .filter((row) => row.rootKind === 'local')
+        .map((row) => row.absolutePathSnapshot)
+        .filter((value): value is string => Boolean(value))
+    )
+    const currentRemote = new Set(
+      current
+        .filter((row) => row.rootKind === 'remote')
+        .map((row) => `${row.rootUri}|${row.relativePath}`)
+    )
+
+    for (const row of previous) {
+      if (row.rootKind === 'local') {
+        if (!row.absolutePathSnapshot) continue
+        if (currentLocal.has(row.absolutePathSnapshot)) continue
+        try {
+          await rm(row.absolutePathSnapshot, { force: true })
+        } catch {
+          // non-fatal: continue cleanup for other files
+        }
+        continue
+      }
+
+      const remoteKey = `${row.rootUri}|${row.relativePath}`
+      if (currentRemote.has(remoteKey)) continue
+      const remoteTarget = `${row.rootUri.replace(/\/$/, '')}/${row.relativePath}`
+      try {
+        await execa('rclone', ['deletefile', remoteTarget], {
+          reject: false,
+        })
+      } catch {
+        // non-fatal: continue cleanup for other files
+      }
     }
   }
 }

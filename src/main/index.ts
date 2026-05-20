@@ -5,7 +5,9 @@ import { app, BrowserWindow, shell } from 'electron'
 import icon from '../../resources/icon.png?asset'
 import { createDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc'
-import { OAuthService } from './services/oauth-service'
+import { AuthService } from './services/auth-service'
+import { LibraryService } from './services/library-service'
+import { LikedArtistsService } from './services/liked-artists-service'
 import { PoTokenService } from './services/po-token-service'
 import { PythonWorkerService } from './services/python-worker'
 import { SettingsService } from './services/settings-service'
@@ -63,19 +65,28 @@ app.whenReady().then(() => {
     app.getPath('userData'),
     'liked-music-syncer.db'
   )
+  const settingsFile = path.join(app.getPath('userData'), 'settings.json')
   const { db } = createDatabase(databaseFile)
-  const settingsService = new SettingsService(db)
+  const settingsService = new SettingsService(db, settingsFile)
   const pythonWorkerService = new PythonWorkerService()
-  const poTokenService = new PoTokenService()
-  const oauthService = new OAuthService(
+  const libraryService = new LibraryService(
     db,
     settingsService,
     pythonWorkerService
   )
+  const likedArtistsService = new LikedArtistsService(
+    db,
+    settingsService,
+    pythonWorkerService
+  )
+  const poTokenService = new PoTokenService()
+  const authService = new AuthService(db, settingsService, pythonWorkerService)
   const syncService = new SyncService(
     db,
     settingsService,
     pythonWorkerService,
+    libraryService,
+    likedArtistsService,
     poTokenService,
     getBundledFfmpegPath
   )
@@ -84,8 +95,10 @@ app.whenReady().then(() => {
   registerIpcHandlers(
     mainWindow!,
     settingsService,
-    oauthService,
+    authService,
     syncService,
+    libraryService,
+    likedArtistsService,
     getBundledFfmpegPath
   )
 
