@@ -88,6 +88,148 @@ afterEach(() => {
 })
 
 describe('library service', () => {
+  it('can scan only the local root when remote copy is enabled', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-local-'))
+    const pythonWorker = {
+      runJsonCommand: vi.fn().mockResolvedValue({
+        scanned_at: '2026-05-18T00:00:00.000Z',
+        files: [],
+      }),
+    }
+    const service = new LibraryService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: localDir,
+          remoteCopyEnabled: true,
+          rcloneRemote: 'seedbox',
+          remoteMusicRoot: '/music',
+        }),
+      } as never,
+      pythonWorker as never
+    )
+
+    await service.scanRoots({ includeRemote: false })
+
+    expect(pythonWorker.runJsonCommand).toHaveBeenCalledTimes(1)
+    expect(pythonWorker.runJsonCommand).toHaveBeenCalledWith(
+      'library-scan-root',
+      {
+        kind: 'local',
+        transport: 'filesystem',
+        uri: localDir,
+      }
+    )
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('local-only scan does not delete existing remote cache', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-local-'))
+    await db.insert(libraryRootsTable).values({
+      id: 'root_remote_seedbox:/music',
+      kind: 'remote',
+      transport: 'rclone',
+      label: 'Remote',
+      uri: 'seedbox:/music',
+      writable: true,
+      managedOutput: true,
+      createdAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+      lastScannedAt: null,
+      lastScanStatus: null,
+    })
+    await db.insert(libraryTracksTable).values({
+      id: 'remote-track',
+      identityKind: 'lms_source',
+      identityValue: 'youtube_music:liked123',
+      managedByApp: true,
+      tagSchemaVersion: 1,
+      youtubeMusicTrackId: 'liked123',
+      spotifyTrackId: null,
+      soundcloudTrackId: null,
+      resolvedYoutubeMusicTrackId: 'resolved123',
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      albumArtist: 'Artist',
+      trackNumber: 1,
+      trackTotal: 1,
+      discNumber: 1,
+      discTotal: 1,
+      year: 2026,
+      date: null,
+      genre: null,
+      language: null,
+      isrc: null,
+      mbTrackId: null,
+      mbAlbumId: null,
+      mbReleaseGroupId: null,
+      lyricsStatus: 'missing',
+      hasEmbeddedLyrics: false,
+      hasSidecarLyrics: false,
+      coverArtPresent: false,
+      missingFieldsJson: '[]',
+      preferredFileId: null,
+      firstSeenAt: '2026-05-20T00:00:00.000Z',
+      lastSeenAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    })
+    await db.insert(libraryFilesTable).values({
+      id: 'remote-file',
+      trackId: 'remote-track',
+      rootId: 'root_remote_seedbox:/music',
+      relativePath: 'Artist/Album/01 Song.m4a',
+      absolutePathSnapshot: null,
+      lrcPath: null,
+      format: 'm4a',
+      sizeBytes: 100,
+      durationSeconds: 120,
+      bitrate: 256000,
+      modifiedAt: null,
+      audioSha256: null,
+      tagFingerprint: null,
+      embeddedLyricsStatus: 'missing',
+      sidecarLyricsStatus: 'missing',
+      missingFieldsJson: '[]',
+      discoveredVia: 'lms_tags',
+      lastScannedAt: '2026-05-20T00:00:00.000Z',
+      firstSeenAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    const service = new LibraryService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: localDir,
+          remoteCopyEnabled: true,
+          rcloneRemote: 'seedbox',
+          remoteMusicRoot: '/music',
+        }),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockResolvedValue({
+          scanned_at: '2026-05-20T00:01:00.000Z',
+          files: [],
+        }),
+      } as never
+    )
+
+    await service.scanRoots({ includeRemote: false })
+
+    expect(await db.select().from(libraryRootsTable)).toHaveLength(2)
+    expect(await db.select().from(libraryFilesTable)).toHaveLength(1)
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it('groups local and remote managed copies into one track with two files', async () => {
     const { db, sqlite, dir } = makeTempDb()
     const pythonWorker = {
@@ -571,7 +713,26 @@ describe('sync missing to remote', () => {
       () => 'ffmpeg'
     )
 
-    const result = await service.syncMissingToRemote()
+    const preview = await service.findMissingRemoteTracks()
+    expect(preview.ok).toBe(true)
+    expect(preview.message).toContain('Found 1 missing remote tracks')
+    expect(preview.tracks[0]).toMatchObject({
+      trackId: 'local-track',
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      relativePath: 'Artist/Album/01 Song.m4a',
+      localAudioPath: audioPath,
+      remoteAudioPath: 'seedbox:/music/Artist/Album/01 Song.m4a',
+      lyricsStatus: 'synced',
+      hasEmbeddedLyrics: true,
+      hasSidecarLyrics: true,
+    })
+    expect(vi.mocked(execa)).not.toHaveBeenCalled()
+
+    const result = await service.syncMissingToRemote({
+      trackIds: ['local-track'],
+    })
     expect(result.ok).toBe(true)
     expect(result.details).toContain('Copied 1')
     expect(vi.mocked(execa)).toHaveBeenCalledTimes(2)
@@ -751,7 +912,15 @@ describe('sync missing to remote', () => {
       () => 'ffmpeg'
     )
 
-    const result = await service.syncMissingToRemote()
+    const preview = await service.findMissingRemoteTracks()
+    expect(preview.ok).toBe(true)
+    expect(preview.message).toContain('Remote already has all local tracks')
+    expect(preview.tracks).toEqual([])
+    expect(vi.mocked(execa)).not.toHaveBeenCalled()
+
+    const result = await service.syncMissingToRemote({
+      trackIds: ['track_local', 'track_remote'],
+    })
     expect(result.ok).toBe(true)
     expect(result.details).toContain('skipped existing 2')
     expect(vi.mocked(execa)).not.toHaveBeenCalled()
@@ -781,11 +950,82 @@ describe('sync missing to remote', () => {
       () => 'ffmpeg'
     )
 
-    const result = await service.syncMissingToRemote()
+    const preview = await service.findMissingRemoteTracks()
+    expect(preview.ok).toBe(false)
+    expect(preview.message).toContain('Remote copy settings are incomplete')
+
+    const result = await service.syncMissingToRemote({
+      trackIds: ['track_missing'],
+    })
     expect(result.ok).toBe(false)
     expect(result.message).toContain('Remote copy settings are incomplete')
 
     sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('skips requested track if local file vanished', async () => {
+    vi.mocked(execa).mockClear()
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-local-'))
+    await db.insert(libraryRootsTable).values([
+      {
+        id: `root_local_${localDir}`,
+        kind: 'local',
+        transport: 'filesystem',
+        label: 'Local output',
+        uri: localDir,
+        writable: true,
+        managedOutput: true,
+        createdAt: '2026-05-20T00:00:00.000Z',
+        updatedAt: '2026-05-20T00:00:00.000Z',
+        lastScannedAt: null,
+        lastScanStatus: null,
+      },
+      {
+        id: 'root_remote_seedbox:/music',
+        kind: 'remote',
+        transport: 'rclone',
+        label: 'Remote',
+        uri: 'seedbox:/music',
+        writable: true,
+        managedOutput: true,
+        createdAt: '2026-05-20T00:00:00.000Z',
+        updatedAt: '2026-05-20T00:00:00.000Z',
+        lastScannedAt: null,
+        lastScanStatus: null,
+      },
+    ])
+
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: localDir,
+          dryRun: false,
+          remoteCopyEnabled: true,
+          rcloneRemote: 'seedbox',
+          remoteMusicRoot: '/music',
+        }),
+      } as never,
+      {} as never,
+      {
+        scanRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+      } as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    const result = await service.syncMissingToRemote({
+      trackIds: ['vanished-track'],
+    })
+    expect(result.ok).toBe(true)
+    expect(result.details).toContain('skipped no local 1')
+    expect(vi.mocked(execa)).not.toHaveBeenCalled()
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })

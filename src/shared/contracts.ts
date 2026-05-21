@@ -92,6 +92,24 @@ export interface CommandResult {
   details?: string
 }
 
+export interface RemoteMissingTrackPreview {
+  trackId: string
+  title: string
+  artist: string
+  album: string
+  relativePath: string
+  localAudioPath: string
+  remoteAudioPath: string
+  lyricsStatus: LyricsStatus
+  hasEmbeddedLyrics: boolean
+  hasSidecarLyrics: boolean
+  coverThumbnailDataUrl: string | null
+}
+
+export interface RemoteMissingPreviewResult extends CommandResult {
+  tracks: RemoteMissingTrackPreview[]
+}
+
 export interface SettingsSaveResult extends CommandResult {
   authStatus?: AuthStatus
 }
@@ -306,7 +324,10 @@ export interface ElectronApi {
     reprocessArtists: (artistIds: string[]) => Promise<CommandResult>
     cancel: (runId: string) => Promise<CommandResult>
     clearSyncData: () => Promise<CommandResult>
-    syncMissingToRemote: () => Promise<CommandResult>
+    findMissingRemoteTracks: () => Promise<RemoteMissingPreviewResult>
+    syncMissingToRemote: (input: {
+      trackIds: string[]
+    }) => Promise<CommandResult>
     doctor: () => Promise<CommandResult>
     listRuns: () => Promise<SyncRunSummary[]>
     getRun: (runId: string) => Promise<SyncRunDetail | null>

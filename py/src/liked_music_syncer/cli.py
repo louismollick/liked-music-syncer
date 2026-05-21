@@ -12,7 +12,7 @@ from .auth import (
 )
 from .json_io import read_stdin_json, write_json
 from .liked_artists import fetch_liked_artists
-from .library_scan import scan_root
+from .library_scan import extract_cover_thumbnail_data_url, scan_root
 from .models import SyncConfig
 from .sync_engine import run_sync
 
@@ -72,6 +72,10 @@ def main() -> int:
 
     if command == "library-scan-root":
         write_json(scan_root(payload))
+        return 0
+
+    if command == "cover-thumbnail":
+        write_json(extract_cover_thumbnail_data_url(payload))
         return 0
 
     if command == "liked-artists":

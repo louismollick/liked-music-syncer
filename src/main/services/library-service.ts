@@ -119,6 +119,10 @@ interface TrackAggregate {
   preferredFileRank: number
 }
 
+interface ScanRootsOptions {
+  includeRemote?: boolean
+}
+
 export class LibraryService {
   constructor(
     private readonly db: AppDatabase,
@@ -126,8 +130,8 @@ export class LibraryService {
     private readonly pythonWorker: PythonWorkerService
   ) {}
 
-  async scanRoots(): Promise<CommandResult> {
-    const roots = await this.resolveRoots()
+  async scanRoots(options: ScanRootsOptions = {}): Promise<CommandResult> {
+    const roots = await this.resolveRoots(options)
     if (roots.length === 0) {
       return { ok: false, message: 'No library roots configured.' }
     }
@@ -177,6 +181,7 @@ export class LibraryService {
     const existingRoots = await this.db.select().from(libraryRootsTable)
     for (const root of existingRoots) {
       if (configuredRootIds.has(root.id)) continue
+      if (options.includeRemote === false && root.kind === 'remote') continue
       await this.db
         .delete(libraryFilesTable)
         .where(eq(libraryFilesTable.rootId, root.id))
@@ -400,9 +405,12 @@ export class LibraryService {
     return { sourceIds, resolvedIds }
   }
 
-  private async resolveRoots(): Promise<RootDescriptor[]> {
+  private async resolveRoots(
+    options: ScanRootsOptions = {}
+  ): Promise<RootDescriptor[]> {
     const settings = await this.settingsService.getRuntimeSettings()
     const roots: RootDescriptor[] = []
+    const includeRemote = options.includeRemote ?? true
 
     if (settings.outputDirectory.trim()) {
       const uri = settings.outputDirectory.trim()
@@ -418,6 +426,7 @@ export class LibraryService {
     }
 
     if (
+      includeRemote &&
       settings.remoteCopyEnabled &&
       settings.rcloneRemote.trim() &&
       settings.remoteMusicRoot.trim()

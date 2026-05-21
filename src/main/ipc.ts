@@ -80,8 +80,11 @@ export function registerIpcHandlers(
     syncService.cancel(runId)
   )
   ipcMain.handle('sync:clearSyncData', () => syncService.clearSyncData())
-  ipcMain.handle('sync:syncMissingToRemote', () =>
-    syncService.syncMissingToRemote()
+  ipcMain.handle('sync:findMissingRemoteTracks', () =>
+    syncService.findMissingRemoteTracks()
+  )
+  ipcMain.handle('sync:syncMissingToRemote', (_event, input) =>
+    syncService.syncMissingToRemote(input)
   )
   ipcMain.handle('sync:doctor', () => syncService.doctor())
   ipcMain.handle('sync:listRuns', () => syncService.listRuns())

@@ -6,12 +6,15 @@ import re
 import subprocess
 import tempfile
 import unicodedata
+from base64 import b64encode
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from mediafile import MediaFile
+from PIL import Image
 
 from .media_tags import register_lms_mediafile_fields, read_legacy_youtube_track_id
 
@@ -242,6 +245,34 @@ def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]
     metadata["missing_fields"] = _missing_fields(metadata)
     metadata["tag_fingerprint"] = _tag_fingerprint(metadata)
     return metadata
+
+
+def extract_cover_thumbnail_data_url(payload: dict[str, Any]) -> dict[str, Any]:
+    path = Path(str(payload.get("path", ""))).expanduser()
+    if not path.is_file():
+        return {"cover_thumbnail_data_url": None}
+
+    register_lms_mediafile_fields()
+    media = MediaFile(str(path))
+    if not media.images:
+        return {"cover_thumbnail_data_url": None}
+
+    try:
+        image = Image.open(BytesIO(media.images[0].data))
+        image.thumbnail((96, 96))
+        canvas = Image.new("RGB", (96, 96), (12, 17, 23))
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGB")
+        if image.mode == "RGBA":
+            canvas.paste(image, ((96 - image.width) // 2, (96 - image.height) // 2), image)
+        else:
+            canvas.paste(image, ((96 - image.width) // 2, (96 - image.height) // 2))
+        output = BytesIO()
+        canvas.save(output, format="JPEG", quality=78, optimize=True)
+        encoded = b64encode(output.getvalue()).decode("ascii")
+        return {"cover_thumbnail_data_url": f"data:image/jpeg;base64,{encoded}"}
+    except Exception:
+        return {"cover_thumbnail_data_url": None}
 
 
 def _read_sidecar_text(path: Path | None) -> str | None:

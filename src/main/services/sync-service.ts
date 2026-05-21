@@ -5,6 +5,8 @@ import type {
   CommandResult,
   LikedArtistView,
   LogLevel,
+  RemoteMissingPreviewResult,
+  RemoteMissingTrackPreview,
   SongLogEntry,
   SyncItemStatus,
   SyncRunDetail,
@@ -136,6 +138,23 @@ interface ManagedFileRow {
   relativePath: string
 }
 
+interface RemoteMissingState {
+  tracks: RemoteMissingTrackPreview[]
+  remoteIdentityIds: Set<string>
+  tracksById: Map<string, typeof libraryTracksTable.$inferSelect>
+  filesByTrackId: Map<string, (typeof libraryFilesTable.$inferSelect)[]>
+  localRoot: typeof libraryRootsTable.$inferSelect
+  remoteRoot: typeof libraryRootsTable.$inferSelect
+}
+
+type RemoteMissingStateResult =
+  | ({ ok: true } & RemoteMissingState)
+  | ({ ok: false } & CommandResult)
+
+interface CoverThumbnailResult {
+  cover_thumbnail_data_url: string | null
+}
+
 export class SyncService {
   private readonly listeners = new Set<SyncListener>()
   private readonly logsDirectory = path.join(app.getPath('userData'), 'logs')
@@ -246,7 +265,9 @@ export class SyncService {
     }
 
     const poTokenBundle = this.poTokenService.getBundleStatus()
-    const scanResult = await this.libraryService.scanRoots()
+    const scanResult = await this.libraryService.scanRoots({
+      includeRemote: false,
+    })
     if (!scanResult.ok) {
       return scanResult
     }
@@ -485,76 +506,33 @@ export class SyncService {
     }
   }
 
-  async syncMissingToRemote(): Promise<CommandResult> {
-    if (this.activeRunId || this.activeProcess) {
-      return { ok: false, message: 'A sync run is already active.' }
+  async findMissingRemoteTracks(): Promise<RemoteMissingPreviewResult> {
+    const state = await this.buildRemoteMissingState()
+    if (!state.ok) {
+      return { ...state, tracks: [] }
     }
 
-    const settings = await this.settingsService.getRuntimeSettings()
-    if (
-      !settings.remoteCopyEnabled ||
-      !settings.rcloneRemote.trim() ||
-      !settings.remoteMusicRoot.trim()
-    ) {
-      return {
-        ok: false,
-        message: 'Remote copy settings are incomplete.',
-      }
+    return {
+      ok: true,
+      message:
+        state.tracks.length > 0
+          ? `Found ${state.tracks.length} missing remote tracks.`
+          : 'Remote already has all local tracks.',
+      tracks: state.tracks,
+    }
+  }
+
+  async syncMissingToRemote(input: {
+    trackIds: string[]
+  }): Promise<CommandResult> {
+    const requestedTrackIds = new Set(input.trackIds.filter(Boolean))
+    if (requestedTrackIds.size === 0) {
+      return { ok: false, message: 'No missing remote tracks selected.' }
     }
 
-    const scanResult = await this.libraryService.scanRoots()
-    if (!scanResult.ok) {
-      return scanResult
-    }
-
-    const localRootUri = settings.outputDirectory.trim()
-    const remoteRootUri = `${settings.rcloneRemote.trim()}:${settings.remoteMusicRoot.trim()}`
-    const roots = await this.db.select().from(libraryRootsTable)
-    const localRoot = roots.find(
-      (root) => root.kind === 'local' && root.uri === localRootUri
-    )
-    const remoteRoot = roots.find(
-      (root) => root.kind === 'remote' && root.uri === remoteRootUri
-    )
-    if (!localRoot) {
-      return {
-        ok: false,
-        message: 'Local output root not found in library scan.',
-      }
-    }
-    if (!remoteRoot) {
-      return {
-        ok: false,
-        message:
-          'Remote root not found in library scan. Check rclone settings.',
-      }
-    }
-
-    const tracks = (await this.db.select().from(libraryTracksTable)).filter(
-      (track) => track.managedByApp
-    )
-    const files = await this.db.select().from(libraryFilesTable)
-    const filesByTrackId = new Map<string, typeof files>()
-    for (const file of files) {
-      const list = filesByTrackId.get(file.trackId) ?? []
-      list.push(file)
-      filesByTrackId.set(file.trackId, list)
-    }
-
-    const remoteTrackIds = new Set(
-      files
-        .filter((file) => file.rootId === remoteRoot.id)
-        .map((file) => file.trackId)
-    )
-    const remoteIdentityIds = new Set<string>()
-    for (const track of tracks) {
-      if (!remoteTrackIds.has(track.id)) continue
-      if (track.youtubeMusicTrackId) {
-        remoteIdentityIds.add(track.youtubeMusicTrackId)
-      }
-      if (track.resolvedYoutubeMusicTrackId) {
-        remoteIdentityIds.add(track.resolvedYoutubeMusicTrackId)
-      }
+    const state = await this.buildRemoteMissingState()
+    if (!state.ok) {
+      return state
     }
 
     let copied = 0
@@ -562,50 +540,51 @@ export class SyncService {
     let skippedNoLocal = 0
     let failed = 0
 
-    for (const track of tracks) {
+    const missingByTrackId = new Map(
+      state.tracks.map((track) => [track.trackId, track])
+    )
+
+    for (const trackId of requestedTrackIds) {
+      const preview = missingByTrackId.get(trackId)
+      if (!preview) {
+        const track = state.tracksById.get(trackId)
+        if (
+          track &&
+          this.remoteHasTrackIdentity(track, state.remoteIdentityIds)
+        ) {
+          skippedExisting += 1
+        } else {
+          skippedNoLocal += 1
+        }
+        continue
+      }
+
+      const track = state.tracksById.get(trackId)
+      if (!track) {
+        skippedNoLocal += 1
+        continue
+      }
+
       const sourceId = track.youtubeMusicTrackId
       const resolvedId = track.resolvedYoutubeMusicTrackId
       if (
-        (sourceId && remoteIdentityIds.has(sourceId)) ||
-        (resolvedId && remoteIdentityIds.has(resolvedId))
+        (sourceId && state.remoteIdentityIds.has(sourceId)) ||
+        (resolvedId && state.remoteIdentityIds.has(resolvedId))
       ) {
         skippedExisting += 1
         continue
       }
 
-      const localFiles = (filesByTrackId.get(track.id) ?? []).filter(
-        (file) => file.rootId === localRoot.id
-      )
-      if (localFiles.length === 0) {
+      try {
+        await access(preview.localAudioPath)
+      } catch {
         skippedNoLocal += 1
         continue
       }
-
-      localFiles.sort((left, right) => {
-        const leftPreferred = left.id === track.preferredFileId ? 1 : 0
-        const rightPreferred = right.id === track.preferredFileId ? 1 : 0
-        if (leftPreferred !== rightPreferred)
-          return rightPreferred - leftPreferred
-        const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
-        const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
-        if (leftAbsolute !== rightAbsolute) return rightAbsolute - leftAbsolute
-        return left.relativePath.localeCompare(right.relativePath)
-      })
-
-      const selected = localFiles[0]
-      if (!selected) {
-        skippedNoLocal += 1
-        continue
-      }
-
-      const localAudioPath =
-        selected.absolutePathSnapshot ||
-        path.join(localRoot.uri, selected.relativePath)
-      const remoteAudioPath = `${remoteRoot.uri.replace(/\/$/, '')}/${selected.relativePath}`
 
       const audioCopy = await execa(
         'rclone',
-        ['copyto', localAudioPath, remoteAudioPath],
+        ['copyto', preview.localAudioPath, preview.remoteAudioPath],
         {
           reject: false,
         }
@@ -614,16 +593,21 @@ export class SyncService {
         failed += 1
         console.error('backfill-copy-failed', {
           track_id: track.id,
-          local_audio_path: localAudioPath,
-          remote_audio_path: remoteAudioPath,
+          local_audio_path: preview.localAudioPath,
+          remote_audio_path: preview.remoteAudioPath,
           stderr: audioCopy.stderr || null,
         })
         continue
       }
 
+      const selected = this.selectPreferredLocalFile(
+        track,
+        state.filesByTrackId,
+        state.localRoot
+      )
       const lrcCandidates = [
-        selected.lrcPath,
-        localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
+        selected?.lrcPath,
+        preview.localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
       ].filter((value): value is string => Boolean(value))
       let lrcPath: string | null = null
       for (const candidate of [...new Set(lrcCandidates)]) {
@@ -637,7 +621,7 @@ export class SyncService {
       }
 
       if (lrcPath) {
-        const remoteLrcPath = `${remoteRoot.uri.replace(/\/$/, '')}/${selected.relativePath.replace(/\.[^/.]+$/, '.lrc')}`
+        const remoteLrcPath = `${state.remoteRoot.uri.replace(/\/$/, '')}/${preview.relativePath.replace(/\.[^/.]+$/, '.lrc')}`
         const lrcCopy = await execa(
           'rclone',
           ['copyto', lrcPath, remoteLrcPath],
@@ -667,6 +651,181 @@ export class SyncService {
           ? 'Remote backfill complete.'
           : 'Remote backfill completed with failures.',
       details: `Copied ${copied}; skipped existing ${skippedExisting}; skipped no local ${skippedNoLocal}; failed ${failed}.`,
+    }
+  }
+
+  private async buildRemoteMissingState(): Promise<RemoteMissingStateResult> {
+    if (this.activeRunId || this.activeProcess) {
+      return { ok: false, message: 'A sync run is already active.' }
+    }
+
+    const settings = await this.settingsService.getRuntimeSettings()
+    if (
+      !settings.remoteCopyEnabled ||
+      !settings.rcloneRemote.trim() ||
+      !settings.remoteMusicRoot.trim()
+    ) {
+      return {
+        ok: false,
+        message: 'Remote copy settings are incomplete.',
+      }
+    }
+
+    const scanResult = await this.libraryService.scanRoots({
+      includeRemote: true,
+    })
+    if (!scanResult.ok) {
+      return {
+        ok: false,
+        message: scanResult.message,
+        details: scanResult.details,
+      }
+    }
+
+    const localRootUri = settings.outputDirectory.trim()
+    const remoteRootUri = `${settings.rcloneRemote.trim()}:${settings.remoteMusicRoot.trim()}`
+    const roots = await this.db.select().from(libraryRootsTable)
+    const localRoot = roots.find(
+      (root) => root.kind === 'local' && root.uri === localRootUri
+    )
+    const remoteRoot = roots.find(
+      (root) => root.kind === 'remote' && root.uri === remoteRootUri
+    )
+    if (!localRoot) {
+      return {
+        ok: false,
+        message: 'Local output root not found in library scan.',
+      }
+    }
+    if (!remoteRoot) {
+      return {
+        ok: false,
+        message:
+          'Remote root not found in library scan. Check rclone settings.',
+      }
+    }
+
+    const tracks = await this.db.select().from(libraryTracksTable)
+    const tracksById = new Map(tracks.map((track) => [track.id, track]))
+    const files = await this.db.select().from(libraryFilesTable)
+    const filesByTrackId = new Map<
+      string,
+      (typeof libraryFilesTable.$inferSelect)[]
+    >()
+    for (const file of files) {
+      const list = filesByTrackId.get(file.trackId) ?? []
+      list.push(file)
+      filesByTrackId.set(file.trackId, list)
+    }
+
+    const remoteTrackIds = new Set(
+      files
+        .filter((file) => file.rootId === remoteRoot.id)
+        .map((file) => file.trackId)
+    )
+    const remoteIdentityIds = new Set<string>()
+    for (const track of tracks) {
+      if (!remoteTrackIds.has(track.id)) continue
+      if (track.youtubeMusicTrackId) {
+        remoteIdentityIds.add(track.youtubeMusicTrackId)
+      }
+      if (track.resolvedYoutubeMusicTrackId) {
+        remoteIdentityIds.add(track.resolvedYoutubeMusicTrackId)
+      }
+    }
+
+    const previews: RemoteMissingTrackPreview[] = []
+    for (const track of tracks) {
+      if (!track.managedByApp) continue
+      if (this.remoteHasTrackIdentity(track, remoteIdentityIds)) continue
+
+      const selected = this.selectPreferredLocalFile(
+        track,
+        filesByTrackId,
+        localRoot
+      )
+      if (!selected) continue
+
+      const localAudioPath =
+        selected.absolutePathSnapshot ||
+        path.join(localRoot.uri, selected.relativePath)
+      const remoteAudioPath = `${remoteRoot.uri.replace(/\/$/, '')}/${selected.relativePath}`
+      const coverThumbnailDataUrl =
+        await this.extractCoverThumbnailDataUrl(localAudioPath)
+
+      previews.push({
+        trackId: track.id,
+        title: track.title || 'Unknown title',
+        artist: track.artist || 'Unknown artist',
+        album: track.album || 'Unknown album',
+        relativePath: selected.relativePath,
+        localAudioPath,
+        remoteAudioPath,
+        lyricsStatus:
+          track.lyricsStatus as RemoteMissingTrackPreview['lyricsStatus'],
+        hasEmbeddedLyrics: track.hasEmbeddedLyrics,
+        hasSidecarLyrics: track.hasSidecarLyrics,
+        coverThumbnailDataUrl,
+      })
+    }
+
+    return {
+      ok: true,
+      tracks: previews,
+      remoteIdentityIds,
+      tracksById,
+      filesByTrackId,
+      localRoot,
+      remoteRoot,
+    }
+  }
+
+  private remoteHasTrackIdentity(
+    track: typeof libraryTracksTable.$inferSelect,
+    remoteIdentityIds: Set<string>
+  ) {
+    return Boolean(
+      (track.youtubeMusicTrackId &&
+        remoteIdentityIds.has(track.youtubeMusicTrackId)) ||
+        (track.resolvedYoutubeMusicTrackId &&
+          remoteIdentityIds.has(track.resolvedYoutubeMusicTrackId))
+    )
+  }
+
+  private selectPreferredLocalFile(
+    track: typeof libraryTracksTable.$inferSelect,
+    filesByTrackId: Map<string, (typeof libraryFilesTable.$inferSelect)[]>,
+    localRoot: typeof libraryRootsTable.$inferSelect
+  ) {
+    const localFiles = (filesByTrackId.get(track.id) ?? []).filter(
+      (file) => file.rootId === localRoot.id
+    )
+    localFiles.sort((left, right) => {
+      const leftPreferred = left.id === track.preferredFileId ? 1 : 0
+      const rightPreferred = right.id === track.preferredFileId ? 1 : 0
+      if (leftPreferred !== rightPreferred) {
+        return rightPreferred - leftPreferred
+      }
+      const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
+      const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
+      if (leftAbsolute !== rightAbsolute) return rightAbsolute - leftAbsolute
+      return left.relativePath.localeCompare(right.relativePath)
+    })
+    return localFiles[0] ?? null
+  }
+
+  private async extractCoverThumbnailDataUrl(
+    localAudioPath: string
+  ): Promise<string | null> {
+    try {
+      const result =
+        await this.pythonWorker.runJsonCommand<CoverThumbnailResult>(
+          'cover-thumbnail',
+          { path: localAudioPath }
+        )
+      return result.cover_thumbnail_data_url
+    } catch {
+      return null
     }
   }
 
@@ -1183,7 +1342,7 @@ export class SyncService {
     const previous = this.runPreexistingManagedFiles.get(runId) ?? []
     if (previous.length === 0) return
 
-    await this.libraryService.scanRoots()
+    await this.libraryService.scanRoots({ includeRemote: true })
     const current = await this.getManagedFilesForArtists(selected)
     const currentLocal = new Set(
       current

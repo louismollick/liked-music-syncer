@@ -23,7 +23,10 @@ const api: ElectronApi = {
       ipcRenderer.invoke('sync:reprocessArtists', artistIds),
     cancel: (runId) => ipcRenderer.invoke('sync:cancel', runId),
     clearSyncData: () => ipcRenderer.invoke('sync:clearSyncData'),
-    syncMissingToRemote: () => ipcRenderer.invoke('sync:syncMissingToRemote'),
+    findMissingRemoteTracks: () =>
+      ipcRenderer.invoke('sync:findMissingRemoteTracks'),
+    syncMissingToRemote: (input) =>
+      ipcRenderer.invoke('sync:syncMissingToRemote', input),
     doctor: () => ipcRenderer.invoke('sync:doctor'),
     listRuns: () => ipcRenderer.invoke('sync:listRuns'),
     getRun: (runId) => ipcRenderer.invoke('sync:getRun', runId),

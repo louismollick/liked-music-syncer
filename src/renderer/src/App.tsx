@@ -4,6 +4,7 @@ import type {
   BinaryStatus,
   CommandResult,
   LikedArtistView,
+  RemoteMissingTrackPreview,
   SettingsSaveResult,
   SongLogEntry,
   SyncRunDetail,
@@ -28,6 +29,7 @@ type Screen =
   | 'history'
   | 'settings'
   | 'library-artists'
+  | 'remote-missing-review'
 
 const EMPTY_SETTINGS: AppSettingsView = {
   outputDirectory: '',
@@ -65,6 +67,20 @@ function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ')
 }
 
+function formatCommandMessage(result: CommandResult) {
+  return result.details ? `${result.message} ${result.details}` : result.message
+}
+
+function formatUnknownError(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function lyricsLabel(status: RemoteMissingTrackPreview['lyricsStatus']) {
+  if (status === 'synced') return 'Synced lyrics'
+  if (status === 'plain') return 'Plain lyrics'
+  return 'No lyrics'
+}
+
 function App(): JSX.Element {
   const [screen, setScreen] = useState<Screen>('overview')
   const [settings, setSettings] = useState<AppSettingsView>(EMPTY_SETTINGS)
@@ -87,6 +103,12 @@ function App(): JSX.Element {
   const [refreshArtistsInFlight, setRefreshArtistsInFlight] = useState(false)
   const [syncMissingRemoteInFlight, setSyncMissingRemoteInFlight] =
     useState(false)
+  const [findMissingRemoteInFlight, setFindMissingRemoteInFlight] =
+    useState(false)
+  const [remoteMissingTracks, setRemoteMissingTracks] = useState<
+    RemoteMissingTrackPreview[]
+  >([])
+  const [startSyncInFlight, setStartSyncInFlight] = useState(false)
   const [secretDrafts, setSecretDrafts] = useState({
     ytmusicBrowserAuth: '',
   })
@@ -279,11 +301,16 @@ function App(): JSX.Element {
   }, [selectedItemId, visibleRun])
 
   async function runAction(action: Promise<CommandResult>) {
-    const result = await action
-    setMessage(
-      result.details ? `${result.message} ${result.details}` : result.message
-    )
-    await refreshAll()
+    try {
+      const result = await action
+      setMessage(formatCommandMessage(result))
+      await refreshAll()
+      return result
+    } catch (error) {
+      setMessage(`Action failed. ${formatUnknownError(error)}`)
+      await refreshAll()
+      return null
+    }
   }
 
   async function saveCurrentSettings(options?: {
@@ -355,9 +382,7 @@ function App(): JSX.Element {
 
   async function handleDoctor() {
     const result = await window.api.sync.doctor()
-    setDoctorMessage(
-      result.details ? `${result.message} ${result.details}` : result.message
-    )
+    setDoctorMessage(formatCommandMessage(result))
   }
 
   async function handleClearSyncData() {
@@ -386,9 +411,7 @@ function App(): JSX.Element {
         settings.ytDlpCookiesBrowser
       )
       setAuthStatus(result.authStatus)
-      setMessage(
-        result.details ? `${result.message} ${result.details}` : result.message
-      )
+      setMessage(formatCommandMessage(result))
 
       if (result.ok) {
         setSecretDrafts((current) => ({
@@ -407,9 +430,7 @@ function App(): JSX.Element {
     setRefreshArtistsInFlight(true)
     try {
       const result = await window.api.library.refreshArtists()
-      setMessage(
-        result.details ? `${result.message} ${result.details}` : result.message
-      )
+      setMessage(formatCommandMessage(result))
       const nextArtists = await window.api.library.listArtists()
       setArtists(nextArtists)
       setSelectedArtistIds((current) =>
@@ -423,19 +444,70 @@ function App(): JSX.Element {
   async function handleReprocessArtists() {
     if (selectedArtistIds.length === 0) return
     const result = await window.api.sync.reprocessArtists(selectedArtistIds)
-    setMessage(
-      result.details ? `${result.message} ${result.details}` : result.message
-    )
+    setMessage(formatCommandMessage(result))
     await refreshAll()
     if (result.ok) {
       setScreen('current-run')
     }
   }
 
+  async function handleStartSync() {
+    if (startSyncInFlight || snapshot.activeRun) return
+
+    setStartSyncInFlight(true)
+    setMessage('Starting sync...')
+    try {
+      const result = await runAction(window.api.sync.start())
+      if (result?.ok) {
+        setScreen('current-run')
+      }
+    } finally {
+      setStartSyncInFlight(false)
+    }
+  }
+
+  async function handleFindMissingRemoteTracks() {
+    if (
+      findMissingRemoteInFlight ||
+      syncMissingRemoteInFlight ||
+      snapshot.activeRun
+    ) {
+      return
+    }
+
+    setFindMissingRemoteInFlight(true)
+    setMessage('Finding missing remote tracks...')
+    try {
+      const result = await window.api.sync.findMissingRemoteTracks()
+      setMessage(formatCommandMessage(result))
+      if (result.ok && result.tracks.length > 0) {
+        setRemoteMissingTracks(result.tracks)
+        setScreen('remote-missing-review')
+      }
+      if (result.ok && result.tracks.length === 0) {
+        setRemoteMissingTracks([])
+      }
+      await refreshAll()
+    } catch (error) {
+      setMessage(formatUnknownError(error))
+    } finally {
+      setFindMissingRemoteInFlight(false)
+    }
+  }
+
   async function handleSyncMissingToRemote() {
+    if (remoteMissingTracks.length === 0) return
     setSyncMissingRemoteInFlight(true)
     try {
-      await runAction(window.api.sync.syncMissingToRemote())
+      const result = await runAction(
+        window.api.sync.syncMissingToRemote({
+          trackIds: remoteMissingTracks.map((track) => track.trackId),
+        })
+      )
+      if (result?.ok) {
+        setRemoteMissingTracks([])
+        setScreen('overview')
+      }
     } finally {
       setSyncMissingRemoteInFlight(false)
     }
@@ -503,6 +575,14 @@ function App(): JSX.Element {
                 meta={`${artists.length} cached`}
                 onClick={() => setScreen('library-artists')}
               />
+              {remoteMissingTracks.length > 0 ? (
+                <RailButton
+                  active={screen === 'remote-missing-review'}
+                  label="Missing Remote"
+                  meta={`${remoteMissingTracks.length} missing`}
+                  onClick={() => setScreen('remote-missing-review')}
+                />
+              ) : null}
             </nav>
 
             <div className="grid content-end gap-3">
@@ -529,20 +609,27 @@ function App(): JSX.Element {
                   <button
                     className={buttonPrimaryClass}
                     type="button"
-                    onClick={() => runAction(window.api.sync.start())}
+                    disabled={
+                      startSyncInFlight ||
+                      syncMissingRemoteInFlight ||
+                      findMissingRemoteInFlight
+                    }
+                    onClick={() => void handleStartSync()}
                   >
-                    Start sync
+                    {startSyncInFlight ? 'Starting sync...' : 'Start sync'}
                   </button>
                   <button
                     className={buttonClass}
                     type="button"
-                    disabled={syncMissingRemoteInFlight}
-                    onClick={() => void handleSyncMissingToRemote()}
-                    title="Copies only missing local tracks to remote. No delete/retag."
+                    disabled={
+                      syncMissingRemoteInFlight || findMissingRemoteInFlight
+                    }
+                    onClick={() => void handleFindMissingRemoteTracks()}
+                    title="Scans local and remote libraries without copying."
                   >
-                    {syncMissingRemoteInFlight
-                      ? 'Syncing missing to remote...'
-                      : 'Sync Missing to Remote'}
+                    {findMissingRemoteInFlight
+                      ? 'Finding missing remote tracks...'
+                      : 'Find Missing Remote Tracks'}
                   </button>
                 </div>
               )}
@@ -633,9 +720,13 @@ function App(): JSX.Element {
                   void selectRun(snapshot.activeRun.id)
                 }
               }}
-              onStartSync={() => runAction(window.api.sync.start())}
-              onSyncMissingToRemote={() => void handleSyncMissingToRemote()}
+              onStartSync={() => void handleStartSync()}
+              onFindMissingRemoteTracks={() =>
+                void handleFindMissingRemoteTracks()
+              }
               syncMissingRemoteInFlight={syncMissingRemoteInFlight}
+              findMissingRemoteInFlight={findMissingRemoteInFlight}
+              startSyncInFlight={startSyncInFlight}
               runActive={Boolean(snapshot.activeRun)}
               onOpenSettings={() => setScreen('settings')}
             />
@@ -700,6 +791,14 @@ function App(): JSX.Element {
               refreshInFlight={refreshArtistsInFlight}
               authReady={authStatus.isAuthenticated}
               runActive={Boolean(snapshot.activeRun)}
+            />
+          ) : null}
+
+          {screen === 'remote-missing-review' ? (
+            <RemoteMissingReviewScreen
+              tracks={remoteMissingTracks}
+              inFlight={syncMissingRemoteInFlight}
+              onSync={() => void handleSyncMissingToRemote()}
             />
           ) : null}
         </main>
@@ -831,13 +930,96 @@ function LibraryArtistsScreen({
   )
 }
 
+function RemoteMissingReviewScreen({
+  tracks,
+  inFlight,
+  onSync,
+}: {
+  tracks: RemoteMissingTrackPreview[]
+  inFlight: boolean
+  onSync: () => void
+}) {
+  return (
+    <section className="grid gap-4">
+      <article className={cn(panelClass, 'grid gap-5 p-6')}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[0.68rem] uppercase tracking-[0.16em] text-slate-500">
+              Review
+            </p>
+            <h3 className="mt-2 font-['Syne'] text-2xl tracking-[-0.04em] text-slate-50">
+              Missing remote tracks
+            </h3>
+          </div>
+          <button
+            className={buttonPrimaryClass}
+            type="button"
+            disabled={tracks.length === 0 || inFlight}
+            onClick={onSync}
+          >
+            {inFlight
+              ? 'Syncing missing to remote...'
+              : 'Sync Missing to Remote'}
+          </button>
+        </div>
+
+        <div className="grid max-h-[680px] gap-2 overflow-auto pr-1">
+          {tracks.length === 0 ? (
+            <p className="text-sm leading-6 text-slate-400">
+              No missing remote tracks loaded.
+            </p>
+          ) : (
+            tracks.map((track) => (
+              <div
+                key={track.trackId}
+                className="grid gap-3 rounded-2xl border border-white/6 bg-white/[0.03] p-3 sm:grid-cols-[56px_minmax(0,1fr)_auto] sm:items-center"
+              >
+                {track.coverThumbnailDataUrl ? (
+                  <img
+                    src={track.coverThumbnailDataUrl}
+                    alt=""
+                    className="h-14 w-14 rounded-xl object-cover"
+                  />
+                ) : (
+                  <div className="grid h-14 w-14 place-content-center rounded-xl border border-white/10 bg-[#10151b] text-xs text-slate-400">
+                    art
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <strong className="block truncate text-sm text-slate-50">
+                    {track.title}
+                  </strong>
+                  <span className="mt-1 block truncate text-sm text-slate-300">
+                    {track.artist}
+                  </span>
+                  <span className="mt-1 block truncate text-xs text-slate-500">
+                    {track.album}
+                  </span>
+                  <span className="mt-2 block truncate font-['IBM_Plex_Mono'] text-[12px] text-slate-500">
+                    {track.relativePath}
+                  </span>
+                </div>
+                <span className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-xs text-slate-300">
+                  {lyricsLabel(track.lyricsStatus)}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </article>
+    </section>
+  )
+}
+
 function OverviewScreen({
   authStatus,
   headlineRun,
   onOpenRun,
   onStartSync,
-  onSyncMissingToRemote,
+  onFindMissingRemoteTracks,
   syncMissingRemoteInFlight,
+  findMissingRemoteInFlight,
+  startSyncInFlight,
   runActive,
   onOpenSettings,
 }: {
@@ -845,8 +1027,10 @@ function OverviewScreen({
   headlineRun: SyncRunSummary | null
   onOpenRun: () => void
   onStartSync: () => void
-  onSyncMissingToRemote: () => void
+  onFindMissingRemoteTracks: () => void
   syncMissingRemoteInFlight: boolean
+  findMissingRemoteInFlight: boolean
+  startSyncInFlight: boolean
   runActive: boolean
   onOpenSettings: () => void
 }) {
@@ -883,9 +1067,15 @@ function OverviewScreen({
           <button
             className={buttonPrimaryClass}
             type="button"
+            disabled={
+              runActive ||
+              startSyncInFlight ||
+              syncMissingRemoteInFlight ||
+              findMissingRemoteInFlight
+            }
             onClick={onStartSync}
           >
-            Start sync
+            {startSyncInFlight ? 'Starting sync...' : 'Start sync'}
           </button>
           <button
             className={buttonClass}
@@ -897,13 +1087,17 @@ function OverviewScreen({
           <button
             className={buttonClass}
             type="button"
-            disabled={runActive || syncMissingRemoteInFlight}
-            onClick={onSyncMissingToRemote}
-            title="Copies only missing local tracks to remote. No delete/retag."
+            disabled={
+              runActive ||
+              syncMissingRemoteInFlight ||
+              findMissingRemoteInFlight
+            }
+            onClick={onFindMissingRemoteTracks}
+            title="Scans local and remote libraries without copying."
           >
-            {syncMissingRemoteInFlight
-              ? 'Syncing missing to remote...'
-              : 'Sync Missing to Remote'}
+            {findMissingRemoteInFlight
+              ? 'Finding missing remote tracks...'
+              : 'Find Missing Remote Tracks'}
           </button>
         </div>
       </article>
@@ -1936,6 +2130,8 @@ function screenTitle(screen: Screen) {
       return 'Settings'
     case 'library-artists':
       return 'Library Artists'
+    case 'remote-missing-review':
+      return 'Missing Remote'
   }
 }
 
@@ -1964,6 +2160,8 @@ function screenCopy(
       return 'Browser auth, output, templates, remote copy, and worker doctor checks.'
     case 'library-artists':
       return 'Cached artist list from liked songs with multi-select reprocess.'
+    case 'remote-missing-review':
+      return 'Review local tracks absent from remote before copying.'
   }
 }
 
