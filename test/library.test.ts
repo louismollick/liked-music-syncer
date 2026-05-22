@@ -21,7 +21,12 @@ import {
   syncRunsTable,
 } from '../src/main/db/schema'
 import { LibraryService } from '../src/main/services/library-service'
-import { SyncService } from '../src/main/services/sync-service'
+import {
+  buildRemoteScannerSshArgs,
+  normalizeExiftoolJson,
+  parseRcloneSftpConfig,
+  SyncService,
+} from '../src/main/services/sync-service'
 
 function makeTempDb() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-db-'))
@@ -441,6 +446,64 @@ describe('sync run item contract', () => {
   })
 })
 
+describe('remote shell scanner helpers', () => {
+  it('parses rclone SFTP config', () => {
+    expect(
+      parseRcloneSftpConfig(
+        'type = sftp\nhost = 168.138.74.194\nuser = ubuntu\nkey_file = /tmp/key\n'
+      )
+    ).toEqual({
+      type: 'sftp',
+      host: '168.138.74.194',
+      user: 'ubuntu',
+      keyFile: '/tmp/key',
+    })
+  })
+
+  it('builds SSH scanner command from rclone config', () => {
+    const args = buildRemoteScannerSshArgs({
+      config: {
+        type: 'sftp',
+        host: '168.138.74.194',
+        user: 'ubuntu',
+        keyFile: '/tmp/key',
+      },
+      remoteMusicRoot: 'louismollick-server/music',
+    })
+
+    expect(args.slice(0, 7)).toEqual([
+      '-i',
+      '/tmp/key',
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=15',
+      'ubuntu@168.138.74.194',
+    ])
+    expect(args[7]).toContain("cd '/home/ubuntu/louismollick-server/music'")
+    expect(args[7]).toContain('exiftool')
+  })
+
+  it('normalizes exiftool JSON', () => {
+    expect(
+      normalizeExiftoolJson(
+        '[{"SourceFile":"./A/B.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"source","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved"}]',
+        '2026-05-20T00:00:00.000Z'
+      )
+    ).toEqual({
+      scannedAt: '2026-05-20T00:00:00.000Z',
+      filesScanned: 1,
+      identities: [
+        {
+          relativePath: 'A/B.m4a',
+          youtubeMusicTrackId: 'source',
+          resolvedYoutubeMusicTrackId: 'resolved',
+        },
+      ],
+    })
+  })
+})
+
 describe('sync missing to remote', () => {
   it('copies missing local tracks and sidecar lrc to remote', async () => {
     vi.mocked(execa).mockClear()
@@ -545,11 +608,23 @@ describe('sync missing to remote', () => {
       },
     ])
 
-    vi.mocked(execa).mockResolvedValue({
-      exitCode: 0,
-      stderr: '',
-      stdout: '',
-    } as never)
+    vi.mocked(execa)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: '',
+        stdout:
+          'type = sftp\nhost = 168.138.74.194\nuser = ubuntu\nkey_file = /tmp/key\n',
+      } as never)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: '',
+        stdout: '[]',
+      } as never)
+      .mockResolvedValue({
+        exitCode: 0,
+        stderr: '',
+        stdout: '',
+      } as never)
 
     const service = new SyncService(
       db,
@@ -564,23 +639,38 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
+        scanLocalRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
         scanRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
       } as never,
       {} as never,
       {} as never,
       () => 'ffmpeg'
     )
+    const snapshots: Awaited<ReturnType<typeof service.getSnapshot>>[] = []
+    service.subscribe((snapshot) => snapshots.push(snapshot))
 
     const result = await service.syncMissingToRemote()
     expect(result.ok).toBe(true)
     expect(result.details).toContain('Copied 1')
-    expect(vi.mocked(execa)).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(execa).mock.calls[0]?.[1]).toEqual([
+    expect(
+      snapshots.some(
+        (snapshot) => snapshot.activeRun?.triggerMode === 'remote_backfill'
+      )
+    ).toBe(true)
+    const runs = await service.listRuns()
+    expect(runs[0]?.triggerMode).toBe('remote_backfill')
+    expect(runs[0]?.processedCount).toBe(1)
+    expect(runs[0]?.completedCount).toBe(1)
+    const run = runs[0] ? await service.getRun(runs[0].id) : null
+    expect(run?.items[0]?.stage).toBe('remote_copy')
+    expect(run?.items[0]?.status).toBe('completed')
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(4)
+    expect(vi.mocked(execa).mock.calls[2]?.[1]).toEqual([
       'copyto',
       audioPath,
       'seedbox:/music/Artist/Album/01 Song.m4a',
     ])
-    expect(vi.mocked(execa).mock.calls[1]?.[1]).toEqual([
+    expect(vi.mocked(execa).mock.calls[3]?.[1]).toEqual([
       'copyto',
       lrcPath,
       'seedbox:/music/Artist/Album/01 Song.lrc',
@@ -725,11 +815,19 @@ describe('sync missing to remote', () => {
       },
     ])
 
-    vi.mocked(execa).mockResolvedValue({
-      exitCode: 0,
-      stderr: '',
-      stdout: '',
-    } as never)
+    vi.mocked(execa)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: '',
+        stdout:
+          'type = sftp\nhost = 168.138.74.194\nuser = ubuntu\nkey_file = /tmp/key\n',
+      } as never)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: '',
+        stdout:
+          '[{"SourceFile":"./Artist/Album/01 Song.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"liked123","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved123"}]',
+      } as never)
 
     const service = new SyncService(
       db,
@@ -744,6 +842,7 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
+        scanLocalRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
         scanRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
       } as never,
       {} as never,
@@ -754,7 +853,7 @@ describe('sync missing to remote', () => {
     const result = await service.syncMissingToRemote()
     expect(result.ok).toBe(true)
     expect(result.details).toContain('skipped existing 2')
-    expect(vi.mocked(execa)).not.toHaveBeenCalled()
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(2)
 
     sqlite.close()
     fs.rmSync(localDir, { recursive: true, force: true })
@@ -786,6 +885,68 @@ describe('sync missing to remote', () => {
     expect(result.message).toContain('Remote copy settings are incomplete')
 
     sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('surfaces missing remote exiftool error', async () => {
+    vi.mocked(execa).mockClear()
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-local-'))
+
+    await db.insert(libraryRootsTable).values({
+      id: `root_local_${localDir}`,
+      kind: 'local',
+      transport: 'filesystem',
+      label: 'Local output',
+      uri: localDir,
+      writable: true,
+      managedOutput: true,
+      createdAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+      lastScannedAt: null,
+      lastScanStatus: null,
+    })
+
+    vi.mocked(execa)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: '',
+        stdout:
+          'type = sftp\nhost = 168.138.74.194\nuser = ubuntu\nkey_file = /tmp/key\n',
+      } as never)
+      .mockResolvedValueOnce({
+        exitCode: 45,
+        stderr: '__LMS_EXIFTOOL_MISSING__',
+        stdout: '',
+      } as never)
+
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: localDir,
+          dryRun: false,
+          remoteCopyEnabled: true,
+          rcloneRemote: 'seedbox',
+          remoteMusicRoot: '/music',
+        }),
+      } as never,
+      {} as never,
+      {
+        scanLocalRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+        scanRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+      } as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    const result = await service.syncMissingToRemote()
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('Install libimage-exiftool-perl')
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })

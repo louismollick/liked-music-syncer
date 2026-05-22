@@ -1,4 +1,4 @@
-export type SyncTriggerMode = 'manual' | 'artist_reprocess'
+export type SyncTriggerMode = 'manual' | 'artist_reprocess' | 'remote_backfill'
 
 export type SyncStage =
   | 'idle'

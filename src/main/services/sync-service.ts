@@ -136,6 +136,169 @@ interface ManagedFileRow {
   relativePath: string
 }
 
+export interface RemoteShellTrackIdentity {
+  relativePath: string
+  youtubeMusicTrackId: string | null
+  resolvedYoutubeMusicTrackId: string | null
+}
+
+export interface RemoteShellScanResult {
+  scannedAt: string
+  filesScanned: number
+  identities: RemoteShellTrackIdentity[]
+}
+
+export interface RcloneSftpConfig {
+  type: 'sftp'
+  host: string
+  user: string
+  keyFile: string
+}
+
+interface ExiftoolJsonRow {
+  SourceFile?: unknown
+  LMS_YOUTUBE_MUSIC_TRACK_ID?: unknown
+  LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID?: unknown
+}
+
+const REMOTE_EXIFTOOL_MISSING_MESSAGE =
+  'Remote scanner requires exiftool on the VPS. Install libimage-exiftool-perl.'
+
+export function parseRcloneSftpConfig(output: string): RcloneSftpConfig {
+  const values = new Map<string, string>()
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s*([^#=\s][^=]*?)\s*=\s*(.*?)\s*$/)
+    if (!match) continue
+    values.set(match[1].trim(), match[2].trim())
+  }
+
+  if (values.get('type') !== 'sftp') {
+    throw new Error('Remote backfill requires an SFTP rclone remote.')
+  }
+  const host = values.get('host')
+  const user = values.get('user')
+  const keyFile = values.get('key_file')
+  if (!host || !user || !keyFile) {
+    throw new Error('SFTP rclone remote must include host, user, and key_file.')
+  }
+
+  return { type: 'sftp', host, user, keyFile }
+}
+
+export function normalizeExiftoolJson(
+  stdout: string,
+  scannedAt = nowIso()
+): RemoteShellScanResult {
+  let rows: ExiftoolJsonRow[]
+  try {
+    const parsed = JSON.parse(stdout)
+    if (!Array.isArray(parsed)) {
+      throw new Error('not an array')
+    }
+    rows = parsed as ExiftoolJsonRow[]
+  } catch (error) {
+    throw new Error(
+      `Malformed exiftool JSON: ${error instanceof Error ? error.message : 'unknown error'}`
+    )
+  }
+
+  const identities = rows.map((row) => {
+    const sourceFile = String(row.SourceFile ?? '')
+    return {
+      relativePath: sourceFile.replace(/^\.\//, ''),
+      youtubeMusicTrackId: stringOrNull(row.LMS_YOUTUBE_MUSIC_TRACK_ID),
+      resolvedYoutubeMusicTrackId: stringOrNull(
+        row.LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID
+      ),
+    }
+  })
+
+  return {
+    scannedAt,
+    filesScanned: identities.length,
+    identities,
+  }
+}
+
+export function buildRemoteScannerSshArgs(input: {
+  config: RcloneSftpConfig
+  remoteMusicRoot: string
+}): string[] {
+  const shellRoot = resolveRemoteShellRoot(
+    input.remoteMusicRoot,
+    input.config.user
+  )
+  return [
+    '-i',
+    input.config.keyFile,
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=15',
+    `${input.config.user}@${input.config.host}`,
+    buildRemoteScannerCommand(shellRoot),
+  ]
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+function resolveRemoteShellRoot(remoteMusicRoot: string, user: string) {
+  const trimmed = remoteMusicRoot.trim()
+  if (trimmed.startsWith('/')) return trimmed
+  return `/home/${user}/${trimmed.replace(/^\/+/, '')}`
+}
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+function buildRemoteScannerCommand(shellRoot: string) {
+  return `cd ${shellQuote(shellRoot)} || { echo "__LMS_REMOTE_ROOT_MISSING__" >&2; exit 44; }
+command -v exiftool >/dev/null 2>&1 || { echo "__LMS_EXIFTOOL_MISSING__" >&2; exit 45; }
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+root = "."
+paths = []
+for current, _, files in os.walk(root):
+    for name in files:
+        if name.lower().endswith(".m4a"):
+            paths.append(os.path.join(current, name))
+
+rows = []
+for index in range(0, len(paths), 100):
+    batch = paths[index:index + 100]
+    if not batch:
+        continue
+    proc = subprocess.run(
+        [
+            "exiftool",
+            "-json",
+            "-charset",
+            "filename=UTF8",
+            "-LMS_YOUTUBE_MUSIC_TRACK_ID",
+            "-LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID",
+            *batch,
+        ],
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        sys.exit(proc.returncode)
+    rows.extend(json.loads(proc.stdout or "[]"))
+
+print(json.dumps(rows))
+PY`
+}
+
 export class SyncService {
   private readonly listeners = new Set<SyncListener>()
   private readonly logsDirectory = path.join(app.getPath('userData'), 'logs')
@@ -424,8 +587,25 @@ export class SyncService {
   }
 
   async cancel(runId: string): Promise<CommandResult> {
-    if (this.activeRunId !== runId || !this.activeProcess) {
+    if (this.activeRunId !== runId) {
       return { ok: false, message: 'That run is not active.' }
+    }
+
+    if (!this.activeProcess) {
+      this.cancelRequestedRunId = runId
+      await this.updateRun(runId, {
+        status: 'cancelled',
+        endedAt: nowIso(),
+      })
+      await this.insertRunLog(
+        runId,
+        'warn',
+        'finalize',
+        'cancel-requested',
+        'Cancellation requested.'
+      )
+      await this.emitSnapshot()
+      return { ok: true, message: 'Cancellation requested.' }
     }
 
     const child = this.activeProcess
@@ -502,172 +682,411 @@ export class SyncService {
       }
     }
 
-    const scanResult = await this.libraryService.scanRoots()
-    if (!scanResult.ok) {
-      return scanResult
-    }
-
-    const localRootUri = settings.outputDirectory.trim()
-    const remoteRootUri = `${settings.rcloneRemote.trim()}:${settings.remoteMusicRoot.trim()}`
-    const roots = await this.db.select().from(libraryRootsTable)
-    const localRoot = roots.find(
-      (root) => root.kind === 'local' && root.uri === localRootUri
+    const runId = createId('run')
+    const runDirectory = path.join(this.logsDirectory, runId)
+    await mkdir(runDirectory, { recursive: true })
+    await this.db.insert(syncRunsTable).values({
+      id: runId,
+      triggerMode: 'remote_backfill',
+      status: 'running',
+      startedAt: nowIso(),
+      endedAt: null,
+      logDirectory: runDirectory,
+      plannedCount: 0,
+    })
+    this.activeRunId = runId
+    await this.insertRunLog(
+      runId,
+      'info',
+      'remote_copy',
+      'remote-backfill-started',
+      'Finding local tracks missing from remote.'
     )
-    const remoteRoot = roots.find(
-      (root) => root.kind === 'remote' && root.uri === remoteRootUri
-    )
-    if (!localRoot) {
-      return {
-        ok: false,
-        message: 'Local output root not found in library scan.',
-      }
-    }
-    if (!remoteRoot) {
-      return {
-        ok: false,
-        message:
-          'Remote root not found in library scan. Check rclone settings.',
-      }
-    }
-
-    const tracks = (await this.db.select().from(libraryTracksTable)).filter(
-      (track) => track.managedByApp
-    )
-    const files = await this.db.select().from(libraryFilesTable)
-    const filesByTrackId = new Map<string, typeof files>()
-    for (const file of files) {
-      const list = filesByTrackId.get(file.trackId) ?? []
-      list.push(file)
-      filesByTrackId.set(file.trackId, list)
-    }
-
-    const remoteTrackIds = new Set(
-      files
-        .filter((file) => file.rootId === remoteRoot.id)
-        .map((file) => file.trackId)
-    )
-    const remoteIdentityIds = new Set<string>()
-    for (const track of tracks) {
-      if (!remoteTrackIds.has(track.id)) continue
-      if (track.youtubeMusicTrackId) {
-        remoteIdentityIds.add(track.youtubeMusicTrackId)
-      }
-      if (track.resolvedYoutubeMusicTrackId) {
-        remoteIdentityIds.add(track.resolvedYoutubeMusicTrackId)
-      }
-    }
+    await this.emitSnapshot()
 
     let copied = 0
     let skippedExisting = 0
     let skippedNoLocal = 0
+    let skippedMissingIdentity = 0
     let failed = 0
+    let result: CommandResult = {
+      ok: true,
+      message: 'Remote backfill complete.',
+      details: 'Copied 0; skipped existing 0; skipped no local 0; failed 0.',
+    }
 
-    for (const track of tracks) {
-      const sourceId = track.youtubeMusicTrackId
-      const resolvedId = track.resolvedYoutubeMusicTrackId
-      if (
-        (sourceId && remoteIdentityIds.has(sourceId)) ||
-        (resolvedId && remoteIdentityIds.has(resolvedId))
-      ) {
-        skippedExisting += 1
-        continue
+    try {
+      const scanResult = await this.libraryService.scanLocalRoots()
+      if (!scanResult.ok) {
+        result = scanResult
+        await this.insertRunLog(
+          runId,
+          'error',
+          'remote_copy',
+          'library-scan-failed',
+          scanResult.message,
+          scanResult.details ? { details: scanResult.details } : undefined
+        )
+        return result
       }
 
-      const localFiles = (filesByTrackId.get(track.id) ?? []).filter(
-        (file) => file.rootId === localRoot.id
+      const localRootUri = settings.outputDirectory.trim()
+      const remoteRootUri = `${settings.rcloneRemote.trim()}:${settings.remoteMusicRoot.trim()}`
+      const roots = await this.db.select().from(libraryRootsTable)
+      const localRoot = roots.find(
+        (root) => root.kind === 'local' && root.uri === localRootUri
       )
-      if (localFiles.length === 0) {
-        skippedNoLocal += 1
-        continue
+      if (!localRoot) {
+        result = {
+          ok: false,
+          message: 'Local output root not found in library scan.',
+        }
+        return result
       }
 
-      localFiles.sort((left, right) => {
-        const leftPreferred = left.id === track.preferredFileId ? 1 : 0
-        const rightPreferred = right.id === track.preferredFileId ? 1 : 0
-        if (leftPreferred !== rightPreferred)
-          return rightPreferred - leftPreferred
-        const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
-        const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
-        if (leftAbsolute !== rightAbsolute) return rightAbsolute - leftAbsolute
-        return left.relativePath.localeCompare(right.relativePath)
-      })
+      await this.insertRunLog(
+        runId,
+        'info',
+        'remote_copy',
+        'remote-shell-scan-started',
+        'Scanning remote tags over SSH.'
+      )
+      await this.emitSnapshot()
 
-      const selected = localFiles[0]
-      if (!selected) {
-        skippedNoLocal += 1
-        continue
-      }
-
-      const localAudioPath =
-        selected.absolutePathSnapshot ||
-        path.join(localRoot.uri, selected.relativePath)
-      const remoteAudioPath = `${remoteRoot.uri.replace(/\/$/, '')}/${selected.relativePath}`
-
-      const audioCopy = await execa(
-        'rclone',
-        ['copyto', localAudioPath, remoteAudioPath],
+      const remoteScan = await this.scanRemoteShell(
+        settings.rcloneRemote.trim(),
+        settings.remoteMusicRoot.trim()
+      )
+      await this.insertRunLog(
+        runId,
+        'info',
+        'remote_copy',
+        'remote-shell-scan-completed',
+        `Scanned ${remoteScan.filesScanned} remote files.`,
         {
-          reject: false,
+          scannedAt: remoteScan.scannedAt,
+          identityCount: remoteScan.identities.length,
         }
       )
-      if (audioCopy.exitCode !== 0) {
-        failed += 1
-        console.error('backfill-copy-failed', {
-          track_id: track.id,
-          local_audio_path: localAudioPath,
-          remote_audio_path: remoteAudioPath,
-          stderr: audioCopy.stderr || null,
-        })
-        continue
+
+      const tracks = (await this.db.select().from(libraryTracksTable)).filter(
+        (track) => track.managedByApp
+      )
+      await this.updateRun(runId, { plannedCount: tracks.length })
+      await this.insertRunLog(
+        runId,
+        'info',
+        'remote_copy',
+        'remote-backfill-planned',
+        `Checking ${tracks.length} managed tracks.`
+      )
+      await this.emitSnapshot()
+
+      const files = await this.db.select().from(libraryFilesTable)
+      const filesByTrackId = new Map<string, typeof files>()
+      for (const file of files) {
+        const list = filesByTrackId.get(file.trackId) ?? []
+        list.push(file)
+        filesByTrackId.set(file.trackId, list)
       }
 
-      const lrcCandidates = [
-        selected.lrcPath,
-        localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
-      ].filter((value): value is string => Boolean(value))
-      let lrcPath: string | null = null
-      for (const candidate of [...new Set(lrcCandidates)]) {
-        try {
-          await access(candidate)
-          lrcPath = candidate
-          break
-        } catch {
-          // ignore missing candidate
+      const remoteSourceIds = new Set<string>()
+      const remoteResolvedIds = new Set<string>()
+      for (const identity of remoteScan.identities) {
+        if (identity.youtubeMusicTrackId) {
+          remoteSourceIds.add(identity.youtubeMusicTrackId)
+        }
+        if (identity.resolvedYoutubeMusicTrackId) {
+          remoteResolvedIds.add(identity.resolvedYoutubeMusicTrackId)
         }
       }
 
-      if (lrcPath) {
-        const remoteLrcPath = `${remoteRoot.uri.replace(/\/$/, '')}/${selected.relativePath.replace(/\.[^/.]+$/, '.lrc')}`
-        const lrcCopy = await execa(
+      let processed = 0
+      let lastSnapshotAt = 0
+      const emitProgressSnapshot = async (force = false) => {
+        const now = Date.now()
+        if (force || processed % 10 === 0 || now - lastSnapshotAt >= 500) {
+          lastSnapshotAt = now
+          await this.emitSnapshot()
+        }
+      }
+
+      for (const track of tracks) {
+        const runItem = this.toRemoteBackfillRunItem(runId, track)
+        if (this.cancelRequestedRunId === runId) {
+          result = { ok: false, message: 'Remote backfill cancelled.' }
+          break
+        }
+
+        await this.upsertRunItem(runId, {
+          ...runItem,
+          status: 'processing',
+          stage: 'remote_copy',
+        })
+        await emitProgressSnapshot()
+
+        const sourceId = track.youtubeMusicTrackId
+        const resolvedId = track.resolvedYoutubeMusicTrackId
+        if (
+          (sourceId && remoteSourceIds.has(sourceId)) ||
+          (resolvedId && remoteResolvedIds.has(resolvedId))
+        ) {
+          skippedExisting += 1
+          await this.upsertRunItem(runId, {
+            ...runItem,
+            status: 'skipped_existing',
+            stage: 'remote_copy',
+            reason_code: 'remote_exists',
+            reason_detail:
+              'Matching source or resolved id already exists on remote.',
+          })
+          processed += 1
+          await emitProgressSnapshot()
+          continue
+        }
+
+        if (!sourceId && !resolvedId) {
+          skippedMissingIdentity += 1
+          await this.upsertRunItem(runId, {
+            ...runItem,
+            status: 'skipped_existing',
+            stage: 'remote_copy',
+            reason_code: 'missing_source_identity',
+            reason_detail: 'No source or resolved id exists to compare.',
+          })
+          processed += 1
+          await emitProgressSnapshot()
+          continue
+        }
+
+        const localFiles = (filesByTrackId.get(track.id) ?? []).filter(
+          (file) => file.rootId === localRoot.id
+        )
+        if (localFiles.length === 0) {
+          skippedNoLocal += 1
+          await this.upsertRunItem(runId, {
+            ...runItem,
+            status: 'skipped_existing',
+            stage: 'remote_copy',
+            reason_code: 'missing_local_file',
+            reason_detail: 'No local file exists to copy.',
+          })
+          processed += 1
+          await emitProgressSnapshot()
+          continue
+        }
+
+        localFiles.sort((left, right) => {
+          const leftPreferred = left.id === track.preferredFileId ? 1 : 0
+          const rightPreferred = right.id === track.preferredFileId ? 1 : 0
+          if (leftPreferred !== rightPreferred)
+            return rightPreferred - leftPreferred
+          const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
+          const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
+          if (leftAbsolute !== rightAbsolute)
+            return rightAbsolute - leftAbsolute
+          return left.relativePath.localeCompare(right.relativePath)
+        })
+
+        const selected = localFiles[0]
+        if (!selected) {
+          skippedNoLocal += 1
+          await this.upsertRunItem(runId, {
+            ...runItem,
+            status: 'skipped_existing',
+            stage: 'remote_copy',
+            reason_code: 'missing_local_file',
+            reason_detail: 'No local file exists to copy.',
+          })
+          processed += 1
+          await emitProgressSnapshot()
+          continue
+        }
+
+        const localAudioPath =
+          selected.absolutePathSnapshot ||
+          path.join(localRoot.uri, selected.relativePath)
+        const remoteAudioPath = `${remoteRootUri.replace(/\/$/, '')}/${selected.relativePath}`
+
+        const audioCopy = await execa(
           'rclone',
-          ['copyto', lrcPath, remoteLrcPath],
+          ['copyto', localAudioPath, remoteAudioPath],
           {
             reject: false,
           }
         )
-        if (lrcCopy.exitCode !== 0) {
+        if (audioCopy.exitCode !== 0) {
           failed += 1
-          console.error('backfill-copy-lrc-failed', {
+          console.error('backfill-copy-failed', {
             track_id: track.id,
-            local_lrc_path: lrcPath,
-            remote_lrc_path: remoteLrcPath,
-            stderr: lrcCopy.stderr || null,
+            local_audio_path: localAudioPath,
+            remote_audio_path: remoteAudioPath,
+            stderr: audioCopy.stderr || null,
           })
+          await this.upsertRunItem(runId, {
+            ...runItem,
+            status: 'failed_retryable',
+            stage: 'remote_copy',
+            reason_code: 'remote_audio_copy_failed',
+            reason_detail: audioCopy.stderr || 'rclone audio copy failed.',
+            output_path: localAudioPath,
+          })
+          processed += 1
+          await emitProgressSnapshot(true)
           continue
         }
+
+        const lrcCandidates = [
+          selected.lrcPath,
+          localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
+        ].filter((value): value is string => Boolean(value))
+        let lrcPath: string | null = null
+        for (const candidate of [...new Set(lrcCandidates)]) {
+          try {
+            await access(candidate)
+            lrcPath = candidate
+            break
+          } catch {
+            // ignore missing candidate
+          }
+        }
+
+        if (lrcPath) {
+          const remoteLrcPath = `${remoteRootUri.replace(/\/$/, '')}/${selected.relativePath.replace(/\.[^/.]+$/, '.lrc')}`
+          const lrcCopy = await execa(
+            'rclone',
+            ['copyto', lrcPath, remoteLrcPath],
+            {
+              reject: false,
+            }
+          )
+          if (lrcCopy.exitCode !== 0) {
+            failed += 1
+            console.error('backfill-copy-lrc-failed', {
+              track_id: track.id,
+              local_lrc_path: lrcPath,
+              remote_lrc_path: remoteLrcPath,
+              stderr: lrcCopy.stderr || null,
+            })
+            await this.upsertRunItem(runId, {
+              ...runItem,
+              status: 'failed_retryable',
+              stage: 'remote_copy',
+              reason_code: 'remote_lrc_copy_failed',
+              reason_detail: lrcCopy.stderr || 'rclone lrc copy failed.',
+              output_path: localAudioPath,
+              lrc_path: lrcPath,
+            })
+            processed += 1
+            await emitProgressSnapshot(true)
+            continue
+          }
+        }
+
+        copied += 1
+        await this.upsertRunItem(runId, {
+          ...runItem,
+          status: 'completed',
+          stage: 'remote_copy',
+          reason_code: 'remote_copied',
+          reason_detail: 'Copied local file to remote.',
+          output_path: localAudioPath,
+          lrc_path: lrcPath,
+        })
+        processed += 1
+        await emitProgressSnapshot()
       }
 
-      copied += 1
+      if (this.cancelRequestedRunId !== runId) {
+        result = {
+          ok: failed === 0,
+          message:
+            failed === 0
+              ? 'Remote backfill complete.'
+              : 'Remote backfill completed with failures.',
+          details: `Copied ${copied}; skipped existing ${skippedExisting}; skipped no local ${skippedNoLocal}; skipped missing identity ${skippedMissingIdentity}; failed ${failed}.`,
+        }
+      }
+      return result
+    } catch (error) {
+      result = {
+        ok: false,
+        message:
+          error instanceof Error ? error.message : 'Remote backfill failed.',
+      }
+      await this.insertRunLog(
+        runId,
+        'error',
+        'remote_copy',
+        'remote-backfill-failed',
+        result.message
+      )
+      await this.emitSnapshot()
+      return result
+    } finally {
+      const cancelled = this.cancelRequestedRunId === runId
+      if (!cancelled && !result.ok) {
+        await this.updateRun(runId, {
+          status: 'failed',
+          endedAt: nowIso(),
+        })
+      } else if (!cancelled) {
+        await this.updateRun(runId, {
+          status: failed === 0 ? 'completed' : 'failed',
+          endedAt: nowIso(),
+        })
+      }
+      if (!cancelled) {
+        await this.insertRunLog(
+          runId,
+          failed === 0 && result.ok ? 'info' : 'error',
+          'remote_copy',
+          'remote-backfill-finished',
+          result.details
+            ? `${result.message} ${result.details}`
+            : result.message
+        )
+      }
+      if (this.activeRunId === runId) {
+        this.activeRunId = null
+      }
+      if (this.cancelRequestedRunId === runId) {
+        this.cancelRequestedRunId = null
+      }
+      await this.emitSnapshot()
+    }
+  }
+
+  private async scanRemoteShell(
+    rcloneRemote: string,
+    remoteMusicRoot: string
+  ): Promise<RemoteShellScanResult> {
+    const configResult = await execa(
+      'rclone',
+      ['config', 'show', rcloneRemote],
+      { reject: false }
+    )
+    if (configResult.exitCode !== 0) {
+      throw new Error(
+        configResult.stderr ||
+          `Unable to read rclone config for ${rcloneRemote}.`
+      )
     }
 
-    return {
-      ok: failed === 0,
-      message:
-        failed === 0
-          ? 'Remote backfill complete.'
-          : 'Remote backfill completed with failures.',
-      details: `Copied ${copied}; skipped existing ${skippedExisting}; skipped no local ${skippedNoLocal}; failed ${failed}.`,
+    const config = parseRcloneSftpConfig(configResult.stdout)
+    const sshArgs = buildRemoteScannerSshArgs({ config, remoteMusicRoot })
+    const scanResult = await execa('ssh', sshArgs, { reject: false })
+    if (scanResult.exitCode !== 0) {
+      if (scanResult.stderr.includes('__LMS_EXIFTOOL_MISSING__')) {
+        throw new Error(REMOTE_EXIFTOOL_MISSING_MESSAGE)
+      }
+      if (scanResult.stderr.includes('__LMS_REMOTE_ROOT_MISSING__')) {
+        throw new Error('Remote music root does not exist on the VPS.')
+      }
+      throw new Error(scanResult.stderr || 'Remote shell scan failed.')
     }
+
+    return normalizeExiftoolJson(scanResult.stdout)
   }
 
   async doctor(): Promise<CommandResult> {
@@ -839,6 +1258,52 @@ export class SyncService {
       message: event.message,
       contextJson: JSON.stringify(event.context ?? {}),
     })
+  }
+
+  private toRemoteBackfillRunItem(
+    runId: string,
+    track: typeof libraryTracksTable.$inferSelect
+  ): WorkerItemPayload {
+    const fallbackTitle = track.title ?? track.identityValue
+    return {
+      id: `${runId}:${track.id}`,
+      youtube_music_track_id:
+        track.youtubeMusicTrackId ??
+        track.resolvedYoutubeMusicTrackId ??
+        track.id,
+      spotify_track_id: track.spotifyTrackId,
+      soundcloud_track_id: track.soundcloudTrackId,
+      resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      title: fallbackTitle,
+      artist: track.artist ?? 'Unknown artist',
+      album: track.album ?? 'Unknown album',
+      album_artist: track.albumArtist ?? track.artist ?? 'Unknown artist',
+      source_url: track.youtubeMusicTrackId
+        ? `https://music.youtube.com/watch?v=${track.youtubeMusicTrackId}`
+        : '',
+      status: 'pending',
+      stage: 'remote_copy',
+      reason_code: '',
+      reason_detail: '',
+      source_kind: 'library',
+      resolution_method: 'library',
+      track_number: track.trackNumber,
+      track_total: track.trackTotal,
+      disc_number: track.discNumber,
+      disc_total: track.discTotal,
+      year: track.year,
+      date: track.date,
+      genre: track.genre,
+      language: track.language,
+      isrc: track.isrc,
+      mb_track_id: track.mbTrackId,
+      mb_album_id: track.mbAlbumId,
+      mb_releasegroup_id: track.mbReleaseGroupId,
+      lyrics_status: track.lyricsStatus as SyncRunItemView['lyricsStatus'],
+      metadata_matched: true,
+      musicbrainz_matched: Boolean(track.mbTrackId),
+      lyrics_matched: track.lyricsStatus !== 'missing',
+    }
   }
 
   private async insertRunLog(

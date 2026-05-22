@@ -434,6 +434,12 @@ function App(): JSX.Element {
 
   async function handleSyncMissingToRemote() {
     setSyncMissingRemoteInFlight(true)
+    setSelectedRunId(null)
+    setLoadedRun(null)
+    setSelectedItemId(null)
+    setRunLogs([])
+    setSelectedLogs([])
+    setScreen('current-run')
     try {
       await runAction(window.api.sync.syncMissingToRemote())
     } finally {

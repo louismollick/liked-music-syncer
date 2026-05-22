@@ -83,6 +83,10 @@ interface RootScanResult {
   files: ScannedFilePayload[]
 }
 
+interface ScanRootsOptions {
+  kinds?: RootKind[]
+}
+
 interface TrackAggregate {
   id: string
   identityKind: LibraryTrackView['identityKind']
@@ -126,13 +130,17 @@ export class LibraryService {
     private readonly pythonWorker: PythonWorkerService
   ) {}
 
-  async scanRoots(): Promise<CommandResult> {
-    const roots = await this.resolveRoots()
+  async scanRoots(options: ScanRootsOptions = {}): Promise<CommandResult> {
+    const allRoots = await this.resolveRoots()
+    const kindFilter = options.kinds ? new Set(options.kinds) : null
+    const roots = kindFilter
+      ? allRoots.filter((root) => kindFilter.has(root.kind))
+      : allRoots
     if (roots.length === 0) {
       return { ok: false, message: 'No library roots configured.' }
     }
 
-    const configuredRootIds = new Set(roots.map((root) => root.id))
+    const configuredRootIds = new Set(allRoots.map((root) => root.id))
     const existingTracks = await this.db.select().from(libraryTracksTable)
     const trackByIdentity = new Map(
       existingTracks.map((track) => [
@@ -174,15 +182,17 @@ export class LibraryService {
         })
     }
 
-    const existingRoots = await this.db.select().from(libraryRootsTable)
-    for (const root of existingRoots) {
-      if (configuredRootIds.has(root.id)) continue
-      await this.db
-        .delete(libraryFilesTable)
-        .where(eq(libraryFilesTable.rootId, root.id))
-      await this.db
-        .delete(libraryRootsTable)
-        .where(eq(libraryRootsTable.id, root.id))
+    if (!kindFilter) {
+      const existingRoots = await this.db.select().from(libraryRootsTable)
+      for (const root of existingRoots) {
+        if (configuredRootIds.has(root.id)) continue
+        await this.db
+          .delete(libraryFilesTable)
+          .where(eq(libraryFilesTable.rootId, root.id))
+        await this.db
+          .delete(libraryRootsTable)
+          .where(eq(libraryRootsTable.id, root.id))
+      }
     }
 
     for (const root of roots) {
@@ -230,6 +240,10 @@ export class LibraryService {
       ok: true,
       message: `Scanned ${roots.length} library root${roots.length === 1 ? '' : 's'}.`,
     }
+  }
+
+  async scanLocalRoots(): Promise<CommandResult> {
+    return this.scanRoots({ kinds: ['local'] })
   }
 
   async listRoots(): Promise<LibraryRootView[]> {

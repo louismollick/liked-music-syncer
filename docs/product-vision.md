@@ -132,8 +132,13 @@ It can:
 - copy finished songs to a remote music folder
 - find local songs missing from the remote folder
 - copy missing remote songs after review
+- show progress while finding and copying tracks missing from remote
+- compare missing remote songs by LMS source/resolved tags, not file paths
+- scan remote backfill tags over SSH for SFTP rclone remotes
 - check local tools and app setup with doctor checks
 - clear sync history, item logs, and processed-song memory while keeping settings and auth
+
+Remote backfill requires an SFTP rclone remote with SSH shell access. The VPS must have `exiftool` installed, for example with `sudo apt-get install -y libimage-exiftool-perl` on Ubuntu. Non-SFTP rclone remotes are unsupported for remote backfill.
 
 The current app does not yet provide the full ideal multi-platform flow. Spotify and SoundCloud are part of the intended vision, but the visible app experience today centers on YouTube Music liked songs.
 
