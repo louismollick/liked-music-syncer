@@ -25,6 +25,7 @@ const api: ElectronApi = {
       ipcRenderer.invoke('sync:reprocessArtists', artistIds),
     refreshFavoriteArtists: (artistIds) =>
       ipcRenderer.invoke('sync:refreshFavoriteArtists', artistIds),
+    clearFailures: () => ipcRenderer.invoke('sync:clearFailures'),
     approveChanges: (approvalIds) =>
       ipcRenderer.invoke('sync:approveChanges', approvalIds),
     denyChanges: (approvalIds) =>
@@ -50,6 +51,8 @@ const api: ElectronApi = {
     refreshIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshArtists: () => ipcRenderer.invoke('library:refreshArtists'),
     listArtists: () => ipcRenderer.invoke('library:listArtists'),
+    refreshArtistImages: () =>
+      ipcRenderer.invoke('library:refreshArtistImages'),
     subscribeArtists: (listener) => {
       const wrapped = () => {
         listener()
@@ -57,6 +60,15 @@ const api: ElectronApi = {
       ipcRenderer.on('library:artistsUpdated', wrapped)
       return () => {
         ipcRenderer.removeListener('library:artistsUpdated', wrapped)
+      }
+    },
+    subscribeArtistPhotos: (listener) => {
+      const wrapped = (_event: unknown, update: unknown) => {
+        listener(update as Parameters<typeof listener>[0])
+      }
+      ipcRenderer.on('library:artistPhotoUpdated', wrapped)
+      return () => {
+        ipcRenderer.removeListener('library:artistPhotoUpdated', wrapped)
       }
     },
     subscribeIndexStatus: (listener) => {
@@ -74,6 +86,8 @@ const api: ElectronApi = {
     getTrack: (trackId) => ipcRenderer.invoke('library:getTrack', trackId),
     getDriftSummary: () => ipcRenderer.invoke('library:getDriftSummary'),
     listRoots: () => ipcRenderer.invoke('library:listRoots'),
+    getAlbumArtwork: (albumKeys) =>
+      ipcRenderer.invoke('library:getAlbumArtwork', albumKeys),
   },
 }
 

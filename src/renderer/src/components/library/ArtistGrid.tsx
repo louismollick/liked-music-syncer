@@ -5,14 +5,16 @@ import { ArtistCard } from './ArtistCard'
 interface Props {
   artists: LikedArtistView[]
   selectedIds: string[]
-  onToggleSelect: (id: string) => void
+  selectionEnabled: boolean
+  onArtistClick: (artist: LikedArtistView) => void
   onToggleFavorite: (artist: LikedArtistView) => void
 }
 
 export function ArtistGrid({
   artists,
   selectedIds,
-  onToggleSelect,
+  selectionEnabled,
+  onArtistClick,
   onToggleFavorite,
 }: Props): JSX.Element {
   if (artists.length === 0) {
@@ -37,7 +39,8 @@ export function ArtistGrid({
           key={artist.id}
           artist={artist}
           selected={selectedIds.includes(artist.id)}
-          onToggleSelect={() => onToggleSelect(artist.id)}
+          selectionEnabled={selectionEnabled}
+          onClick={() => onArtistClick(artist)}
           onToggleFavorite={() => onToggleFavorite(artist)}
         />
       ))}

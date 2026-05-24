@@ -1,10 +1,15 @@
-import type { CommandResult, LibraryIndexStatus } from '@shared/contracts'
+import type {
+  CommandResult,
+  LibraryIndexStatus,
+  LikedArtistView,
+} from '@shared/contracts'
 import { type JSX, useEffect, useState } from 'react'
 import { MainLayout } from './components/layout/MainLayout'
 import type { Screen } from './components/layout/Sidebar'
 import { AlbumsView } from './components/library/AlbumsView'
 import { ArtistsView } from './components/library/ArtistsView'
 import { SongsView } from './components/library/SongsView'
+import type { AlbumGroup } from './components/library/library-utils'
 import { SettingsView } from './components/settings/SettingsView'
 import { SyncApprovalView } from './components/sync/SyncApprovalView'
 import { SyncCompletedView } from './components/sync/SyncCompletedView'
@@ -13,6 +18,7 @@ import { SyncQueueView } from './components/sync/SyncQueueView'
 import { useArtists } from './hooks/useArtists'
 import { useSettings } from './hooks/useSettings'
 import { useSyncSnapshot } from './hooks/useSyncSnapshot'
+import { useTracks } from './hooks/useTracks'
 
 const EMPTY_INDEX_STATUS: LibraryIndexStatus = {
   currentLocalRootUri: null,
@@ -22,6 +28,15 @@ const EMPTY_INDEX_STATUS: LibraryIndexStatus = {
   lastScannedAt: null,
   lastScanStatus: null,
   indexVersion: null,
+}
+
+interface ArtistFilterState {
+  artistName: string
+}
+
+interface AlbumFilterState {
+  albumKey: string
+  albumLabel: string
 }
 
 function Toast({
@@ -48,8 +63,16 @@ function App(): JSX.Element {
   const [message, setMessage] = useState('')
   const [libraryIndexStatus, setLibraryIndexStatus] =
     useState<LibraryIndexStatus>(EMPTY_INDEX_STATUS)
+  const [selectionEnabled, setSelectionEnabled] = useState(false)
+  const [selectedArtistIds, setSelectedArtistIds] = useState<string[]>([])
+  const [artistFilter, setArtistFilter] = useState<ArtistFilterState | null>(
+    null
+  )
+  const [albumFilter, setAlbumFilter] = useState<AlbumFilterState | null>(null)
 
   const { artists } = useArtists()
+  const { tracks, loaded: tracksLoaded, refreshing: tracksRefreshing } =
+    useTracks()
   const snapshot = useSyncSnapshot()
   const { settings, setSettings, authStatus, setAuthStatus, save } =
     useSettings()
@@ -72,20 +95,100 @@ function App(): JSX.Element {
     )
   }
 
+  const navigateScreen = (nextScreen: Screen) => {
+    if (nextScreen === 'library-artists') {
+      setArtistFilter(null)
+      setAlbumFilter(null)
+    } else if (nextScreen === 'library-albums') {
+      setArtistFilter(null)
+      setAlbumFilter(null)
+    } else if (nextScreen === 'library-songs') {
+      setArtistFilter(null)
+      setAlbumFilter(null)
+    }
+
+    setScreen(nextScreen)
+  }
+
+  const toggleArtistSelect = (artistId: string) => {
+    setSelectedArtistIds((current) =>
+      current.includes(artistId)
+        ? current.filter((id) => id !== artistId)
+        : [...current, artistId]
+    )
+  }
+
+  const openArtistAlbums = (artist: LikedArtistView) => {
+    setArtistFilter({ artistName: artist.name })
+    setAlbumFilter(null)
+    setScreen('library-albums')
+  }
+
+  const openAlbumSongs = (album: AlbumGroup) => {
+    setAlbumFilter({ albumKey: album.key, albumLabel: album.album })
+    setScreen('library-songs')
+  }
+
+  const syncLikedSongs = () => onAction(window.api.sync.startLikedSongsSync())
+  const reprocessLibrary = () =>
+    onAction(window.api.sync.startLibraryReprocess())
+  const reprocessFavoriteArtists = () =>
+    onAction(window.api.sync.refreshFavoriteArtists())
+  const syncToRemote = () => onAction(window.api.sync.syncMissingToRemote())
+
+  const onAction = runAction
+
   return (
-    <MainLayout screen={screen} onNavigate={setScreen} counts={snapshot.counts}>
+    <MainLayout
+      screen={screen}
+      onNavigate={navigateScreen}
+      counts={snapshot.counts}
+    >
       {screen === 'library-artists' ? (
         <ArtistsView
           artists={artists}
+          selectedIds={selectedArtistIds}
+          selectionEnabled={selectionEnabled}
           libraryIndexStatus={libraryIndexStatus}
           authStatus={authStatus}
+          onToggleSelectionMode={() =>
+            setSelectionEnabled((current) => !current)
+          }
+          onToggleSelect={toggleArtistSelect}
+          onOpenArtist={openArtistAlbums}
           onAction={runAction}
+          onClearSelected={() => setSelectedArtistIds([])}
         />
       ) : null}
 
-      {screen === 'library-albums' ? <AlbumsView /> : null}
+      {screen === 'library-albums' ? (
+        <AlbumsView
+          tracks={tracks}
+          tracksLoaded={tracksLoaded}
+          tracksRefreshing={tracksRefreshing}
+          artistFilter={artistFilter}
+          onOpenAlbum={openAlbumSongs}
+          onClearArtistFilter={() => setArtistFilter(null)}
+          onSyncLikedSongs={syncLikedSongs}
+          onReprocessLibrary={reprocessLibrary}
+          onReprocessFavoriteArtists={reprocessFavoriteArtists}
+          onSyncToRemote={syncToRemote}
+        />
+      ) : null}
 
-      {screen === 'library-songs' ? <SongsView /> : null}
+      {screen === 'library-songs' ? (
+        <SongsView
+          tracks={tracks}
+          tracksLoaded={tracksLoaded}
+          tracksRefreshing={tracksRefreshing}
+          albumFilter={albumFilter}
+          onClearAlbumFilter={() => setAlbumFilter(null)}
+          onSyncLikedSongs={syncLikedSongs}
+          onReprocessLibrary={reprocessLibrary}
+          onReprocessFavoriteArtists={reprocessFavoriteArtists}
+          onSyncToRemote={syncToRemote}
+        />
+      ) : null}
 
       {screen === 'sync-queue' ? (
         <SyncQueueView snapshot={snapshot} onAction={runAction} />
@@ -100,7 +203,10 @@ function App(): JSX.Element {
       ) : null}
 
       {screen === 'sync-failures' ? (
-        <SyncFailuresView snapshot={snapshot} />
+        <SyncFailuresView
+          snapshot={snapshot}
+          onClear={() => runAction(window.api.sync.clearFailures())}
+        />
       ) : null}
 
       {screen === 'settings' ? (

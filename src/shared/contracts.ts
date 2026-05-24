@@ -241,6 +241,8 @@ export interface LibraryTrackView {
   hasEmbeddedLyrics: boolean
   hasSidecarLyrics: boolean
   coverArtPresent: boolean
+  hasLocalFile: boolean
+  hasRemoteFile: boolean
   missingFields: string[]
   preferredFileId: string | null
   firstSeenAt: string
@@ -255,6 +257,15 @@ export interface LibraryTrackFilter {
   rootKind?: 'local' | 'remote'
   lyricsStatus?: LyricsStatus
   missingField?: string
+}
+
+export interface AlbumArtworkEntry {
+  albumKey: string
+  artworkUrl: string | null
+}
+
+export interface AlbumArtworkBatchResult {
+  entries: AlbumArtworkEntry[]
 }
 
 export interface DriftSummary {
@@ -285,6 +296,12 @@ export interface BinaryStatus {
   uv: string | null
   ffmpeg: string | null
   rclone: string | null
+}
+
+export interface ArtistPhotoUpdate {
+  artistId: string
+  photoUrl: string
+  channelId: string | null
 }
 
 export interface LikedArtistView {
@@ -321,6 +338,7 @@ export interface ElectronApi {
     startLibraryReprocess: () => Promise<CommandResult>
     reprocessArtists: (artistIds: string[]) => Promise<CommandResult>
     refreshFavoriteArtists: (artistIds?: string[]) => Promise<CommandResult>
+    clearFailures: () => Promise<CommandResult>
     syncMissingToRemote: () => Promise<CommandResult>
     approveChanges: (approvalIds: string[]) => Promise<CommandResult>
     denyChanges: (approvalIds: string[]) => Promise<CommandResult>
@@ -336,7 +354,11 @@ export interface ElectronApi {
     refreshIndex: () => Promise<CommandResult>
     refreshArtists: () => Promise<CommandResult>
     listArtists: () => Promise<LikedArtistView[]>
+    refreshArtistImages: () => Promise<CommandResult>
     subscribeArtists: (listener: () => void) => () => void
+    subscribeArtistPhotos: (
+      listener: (update: ArtistPhotoUpdate) => void
+    ) => () => void
     subscribeIndexStatus: (listener: () => void) => () => void
     setArtistFavorite: (
       artistId: string,
@@ -346,5 +368,6 @@ export interface ElectronApi {
     getTrack: (trackId: string) => Promise<LibraryTrackView | null>
     getDriftSummary: () => Promise<DriftSummary>
     listRoots: () => Promise<LibraryRootView[]>
+    getAlbumArtwork: (albumKeys: string[]) => Promise<AlbumArtworkBatchResult>
   }
 }

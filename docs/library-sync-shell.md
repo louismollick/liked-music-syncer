@@ -6,6 +6,7 @@
 
 ## Library
 - Artists-first list.
+- **Albums** shows embedded cover thumbnails from local indexed files (`app-media://` cache). See [library-album-artwork.md](./library-album-artwork.md).
 - Header actions:
   - `Liked Songs Sync`
   - `Reprocess Library`
@@ -19,6 +20,12 @@
 - `Needs Approval` hidden when `Auto-approve modifications and deletions` is on.
 - `Needs Approval` also hidden when there are zero approval rows.
 - Reprocess uses preview-first approval rows, with same-video update and changed-video replace actions.
+- Reprocess includes all local tracks with an LMS source ID (`lms_source` identity), including older liked-song downloads that only have a legacy YouTube ID in comments and are not marked `managedByApp`.
+- Reprocess creates a queue job immediately on click, then fills in the planned track count while scanning candidates; preview rows appear after the Python preview pass finishes.
+- Reprocess eligibility includes managed local tracks with LMS source IDs even when `source_origin` tags were never written (common for older liked-song downloads).
+- A running reprocess job appears in `Queue` while preview work is in progress.
+- Reprocess preview progress is now logged incrementally, and changed rows can appear on the running job before the full preview finishes.
+- Rows with pending approval land in `Needs Approval` after preview.
 - `Queue`, `Completed`, `Failures` are job-grouped with inline row expansion.
 - Sync persistence is job-only: `sync_jobs`, visible `sync_job_tracks`, and `sync_approval_items`.
 - Legacy `sync_runs`, `sync_run_items`, and `artifacts` are gone.
@@ -42,3 +49,4 @@
   - `sync.approveChanges(approvalIds)`
   - `sync.denyChanges(approvalIds)`
 - `sync.cancel(jobId)` and `sync.clearSyncData()` remain.
+ - `sync.cancel(jobId)` now supports cancelling a reprocess preview job (these run with status `running` during the preview pass).

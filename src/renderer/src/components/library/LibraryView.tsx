@@ -120,7 +120,8 @@ export function LibraryView({
         <ArtistGrid
           artists={artists}
           selectedIds={selectedIds}
-          onToggleSelect={toggleSelect}
+          selectionEnabled
+          onArtistClick={(artist) => toggleSelect(artist.id)}
           onToggleFavorite={toggleFavorite}
         />
       </div>

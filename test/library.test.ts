@@ -21,6 +21,7 @@ import {
   libraryTracksTable,
   likedArtistsTable,
   metaTable,
+  syncApprovalItemsTable,
   syncJobsTable,
   syncJobTracksTable,
 } from '../src/main/db/schema'
@@ -108,6 +109,30 @@ function readyIndexStatus() {
   }
 }
 
+function createMockChildProcess() {
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  const listeners = new Map<string, (...args: unknown[]) => void>()
+  const child = {
+    stdout,
+    stderr,
+    stdin: new PassThrough(),
+    pid: undefined,
+    kill: vi.fn().mockReturnValue(true),
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      listeners.set(event, handler)
+      return child
+    }),
+    emitExit: (code: number | null, signal: NodeJS.Signals | null = null) => {
+      listeners.get('exit')?.(code, signal)
+    },
+    emitError: (error: Error) => {
+      listeners.get('error')?.(error)
+    },
+  }
+  return child
+}
+
 afterEach(() => {
   setTempLogMirror(null)
   vi.restoreAllMocks()
@@ -178,6 +203,225 @@ describe('library service', () => {
       localOnlyTracks: 0,
       remoteOnlyTracks: 0,
       missingEverywhereTracks: 0,
+    })
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('exposes local and remote presence flags on library tracks', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const service = new LibraryService(db, {} as never, {} as never)
+    const stamp = '2026-05-18T00:00:00.000Z'
+
+    await db.insert(libraryRootsTable).values([
+      {
+        id: 'root_local',
+        kind: 'local',
+        transport: 'filesystem',
+        label: 'Local',
+        uri: '/local',
+        writable: true,
+        managedOutput: true,
+        createdAt: stamp,
+        updatedAt: stamp,
+        lastScannedAt: stamp,
+        lastScanStatus: 'ok',
+      },
+      {
+        id: 'root_remote',
+        kind: 'remote',
+        transport: 'rclone',
+        label: 'Remote',
+        uri: 'seedbox:/music',
+        writable: true,
+        managedOutput: true,
+        createdAt: stamp,
+        updatedAt: stamp,
+        lastScannedAt: stamp,
+        lastScanStatus: 'ok',
+      },
+    ])
+    await db.insert(libraryTracksTable).values([
+      {
+        id: 'track_local',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:local',
+        managedByApp: true,
+        tagSchemaVersion: 1,
+        youtubeMusicTrackId: 'local',
+        resolvedYoutubeMusicTrackId: 'local',
+        title: 'Local',
+        artist: 'Artist',
+        album: 'Album',
+        albumArtist: 'Artist',
+        lyricsStatus: 'synced',
+        hasEmbeddedLyrics: true,
+        hasSidecarLyrics: false,
+        coverArtPresent: true,
+        missingFieldsJson: '[]',
+        preferredFileId: 'file_local',
+        firstSeenAt: stamp,
+        lastSeenAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'track_remote',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:remote',
+        managedByApp: true,
+        tagSchemaVersion: 1,
+        youtubeMusicTrackId: 'remote',
+        resolvedYoutubeMusicTrackId: 'remote',
+        title: 'Remote',
+        artist: 'Artist',
+        album: 'Album',
+        albumArtist: 'Artist',
+        lyricsStatus: 'plain',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: true,
+        coverArtPresent: false,
+        missingFieldsJson: '[]',
+        preferredFileId: 'file_remote',
+        firstSeenAt: stamp,
+        lastSeenAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'track_both',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:both',
+        managedByApp: true,
+        tagSchemaVersion: 1,
+        youtubeMusicTrackId: 'both',
+        resolvedYoutubeMusicTrackId: 'both',
+        title: 'Both',
+        artist: 'Artist',
+        album: 'Album',
+        albumArtist: 'Artist',
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        missingFieldsJson: '[]',
+        preferredFileId: 'file_both_local',
+        firstSeenAt: stamp,
+        lastSeenAt: stamp,
+        updatedAt: stamp,
+      },
+    ])
+    await db.insert(libraryFilesTable).values([
+      {
+        id: 'file_local',
+        trackId: 'track_local',
+        rootId: 'root_local',
+        relativePath: 'local.m4a',
+        absolutePathSnapshot: '/local/local.m4a',
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 1,
+        durationSeconds: 1,
+        bitrate: 1,
+        modifiedAt: null,
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: null,
+        embeddedLyricsStatus: 'synced',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: stamp,
+        firstSeenAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'file_remote',
+        trackId: 'track_remote',
+        rootId: 'root_remote',
+        relativePath: 'remote.m4a',
+        absolutePathSnapshot: 'seedbox:/music/remote.m4a',
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 1,
+        durationSeconds: 1,
+        bitrate: 1,
+        modifiedAt: null,
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: null,
+        embeddedLyricsStatus: 'missing',
+        sidecarLyricsStatus: 'plain',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: stamp,
+        firstSeenAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'file_both_local',
+        trackId: 'track_both',
+        rootId: 'root_local',
+        relativePath: 'both-local.m4a',
+        absolutePathSnapshot: '/local/both-local.m4a',
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 1,
+        durationSeconds: 1,
+        bitrate: 1,
+        modifiedAt: null,
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: null,
+        embeddedLyricsStatus: 'missing',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: stamp,
+        firstSeenAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'file_both_remote',
+        trackId: 'track_both',
+        rootId: 'root_remote',
+        relativePath: 'both-remote.m4a',
+        absolutePathSnapshot: 'seedbox:/music/both-remote.m4a',
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 1,
+        durationSeconds: 1,
+        bitrate: 1,
+        modifiedAt: null,
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: null,
+        embeddedLyricsStatus: 'missing',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: stamp,
+        firstSeenAt: stamp,
+        updatedAt: stamp,
+      },
+    ])
+
+    const tracks = await service.listTracks()
+    expect(tracks.find((track) => track.id === 'track_local')).toMatchObject({
+      hasLocalFile: true,
+      hasRemoteFile: false,
+    })
+    expect(tracks.find((track) => track.id === 'track_remote')).toMatchObject({
+      hasLocalFile: false,
+      hasRemoteFile: true,
+    })
+    expect(tracks.find((track) => track.id === 'track_both')).toMatchObject({
+      hasLocalFile: true,
+      hasRemoteFile: true,
+    })
+
+    expect(await service.getTrack('track_both')).toMatchObject({
+      hasLocalFile: true,
+      hasRemoteFile: true,
     })
 
     sqlite.close()
@@ -874,13 +1118,12 @@ describe('liked artists service', () => {
             message: 'ok',
           })
           .mockResolvedValueOnce({
-            artists: [
-              {
-                id: 'local_artist_artist',
-                channel_id: 'channel_1',
-                photo_url: 'https://example.test/artist.jpg',
-              },
-            ],
+            ok: true,
+            artist: {
+              id: 'local_artist_artist',
+              channel_id: 'channel_1',
+              photo_url: 'https://example.test/artist.jpg',
+            },
           }),
       } as never
     )
@@ -893,6 +1136,69 @@ describe('liked artists service', () => {
       channelId: 'channel_1',
       photoUrl: 'https://example.test/artist.jpg',
     })
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('publishes artist photo updates as each image is cached', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(likedArtistsTable).values({
+      id: 'local_artist_artist',
+      channelId: null,
+      name: 'Artist',
+      normalizedName: 'artist',
+      photoUrl: null,
+      likedTrackCount: 1,
+      lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+      isFavorite: false,
+      favoritedAt: null,
+      lastCatalogRefreshedAt: null,
+      catalogTrackCount: null,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    })
+    const service = new LikedArtistsService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          ytmusicBrowserAuth: 'auth',
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            is_authenticated: true,
+            message: 'ok',
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            artist: {
+              id: 'local_artist_artist',
+              channel_id: 'channel_1',
+              photo_url: 'https://example.test/artist.jpg',
+            },
+          }),
+      } as never
+    )
+
+    const updates: Array<{ artistId: string; photoUrl: string }> = []
+    const unsub = service.subscribeArtistPhotoUpdates((update) => {
+      updates.push({ artistId: update.artistId, photoUrl: update.photoUrl })
+    })
+
+    await service.refreshArtistImages()
+    unsub()
+
+    expect(updates).toEqual([
+      {
+        artistId: 'local_artist_artist',
+        photoUrl: 'https://example.test/artist.jpg',
+      },
+    ])
 
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
@@ -1299,6 +1605,225 @@ describe('favorite artist catalog sync', () => {
   })
 })
 
+describe('clear failures', () => {
+  it('removes only failure-bucket jobs and related rows', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    const service = new SyncService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    await db.insert(syncJobsTable).values([
+      {
+        id: 'job_failed',
+        kind: 'liked_songs_sync',
+        scope: null,
+        label: 'Failed Job',
+        status: 'failed',
+        queueBucket: 'failures',
+        startedAt: stamp,
+        endedAt: stamp,
+        plannedCount: 1,
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'job_queue',
+        kind: 'liked_songs_sync',
+        scope: null,
+        label: 'Queued Job',
+        status: 'queued',
+        queueBucket: 'queue',
+        startedAt: stamp,
+        endedAt: null,
+        plannedCount: 1,
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'job_completed',
+        kind: 'liked_songs_sync',
+        scope: null,
+        label: 'Completed Job',
+        status: 'completed',
+        queueBucket: 'completed',
+        startedAt: stamp,
+        endedAt: stamp,
+        plannedCount: 1,
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+    ])
+    await db.insert(syncJobTracksTable).values([
+      {
+        id: 'track_failed',
+        jobId: 'job_failed',
+        libraryTrackId: null,
+        youtubeMusicTrackId: 'yt_failed',
+        spotifyTrackId: null,
+        soundcloudTrackId: null,
+        resolvedYoutubeMusicTrackId: null,
+        title: 'Failed',
+        artist: 'Artist',
+        album: 'Album',
+        albumArtist: 'Artist',
+        sourceUrl: 'https://example.com/failed',
+        coverArtUrl: null,
+        status: 'failed_terminal',
+        stage: 'finalize',
+        reasonCode: 'boom',
+        reasonDetail: 'boom',
+        sourceKind: 'liked_song',
+        sourceOrigin: null,
+        catalogReleaseBrowseId: null,
+        catalogReleaseTitle: null,
+        catalogReleaseKind: null,
+        videoType: null,
+        resolutionMethod: 'exact',
+        trackNumber: null,
+        trackTotal: null,
+        discNumber: null,
+        discTotal: null,
+        year: null,
+        date: null,
+        genre: null,
+        language: null,
+        isrc: null,
+        mbTrackId: null,
+        mbAlbumId: null,
+        mbReleaseGroupId: null,
+        lyricsStatus: 'missing',
+        audioCodec: null,
+        metadataMatched: false,
+        musicBrainzMatched: false,
+        lyricsMatched: false,
+        lyricsSource: null,
+        selectedSourceUrl: null,
+        visible: true,
+        approvalRequired: false,
+        terminalOutcome: 'failed',
+        sortIndex: 0,
+        remoteTarget: null,
+        jobPhase: null,
+        currentOutputPath: null,
+        outputPath: null,
+        lrcPath: null,
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'track_queue',
+        jobId: 'job_queue',
+        libraryTrackId: null,
+        youtubeMusicTrackId: 'yt_queue',
+        spotifyTrackId: null,
+        soundcloudTrackId: null,
+        resolvedYoutubeMusicTrackId: null,
+        title: 'Queued',
+        artist: 'Artist',
+        album: 'Album',
+        albumArtist: 'Artist',
+        sourceUrl: 'https://example.com/queue',
+        coverArtUrl: null,
+        status: 'pending',
+        stage: 'idle',
+        reasonCode: '',
+        reasonDetail: '',
+        sourceKind: 'liked_song',
+        sourceOrigin: null,
+        catalogReleaseBrowseId: null,
+        catalogReleaseTitle: null,
+        catalogReleaseKind: null,
+        videoType: null,
+        resolutionMethod: 'exact',
+        trackNumber: null,
+        trackTotal: null,
+        discNumber: null,
+        discTotal: null,
+        year: null,
+        date: null,
+        genre: null,
+        language: null,
+        isrc: null,
+        mbTrackId: null,
+        mbAlbumId: null,
+        mbReleaseGroupId: null,
+        lyricsStatus: 'missing',
+        audioCodec: null,
+        metadataMatched: false,
+        musicBrainzMatched: false,
+        lyricsMatched: false,
+        lyricsSource: null,
+        selectedSourceUrl: null,
+        visible: true,
+        approvalRequired: false,
+        terminalOutcome: null,
+        sortIndex: 0,
+        remoteTarget: null,
+        jobPhase: null,
+        currentOutputPath: null,
+        outputPath: null,
+        lrcPath: null,
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+    ])
+    await db.insert(syncApprovalItemsTable).values([
+      {
+        id: 'approval_failed',
+        jobId: 'job_failed',
+        trackWorkId: 'track_failed',
+        libraryTrackId: null,
+        status: 'pending',
+        actionKind: 'update',
+        diffJson: '{}',
+        beforeJson: '{}',
+        afterJson: '{}',
+        albumArtDiffJson: null,
+        payloadJson: '{}',
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'approval_queue',
+        jobId: 'job_queue',
+        trackWorkId: 'track_queue',
+        libraryTrackId: null,
+        status: 'pending',
+        actionKind: 'update',
+        diffJson: '{}',
+        beforeJson: '{}',
+        afterJson: '{}',
+        albumArtDiffJson: null,
+        payloadJson: '{}',
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+    ])
+
+    await expect(service.clearFailures()).resolves.toMatchObject({ ok: true })
+
+    const jobs = await db.select().from(syncJobsTable)
+    const tracks = await db.select().from(syncJobTracksTable)
+    const approvals = await db.select().from(syncApprovalItemsTable)
+    expect(jobs.map((job) => job.id).sort()).toEqual([
+      'job_completed',
+      'job_queue',
+    ])
+    expect(tracks.map((track) => track.id)).toEqual(['track_queue'])
+    expect(approvals.map((approval) => approval.id)).toEqual(['approval_queue'])
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
 describe('remote shell scanner helpers', () => {
   it('parses rclone SFTP config', () => {
     expect(
@@ -1354,6 +1879,429 @@ describe('remote shell scanner helpers', () => {
         },
       ],
     })
+  })
+})
+
+describe('library reprocess candidates', () => {
+  it('persists streamed preview batches before reprocess preview exits', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const child = createMockChildProcess()
+    const spawnNdjsonCommand = vi.fn().mockReturnValue(child)
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          lyricsApiBaseUrl: '',
+          ytmusicBrowserAuth: 'auth',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+          autoApproveChanges: false,
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockResolvedValue({
+          ok: true,
+          is_authenticated: true,
+          message: 'ok',
+        }),
+        spawnNdjsonCommand,
+      } as never,
+      {
+        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
+        getIndexNotReadyResult: vi.fn(),
+      } as never,
+      {} as never,
+      {
+        ensureReady: vi.fn().mockResolvedValue(undefined),
+        getBundleStatus: vi.fn().mockReturnValue({
+          pluginDirectory: '/tmp/plugins',
+          baseUrl: 'http://127.0.0.1:4416',
+        }),
+      } as never,
+      () => 'ffmpeg'
+    )
+
+    ;(
+      service as unknown as {
+        buildReprocessCandidates: () => Promise<Array<Record<string, unknown>>>
+      }
+    ).buildReprocessCandidates = vi.fn().mockResolvedValue([
+      {
+        track_work_id: 'track_work_1',
+        library_track_id: 'library_track_1',
+        youtube_music_track_id: 'liked123',
+        spotify_track_id: null,
+        soundcloud_track_id: null,
+        resolved_youtube_music_track_id: 'resolved123',
+        source_origin: null,
+        catalog_release_browse_id: null,
+        catalog_release_title: null,
+        catalog_release_kind: null,
+        title: 'Song',
+        artist: 'Artist',
+        album: 'Album',
+        album_artist: 'Artist',
+        track_number: 1,
+        track_total: 1,
+        disc_number: 1,
+        disc_total: 1,
+        year: 2026,
+        date: null,
+        genre: null,
+        language: null,
+        isrc: null,
+        mb_track_id: null,
+        mb_album_id: null,
+        mb_releasegroup_id: null,
+        lyrics_status: 'missing',
+        current_output_path: '/tmp/out/Artist/Album/01 Song.m4a',
+        current_lrc_path: null,
+        cover_art_present: false,
+      } as never,
+    ])
+
+    const startPromise = service.startLibraryReprocess()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'reprocess_preview',
+        event: 'started',
+        job_id: 'ignored',
+        total_count: 1,
+        processed_count: 0,
+        changed_count: 0,
+        noop_count: 0,
+        message: 'Reprocess preview started.',
+      })}\n`
+    )
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'reprocess_preview',
+        event: 'batch',
+        job_id: 'ignored',
+        total_count: 1,
+        processed_count: 1,
+        changed_count: 1,
+        noop_count: 0,
+        items: [
+          {
+            track_work_id: 'track_work_1',
+            library_track_id: 'library_track_1',
+            same_video: true,
+            action_kind: 'update',
+            diff: {
+              title: { before: 'Song', after: 'Song (Remastered)' },
+            },
+            before: {
+              outputPath: '/tmp/out/Artist/Album/01 Song.m4a',
+              lrcPath: null,
+            },
+            after: {
+              outputPath: '/tmp/out/Artist/Album/01 Song.m4a',
+              lrcPath: null,
+            },
+            album_art_diff: null,
+            payload: {
+              item: {
+                id: 'track_work_1',
+                youtube_music_track_id: 'liked123',
+                resolved_youtube_music_track_id: 'resolved123',
+                title: 'Song (Remastered)',
+                artist: 'Artist',
+                album: 'Album',
+                album_artist: 'Artist',
+                source_url: 'https://music.youtube.com/watch?v=liked123',
+                status: 'pending',
+                stage: 'idle',
+                reason_code: '',
+                reason_detail: '',
+                resolution_method: 'exact',
+                lyrics_status: 'missing',
+              },
+            },
+          },
+        ],
+      })}\n`
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(await db.select().from(syncJobTracksTable)).toHaveLength(1)
+    expect(await db.select().from(syncApprovalItemsTable)).toHaveLength(1)
+
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'reprocess_preview',
+        event: 'completed',
+        job_id: 'ignored',
+        total_count: 1,
+        processed_count: 1,
+        changed_count: 1,
+        noop_count: 0,
+        message: 'Reprocess preview complete.',
+      })}\n`
+    )
+    child.emitExit(0, null)
+
+    await expect(startPromise).resolves.toMatchObject({
+      ok: true,
+      message: 'Reprocess preview complete. Review changes in Needs Approval.',
+    })
+
+    const [job] = await db.select().from(syncJobsTable)
+    expect(job?.status).toBe('waiting_approval')
+    expect(spawnNdjsonCommand).toHaveBeenCalledWith(
+      'reprocess-preview-stream',
+      expect.objectContaining({
+        batch_size: 25,
+        progress_every: 25,
+      })
+    )
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('includes managed liked-song tracks without source_origin tags', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-reprocess-'))
+    const audioPath = path.join(localDir, 'Artist', 'Album', '01 Song.m4a')
+    fs.mkdirSync(path.dirname(audioPath), { recursive: true })
+    fs.writeFileSync(audioPath, 'audio')
+
+    await db.insert(libraryRootsTable).values({
+      id: `root_local_${localDir}`,
+      kind: 'local',
+      transport: 'filesystem',
+      label: 'Local output',
+      uri: localDir,
+      writable: true,
+      managedOutput: true,
+      createdAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+      lastScannedAt: null,
+      lastScanStatus: null,
+    })
+
+    await db.insert(libraryTracksTable).values({
+      id: 'liked-track',
+      identityKind: 'lms_source',
+      identityValue: 'youtube_music:liked123',
+      managedByApp: true,
+      tagSchemaVersion: 1,
+      youtubeMusicTrackId: 'liked123',
+      spotifyTrackId: null,
+      soundcloudTrackId: null,
+      resolvedYoutubeMusicTrackId: 'resolved123',
+      sourceOrigin: null,
+      catalogReleaseBrowseId: null,
+      catalogReleaseTitle: null,
+      catalogReleaseKind: null,
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      albumArtist: 'Artist',
+      trackNumber: 1,
+      trackTotal: 1,
+      discNumber: 1,
+      discTotal: 1,
+      year: 2026,
+      date: null,
+      genre: null,
+      language: null,
+      isrc: null,
+      mbTrackId: null,
+      mbAlbumId: null,
+      mbReleaseGroupId: null,
+      lyricsStatus: 'synced',
+      hasEmbeddedLyrics: true,
+      hasSidecarLyrics: false,
+      coverArtPresent: true,
+      missingFieldsJson: '[]',
+      preferredFileId: 'file_local_audio',
+      firstSeenAt: '2026-05-20T00:00:00.000Z',
+      lastSeenAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    const [localRoot] = await db.select().from(libraryRootsTable)
+    await db.insert(libraryFilesTable).values({
+      id: 'file_local_audio',
+      trackId: 'liked-track',
+      rootId: localRoot.id,
+      relativePath: 'Artist/Album/01 Song.m4a',
+      absolutePathSnapshot: audioPath,
+      lrcPath: null,
+      format: 'm4a',
+      sizeBytes: 5,
+      durationSeconds: 200,
+      bitrate: 256000,
+      modifiedAt: '2026-05-20T00:00:00.000Z',
+      sidecarModifiedAt: null,
+      audioSha256: null,
+      tagFingerprint: null,
+      embeddedLyricsStatus: 'synced',
+      sidecarLyricsStatus: 'missing',
+      missingFieldsJson: '[]',
+      discoveredVia: 'lms_tags',
+      lastScannedAt: '2026-05-20T00:00:00.000Z',
+      firstSeenAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: localDir,
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    const candidates = await (
+      service as unknown as {
+        buildReprocessCandidates: (
+          selectedArtists: []
+        ) => Promise<Array<{ library_track_id: string }>>
+      }
+    ).buildReprocessCandidates([])
+
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]?.library_track_id).toBe('liked-track')
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('includes legacy liked-song files indexed without managedByApp', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lms-reprocess-legacy-')
+    )
+    const audioPath = path.join(localDir, 'Artist', 'Album', '01 Legacy.m4a')
+    fs.mkdirSync(path.dirname(audioPath), { recursive: true })
+    fs.writeFileSync(audioPath, 'audio')
+
+    await db.insert(libraryRootsTable).values({
+      id: `root_local_${localDir}`,
+      kind: 'local',
+      transport: 'filesystem',
+      label: 'Local output',
+      uri: localDir,
+      writable: true,
+      managedOutput: true,
+      createdAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+      lastScannedAt: null,
+      lastScanStatus: null,
+    })
+
+    await db.insert(libraryTracksTable).values({
+      id: 'legacy-liked-track',
+      identityKind: 'lms_source',
+      identityValue: 'youtube_music:legacy123',
+      managedByApp: false,
+      tagSchemaVersion: null,
+      youtubeMusicTrackId: 'legacy123',
+      spotifyTrackId: null,
+      soundcloudTrackId: null,
+      resolvedYoutubeMusicTrackId: 'legacy123',
+      sourceOrigin: null,
+      catalogReleaseBrowseId: null,
+      catalogReleaseTitle: null,
+      catalogReleaseKind: null,
+      title: 'Legacy Song',
+      artist: 'Artist',
+      album: 'Album',
+      albumArtist: 'Artist',
+      trackNumber: 1,
+      trackTotal: 1,
+      discNumber: 1,
+      discTotal: 1,
+      year: 2020,
+      date: null,
+      genre: null,
+      language: null,
+      isrc: null,
+      mbTrackId: null,
+      mbAlbumId: null,
+      mbReleaseGroupId: null,
+      lyricsStatus: 'missing',
+      hasEmbeddedLyrics: false,
+      hasSidecarLyrics: false,
+      coverArtPresent: false,
+      missingFieldsJson: '[]',
+      preferredFileId: 'file_legacy_audio',
+      firstSeenAt: '2026-05-20T00:00:00.000Z',
+      lastSeenAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    const [localRoot] = await db.select().from(libraryRootsTable)
+    await db.insert(libraryFilesTable).values({
+      id: 'file_legacy_audio',
+      trackId: 'legacy-liked-track',
+      rootId: localRoot.id,
+      relativePath: 'Artist/Album/01 Legacy.m4a',
+      absolutePathSnapshot: audioPath,
+      lrcPath: null,
+      format: 'm4a',
+      sizeBytes: 5,
+      durationSeconds: 200,
+      bitrate: 256000,
+      modifiedAt: '2026-05-20T00:00:00.000Z',
+      sidecarModifiedAt: null,
+      audioSha256: null,
+      tagFingerprint: null,
+      embeddedLyricsStatus: 'missing',
+      sidecarLyricsStatus: 'missing',
+      missingFieldsJson: '[]',
+      discoveredVia: 'lms_tags',
+      lastScannedAt: '2026-05-20T00:00:00.000Z',
+      firstSeenAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: localDir,
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    const candidates = await (
+      service as unknown as {
+        buildReprocessCandidates: (
+          selectedArtists: []
+        ) => Promise<Array<{ library_track_id: string }>>
+      }
+    ).buildReprocessCandidates([])
+
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]?.library_track_id).toBe('legacy-liked-track')
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })
 

@@ -1,11 +1,20 @@
-import type { CommandResult, LikedArtistView } from '@shared/contracts'
+import { isLowResArtistPhotoUrl } from '@shared/artist-photo-url'
+import type {
+  ArtistPhotoUpdate,
+  CommandResult,
+  LikedArtistView,
+} from '@shared/contracts'
 import { asc, eq } from 'drizzle-orm'
 import type { AppDatabase } from '../db/database'
 import { libraryTracksTable, likedArtistsTable } from '../db/schema'
 import { logMain } from './logger'
 import type { PythonWorkerService } from './python-worker'
 import type { SettingsService } from './settings-service'
-import { nowIso } from './utils'
+import { nowIso, runWithConcurrency } from './utils'
+
+const ARTIST_IMAGE_FETCH_CONCURRENCY = 3
+
+export { isLowResArtistPhotoUrl } from '@shared/artist-photo-url'
 
 function normalizeArtistName(value: string): string {
   return value
@@ -39,19 +48,43 @@ interface WorkerArtistImage {
   photo_url: string
 }
 
+interface WorkerArtistImageResponse {
+  ok: boolean
+  message?: string
+  artist: WorkerArtistImage | null
+}
+
 export class LikedArtistsService {
+  private readonly photoUpdateListeners = new Set<
+    (update: ArtistPhotoUpdate) => void
+  >()
+  private imageRefreshJob: Promise<CommandResult> | null = null
+
   constructor(
     private readonly db: AppDatabase,
     private readonly settingsService?: SettingsService,
     private readonly pythonWorker?: PythonWorkerService
   ) {}
 
-  async listArtists(): Promise<LikedArtistView[]> {
+  subscribeArtistPhotoUpdates(listener: (update: ArtistPhotoUpdate) => void) {
+    this.photoUpdateListeners.add(listener)
+    return () => this.photoUpdateListeners.delete(listener)
+  }
+
+  private emitArtistPhotoUpdate(update: ArtistPhotoUpdate) {
+    for (const listener of this.photoUpdateListeners) {
+      listener(update)
+    }
+  }
+
+  async listArtists(options?: {
+    logSnapshot?: boolean
+  }): Promise<LikedArtistView[]> {
     const rows = await this.db
       .select()
       .from(likedArtistsTable)
       .orderBy(asc(likedArtistsTable.name))
-    return rows.map((row) => ({
+    const artists = rows.map((row) => ({
       id: row.id,
       channelId: row.channelId,
       name: row.name,
@@ -64,6 +97,24 @@ export class LikedArtistsService {
       lastCatalogRefreshedAt: row.lastCatalogRefreshedAt,
       catalogTrackCount: row.catalogTrackCount,
     }))
+
+    if (options?.logSnapshot) {
+      const withPhoto = artists.filter((artist) =>
+        Boolean(artist.photoUrl)
+      ).length
+      logMain({
+        level: 'info',
+        source: 'liked-artists',
+        message: 'Artist catalog snapshot',
+        context: {
+          totalArtists: artists.length,
+          withPhotoUrl: withPhoto,
+          withoutPhotoUrl: artists.length - withPhoto,
+        },
+      })
+    }
+
+    return artists
   }
 
   async listArtistsByIds(ids: string[]): Promise<LikedArtistView[]> {
@@ -188,10 +239,15 @@ export class LikedArtistsService {
       .delete(likedArtistsTable)
       .where(eq(likedArtistsTable.isFavorite, false))
 
+    let preservedPhotoUrls = 0
+    let migratedArtistIds = 0
+
     for (const artist of localArtistsByName.values()) {
       const existing =
         existingById.get(artist.id) ??
         existingByNormalizedName.get(artist.normalizedName)
+      if (existing?.photoUrl) preservedPhotoUrls++
+      if (existing && existing.id !== artist.id) migratedArtistIds++
       await this.db
         .insert(likedArtistsTable)
         .values({
@@ -233,6 +289,19 @@ export class LikedArtistsService {
       }
     }
 
+    const rebuilt = await this.listArtists({ logSnapshot: true })
+    logMain({
+      level: 'info',
+      source: 'liked-artists',
+      message: 'Library artists rebuilt from tracks',
+      context: {
+        artistCount: rebuilt.length,
+        trackDerivedCount: localArtistsByName.size,
+        preservedPhotoUrls,
+        migratedArtistIds,
+      },
+    })
+
     return {
       ok: true,
       message: `Rebuilt ${localArtistsByName.size} library artists.`,
@@ -240,19 +309,69 @@ export class LikedArtistsService {
   }
 
   async refreshArtistImages(): Promise<CommandResult> {
+    if (this.imageRefreshJob) {
+      logMain({
+        level: 'debug',
+        source: 'liked-artists',
+        message:
+          'Artist image refresh already in progress (joined existing job)',
+      })
+      return this.imageRefreshJob
+    }
+
+    const job = this.runArtistImageRefresh()
+    this.imageRefreshJob = job
+    try {
+      return await job
+    } finally {
+      this.imageRefreshJob = null
+    }
+  }
+
+  private async runArtistImageRefresh(): Promise<CommandResult> {
     if (!this.settingsService || !this.pythonWorker) {
+      logMain({
+        level: 'warn',
+        source: 'liked-artists',
+        message: 'Artist image refresh unavailable (missing services)',
+      })
       return { ok: false, message: 'Artist image refresh is unavailable.' }
     }
 
-    const artists = (await this.listArtists()).filter(
-      (artist) => !artist.photoUrl
+    const pythonWorker = this.pythonWorker
+    const settingsService = this.settingsService
+
+    const startedAt = Date.now()
+    const catalog = await this.listArtists({ logSnapshot: true })
+    const artists = catalog.filter((artist) =>
+      isLowResArtistPhotoUrl(artist.photoUrl)
     )
+    logMain({
+      level: 'info',
+      source: 'liked-artists',
+      message: 'Artist image refresh started',
+      context: {
+        missingPhotoCount: artists.length,
+        catalogSize: catalog.length,
+      },
+    })
     if (artists.length === 0) {
+      logMain({
+        level: 'info',
+        source: 'liked-artists',
+        message: 'Artist image refresh skipped (all artists have photo URLs)',
+      })
       return { ok: true, message: 'Artist images already cached.' }
     }
 
-    const settings = await this.settingsService.getRuntimeSettings()
+    const settings = await settingsService.getRuntimeSettings()
     if (!settings.ytmusicBrowserAuth) {
+      logMain({
+        level: 'warn',
+        source: 'liked-artists',
+        message: 'Artist image refresh blocked (no YT Music auth)',
+        context: { missingPhotoCount: artists.length },
+      })
       return {
         ok: false,
         message: 'Pull YT Music auth to fetch artist images.',
@@ -260,13 +379,22 @@ export class LikedArtistsService {
     }
 
     const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+      await pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
         'auth-status',
         {
           browser_auth_input: settings.ytmusicBrowserAuth,
         }
       )
     if (!authResult.ok || !authResult.is_authenticated) {
+      logMain({
+        level: 'warn',
+        source: 'liked-artists',
+        message: 'Artist image refresh blocked (auth check failed)',
+        context: {
+          missingPhotoCount: artists.length,
+          authMessage: authResult.message,
+        },
+      })
       return {
         ok: false,
         message: authResult.message || 'YT Music auth check failed.',
@@ -276,37 +404,173 @@ export class LikedArtistsService {
     const browserAuthInput =
       authResult.credential_json ?? settings.ytmusicBrowserAuth
     if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
+      await settingsService.saveYtMusicBrowserAuth(authResult.credential_json)
     }
 
-    const payload = await this.pythonWorker.runJsonCommand<{
-      artists: WorkerArtistImage[]
-    }>('artist-images', {
-      ytmusic_browser_auth: browserAuthInput,
-      artists: artists.map((artist) => ({
-        id: artist.id,
-        name: artist.name,
-        normalized_name: artist.normalizedName,
-      })),
+    const stats = { fetched: 0, notFound: 0, failed: 0 }
+    let completed = 0
+
+    logMain({
+      level: 'info',
+      source: 'liked-artists',
+      message: 'Fetching artist images with concurrency',
+      context: {
+        pendingCount: artists.length,
+        concurrency: ARTIST_IMAGE_FETCH_CONCURRENCY,
+      },
     })
 
-    const stamp = nowIso()
-    for (const artist of payload.artists) {
-      await this.db
-        .update(likedArtistsTable)
-        .set({
-          channelId: artist.channel_id,
-          photoUrl: artist.photo_url,
-          updatedAt: stamp,
+    await runWithConcurrency(
+      artists,
+      ARTIST_IMAGE_FETCH_CONCURRENCY,
+      async (artist, index) => {
+        const artistStartedAt = Date.now()
+        logMain({
+          level: 'debug',
+          source: 'liked-artists',
+          message: 'Fetching artist image',
+          context: {
+            artistId: artist.id,
+            artistName: artist.name,
+            progress: `${index + 1}/${artists.length}`,
+          },
         })
-        .where(eq(likedArtistsTable.id, artist.id))
-    }
+
+        try {
+          const payload =
+            await pythonWorker.runJsonCommand<WorkerArtistImageResponse>(
+              'artist-image',
+              {
+                ytmusic_browser_auth: browserAuthInput,
+                artist: {
+                  id: artist.id,
+                  name: artist.name,
+                  normalized_name: artist.normalizedName,
+                },
+              }
+            )
+
+          if (!payload.ok) {
+            stats.failed++
+            logMain({
+              level: 'warn',
+              source: 'liked-artists',
+              message: 'Artist image worker returned not ok',
+              context: {
+                artistId: artist.id,
+                artistName: artist.name,
+                workerMessage: payload.message ?? null,
+                durationMs: Date.now() - artistStartedAt,
+              },
+            })
+            return
+          }
+
+          if (!payload.artist?.photo_url) {
+            stats.notFound++
+            logMain({
+              level: 'debug',
+              source: 'liked-artists',
+              message: 'No artist image found',
+              context: {
+                artistId: artist.id,
+                artistName: artist.name,
+                workerMessage: payload.message ?? null,
+                durationMs: Date.now() - artistStartedAt,
+              },
+            })
+            return
+          }
+
+          const stamp = nowIso()
+          await this.db
+            .update(likedArtistsTable)
+            .set({
+              channelId: payload.artist.channel_id,
+              photoUrl: payload.artist.photo_url,
+              updatedAt: stamp,
+            })
+            .where(eq(likedArtistsTable.id, artist.id))
+
+          this.emitArtistPhotoUpdate({
+            artistId: artist.id,
+            photoUrl: payload.artist.photo_url,
+            channelId: payload.artist.channel_id,
+          })
+          stats.fetched++
+
+          let photoUrlHost: string | null = null
+          try {
+            photoUrlHost = new URL(payload.artist.photo_url).host
+          } catch {
+            photoUrlHost = null
+          }
+
+          logMain({
+            level: 'info',
+            source: 'liked-artists',
+            message: 'Artist image cached and published',
+            context: {
+              artistId: artist.id,
+              artistName: artist.name,
+              progress: `${index + 1}/${artists.length}`,
+              photoUrlHost,
+              durationMs: Date.now() - artistStartedAt,
+            },
+          })
+        } catch (error) {
+          stats.failed++
+          logMain({
+            level: 'warn',
+            source: 'liked-artists',
+            message: 'Artist image fetch failed',
+            context: {
+              artistId: artist.id,
+              artistName: artist.name,
+              progress: `${index + 1}/${artists.length}`,
+              durationMs: Date.now() - artistStartedAt,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
+        } finally {
+          completed++
+          if (completed % 10 === 0 || completed === artists.length) {
+            logMain({
+              level: 'info',
+              source: 'liked-artists',
+              message: 'Artist image fetch progress',
+              context: {
+                completed,
+                total: artists.length,
+                fetched: stats.fetched,
+                notFound: stats.notFound,
+                failed: stats.failed,
+              },
+            })
+          }
+        }
+      }
+    )
+
+    const { fetched, notFound, failed } = stats
+
+    logMain({
+      level: 'info',
+      source: 'liked-artists',
+      message: 'Artist image refresh finished',
+      context: {
+        requestedCount: artists.length,
+        fetchedCount: fetched,
+        notFoundCount: notFound,
+        failedCount: failed,
+        durationMs: Date.now() - startedAt,
+      },
+    })
 
     return {
       ok: true,
-      message: `Cached ${payload.artists.length} artist images.`,
+      message: `Cached ${fetched} artist images (${notFound} not found, ${failed} failed).`,
+      details: JSON.stringify({ fetched, notFound, failed }),
     }
   }
 }

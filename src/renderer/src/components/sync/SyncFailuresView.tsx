@@ -1,5 +1,6 @@
 import type { SyncSnapshot } from '@shared/contracts'
 import type { JSX } from 'react'
+import { Button } from '../ui/Button'
 import { JobCard } from './JobCard'
 
 function EmptyState({ label }: { label: string }): JSX.Element {
@@ -19,12 +20,23 @@ function EmptyState({ label }: { label: string }): JSX.Element {
 
 interface Props {
   snapshot: SyncSnapshot
+  onClear: () => void
 }
 
-export function SyncFailuresView({ snapshot }: Props): JSX.Element {
+export function SyncFailuresView({ snapshot, onClear }: Props): JSX.Element {
   return (
     <div className="p-6 h-full flex flex-col">
-      <h2 className="text-xl font-semibold text-text-primary mb-5">Failures</h2>
+      <div className="flex items-center justify-between gap-4 mb-5">
+        <h2 className="text-xl font-semibold text-text-primary">Failures</h2>
+        <Button
+          size="sm"
+          variant="danger"
+          onClick={onClear}
+          disabled={snapshot.failures.length === 0}
+        >
+          Clear Failures
+        </Button>
+      </div>
       <div className="flex-1 overflow-auto">
         {snapshot.failures.length > 0 ? (
           <div className="flex flex-col gap-2">

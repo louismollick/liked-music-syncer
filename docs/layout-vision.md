@@ -101,6 +101,14 @@ Likely views:
 - Artists
 - Playlists, later
 
+Current library navigation behavior:
+
+- Artists default to browse mode; clicking an artist drills into Albums filtered to that artist
+- Artists expose a `Select` toggle for bulk artist actions such as selected reprocess and selected catalog refresh
+- Albums show the same top-level library sync actions as Artists and can drill into Songs
+- Albums and Songs show dismissible filter pills beside the view title when entered from drilldown
+- Songs expose lyrics type, language, and remote presence columns in the main table
+
 The Library view should not include playback controls.
 
 Library grid and list views should stay visually clean by default. They should not show local, remote, or matching status badges unless the user asks for that information through filters, detail views, or an inspection mode.
@@ -163,6 +171,8 @@ Likely content:
 
 Album detail should show source contributions at summary level, such as which platforms contributed songs on the album and how many songs came from each platform.
 
+The current Albums collection view also acts as the drilldown surface from Artists, with an artist filter pill that can be cleared back to the full album inventory.
+
 ### Song
 
 Show song-level detail.
@@ -184,6 +194,8 @@ Likely content:
 
 Song detail should show source contributions in the most detail. A compact badge row is acceptable on the detail page, with expandable rows for original liked item details such as platform, liked title, liked artist, URL or id, liked date if known, and match reason when available.
 
+The current Songs collection view also acts as the drilldown surface from Albums, with an album filter pill that can be cleared back to the full song inventory.
+
 ### Sync
 
 Review newly discovered songs and manage all async download-related work.
@@ -202,6 +214,8 @@ Likely subnavigation:
 - Needs approval
 - Completed
 - Failures
+
+Failures should support clearing only failed jobs without wiping queued, approval, or completed sync history.
 
 Likely job phases:
 

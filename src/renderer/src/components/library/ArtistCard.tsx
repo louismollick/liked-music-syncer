@@ -4,7 +4,8 @@ import type { JSX } from 'react'
 interface Props {
   artist: LikedArtistView
   selected: boolean
-  onToggleSelect: () => void
+  selectionEnabled: boolean
+  onClick: () => void
   onToggleFavorite: () => void
 }
 
@@ -24,7 +25,8 @@ function StarIcon({ filled }: { filled: boolean }): JSX.Element {
 export function ArtistCard({
   artist,
   selected,
-  onToggleSelect,
+  selectionEnabled,
+  onClick,
   onToggleFavorite,
 }: Props): JSX.Element {
   return (
@@ -36,8 +38,12 @@ export function ArtistCard({
       <button
         type="button"
         className="w-full text-left cursor-pointer"
-        onClick={onToggleSelect}
-        aria-label={`${selected ? 'Deselect' : 'Select'} ${artist.name}`}
+        onClick={onClick}
+        aria-label={
+          selectionEnabled
+            ? `${selected ? 'Deselect' : 'Select'} ${artist.name}`
+            : `Open ${artist.name}`
+        }
       >
         <div className="aspect-square bg-surface-tertiary relative overflow-hidden">
           {artist.photoUrl ? (
@@ -46,6 +52,11 @@ export function ArtistCard({
               alt={artist.name}
               className="w-full h-full object-cover"
               onError={(e) => {
+                console.warn('[artist-image] img onError — remote URL failed', {
+                  artistId: artist.id,
+                  artistName: artist.name,
+                  photoUrl: artist.photoUrl,
+                })
                 e.currentTarget.style.display = 'none'
               }}
             />

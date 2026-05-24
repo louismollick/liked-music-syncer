@@ -14,6 +14,7 @@ from .cover_art import make_square_cover
 from .lyrics_language import detect_primary_lyrics_language
 from .media_tags import write_media_tags
 from .models import SyncConfig, SyncItemState
+from .json_io import emit_event
 from .sync_engine import (
     _build_ytmusic_client,
     _download_audio,
@@ -303,6 +304,99 @@ def preview_reprocess(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(candidate, dict)
     ]
     return {"items": previews}
+
+
+def preview_reprocess_stream(payload: dict[str, Any]) -> None:
+    config = _config_from_payload(payload)
+    ytmusic = _build_ytmusic_client(config.ytmusic_browser_auth)
+    raw_items = payload.get("items")
+    batch_size = max(1, int(payload.get("batch_size", 25)))
+    progress_every = max(1, int(payload.get("progress_every", batch_size)))
+    items = (
+        [candidate for candidate in raw_items if isinstance(candidate, dict)]
+        if isinstance(raw_items, list)
+        else []
+    )
+    total_count = len(items)
+    processed_count = 0
+    changed_count = 0
+    batch: list[dict[str, Any]] = []
+
+    emit_event(
+        {
+            "type": "reprocess_preview",
+            "event": "started",
+            "job_id": config.job_id,
+            "total_count": total_count,
+            "processed_count": 0,
+            "changed_count": 0,
+            "noop_count": 0,
+            "message": "Reprocess preview started.",
+        }
+    )
+
+    for index, candidate in enumerate(items, start=1):
+        preview = _preview_one(config, ytmusic, candidate, index)
+        processed_count += 1
+        if preview["action_kind"] != "noop" and preview["diff"]:
+            batch.append(preview)
+            changed_count += 1
+
+        if batch and len(batch) >= batch_size:
+            emit_event(
+                {
+                    "type": "reprocess_preview",
+                    "event": "batch",
+                    "job_id": config.job_id,
+                    "total_count": total_count,
+                    "processed_count": processed_count,
+                    "changed_count": changed_count,
+                    "noop_count": processed_count - changed_count,
+                    "items": batch,
+                }
+            )
+            batch = []
+
+        if processed_count == total_count or processed_count % progress_every == 0:
+            emit_event(
+                {
+                    "type": "reprocess_preview",
+                    "event": "progress",
+                    "job_id": config.job_id,
+                    "total_count": total_count,
+                    "processed_count": processed_count,
+                    "changed_count": changed_count,
+                    "noop_count": processed_count - changed_count,
+                    "message": "Reprocess preview progress.",
+                }
+            )
+
+    if batch:
+        emit_event(
+            {
+                "type": "reprocess_preview",
+                "event": "batch",
+                "job_id": config.job_id,
+                "total_count": total_count,
+                "processed_count": processed_count,
+                "changed_count": changed_count,
+                "noop_count": processed_count - changed_count,
+                "items": batch,
+            }
+        )
+
+    emit_event(
+        {
+            "type": "reprocess_preview",
+            "event": "completed",
+            "job_id": config.job_id,
+            "total_count": total_count,
+            "processed_count": processed_count,
+            "changed_count": changed_count,
+            "noop_count": processed_count - changed_count,
+            "message": "Reprocess preview complete.",
+        }
+    )
 
 
 def _classify_lyrics(lyrics_text: str | None) -> str:

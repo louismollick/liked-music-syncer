@@ -17,6 +17,8 @@ import {
   libraryTracksTable,
   metaTable,
 } from '../db/schema'
+import type { ArtworkService } from './artwork-service'
+import { logMain } from './logger'
 import type { PythonWorkerService } from './python-worker'
 import type { SettingsService } from './settings-service'
 import { createId, nowIso } from './utils'
@@ -147,7 +149,8 @@ export class LibraryService {
   constructor(
     private readonly db: AppDatabase,
     private readonly settingsService: SettingsService,
-    private readonly pythonWorker: PythonWorkerService
+    private readonly pythonWorker: PythonWorkerService,
+    private readonly artworkService?: ArtworkService
   ) {}
 
   subscribeIndexStatus(listener: () => void) {
@@ -598,23 +601,18 @@ export class LibraryService {
   async listTracks(
     filter: LibraryTrackFilter = {}
   ): Promise<LibraryTrackView[]> {
-    const tracks = await this.db
-      .select()
-      .from(libraryTracksTable)
-      .orderBy(
-        asc(libraryTracksTable.artist),
-        asc(libraryTracksTable.album),
-        asc(libraryTracksTable.trackNumber)
-      )
-
-    if (!filter.rootKind && !filter.missingField) {
-      return tracks
-        .filter((track) => this.matchesTrackFilter(track, filter))
-        .map((track) => this.toTrackView(track))
-    }
-
-    const files = await this.db.select().from(libraryFilesTable)
-    const roots = await this.db.select().from(libraryRootsTable)
+    const [tracks, files, roots] = await Promise.all([
+      this.db
+        .select()
+        .from(libraryTracksTable)
+        .orderBy(
+          asc(libraryTracksTable.artist),
+          asc(libraryTracksTable.album),
+          asc(libraryTracksTable.trackNumber)
+        ),
+      this.db.select().from(libraryFilesTable),
+      this.db.select().from(libraryRootsTable),
+    ])
     const rootById = new Map(roots.map((root) => [root.id, root]))
     const filesByTrackId = new Map<string, typeof files>()
     for (const file of files) {
@@ -636,7 +634,9 @@ export class LibraryService {
           (file) => rootById.get(file.rootId)?.kind === filter.rootKind
         )
       })
-      .map((track) => this.toTrackView(track))
+      .map((track) =>
+        this.toTrackView(track, filesByTrackId.get(track.id) ?? [], rootById)
+      )
   }
 
   async getTrack(trackId: string): Promise<LibraryTrackView | null> {
@@ -650,9 +650,11 @@ export class LibraryService {
       .from(libraryFilesTable)
       .where(eq(libraryFilesTable.trackId, trackId))
       .orderBy(asc(libraryFilesTable.relativePath))
+    const roots = await this.db.select().from(libraryRootsTable)
+    const rootById = new Map(roots.map((root) => [root.id, root]))
 
     return {
-      ...this.toTrackView(track),
+      ...this.toTrackView(track, files, rootById),
       files: files.map((file) => this.toFileView(file)),
     }
   }
@@ -864,6 +866,19 @@ export class LibraryService {
           : await this.reconcileLocalRoot(root)
         if (!result.ok) return result
         await this.persistLocalIndexMeta(root.uri)
+        if (this.artworkService) {
+          void this.artworkService.pruneStaleCache().catch((error) => {
+            logMain({
+              level: 'warn',
+              source: 'artwork',
+              message:
+                'Failed to prune stale artwork cache after library index',
+              context: {
+                error: error instanceof Error ? error.message : String(error),
+              },
+            })
+          })
+        }
         return {
           ok: true,
           message: options.successMessage,
@@ -1806,8 +1821,17 @@ export class LibraryService {
   }
 
   private toTrackView(
-    track: typeof libraryTracksTable.$inferSelect
+    track: typeof libraryTracksTable.$inferSelect,
+    files: typeof libraryFilesTable.$inferSelect[] = [],
+    rootById = new Map<string, typeof libraryRootsTable.$inferSelect>()
   ): LibraryTrackView {
+    const hasLocalFile = files.some(
+      (file) => rootById.get(file.rootId)?.kind === 'local'
+    )
+    const hasRemoteFile = files.some(
+      (file) => rootById.get(file.rootId)?.kind === 'remote'
+    )
+
     return {
       id: track.id,
       identityKind: track.identityKind as LibraryTrackView['identityKind'],
@@ -1842,6 +1866,8 @@ export class LibraryService {
       hasEmbeddedLyrics: track.hasEmbeddedLyrics,
       hasSidecarLyrics: track.hasSidecarLyrics,
       coverArtPresent: track.coverArtPresent,
+      hasLocalFile,
+      hasRemoteFile,
       missingFields: this.parseJsonArray(track.missingFieldsJson),
       preferredFileId: track.preferredFileId,
       firstSeenAt: track.firstSeenAt,

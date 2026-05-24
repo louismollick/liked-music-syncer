@@ -5,9 +5,11 @@ import type {
 } from '@shared/contracts'
 import type { BrowserWindow } from 'electron'
 import { dialog, ipcMain } from 'electron'
+import type { ArtworkService } from './services/artwork-service'
 import type { AuthService } from './services/auth-service'
 import type { LibraryService } from './services/library-service'
 import type { LikedArtistsService } from './services/liked-artists-service'
+import { logMain } from './services/logger'
 import type { SettingsService } from './services/settings-service'
 import type { SyncService } from './services/sync-service'
 
@@ -18,6 +20,7 @@ export function registerIpcHandlers(
   syncService: SyncService,
   libraryService: LibraryService,
   likedArtistsService: LikedArtistsService,
+  artworkService: ArtworkService,
   getBundledFfmpegPath: () => string
 ) {
   const eventChannel = 'sync:snapshot'
@@ -30,6 +33,11 @@ export function registerIpcHandlers(
   libraryService.subscribeIndexStatus(() => {
     if (!window.isDestroyed()) {
       window.webContents.send('library:indexStatusUpdated')
+    }
+  })
+  likedArtistsService.subscribeArtistPhotoUpdates((update) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send('library:artistPhotoUpdated', update)
     }
   })
 
@@ -97,6 +105,7 @@ export function registerIpcHandlers(
     (_event, artistIds?: string[]) =>
       syncService.refreshFavoriteArtists(artistIds)
   )
+  ipcMain.handle('sync:clearFailures', () => syncService.clearFailures())
   ipcMain.handle('sync:cancel', (_event, jobId: string) =>
     syncService.cancel(jobId)
   )
@@ -120,12 +129,28 @@ export function registerIpcHandlers(
     }
     void likedArtistsService
       .refreshArtistImages()
-      .then(() => {
-        if (!window.isDestroyed()) {
-          window.webContents.send('library:artistsUpdated')
-        }
+      .then((imageResult) => {
+        logMain({
+          level: imageResult.ok ? 'info' : 'warn',
+          source: 'ipc',
+          message: 'library refresh artist image pass complete',
+          context: {
+            ok: imageResult.ok,
+            message: imageResult.message,
+            details: imageResult.details ?? null,
+          },
+        })
       })
-      .catch(() => undefined)
+      .catch((error) => {
+        logMain({
+          level: 'error',
+          source: 'ipc',
+          message: 'library refresh artist image pass failed',
+          context: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        })
+      })
     return {
       ...refreshResult,
       message: `${scanResult.message} ${refreshResult.message}`,
@@ -134,6 +159,14 @@ export function registerIpcHandlers(
   ipcMain.handle('library:refreshIndex', refreshLibrary)
   ipcMain.handle('library:refreshArtists', refreshLibrary)
   ipcMain.handle('library:listArtists', () => likedArtistsService.listArtists())
+  ipcMain.handle('library:refreshArtistImages', async () => {
+    logMain({
+      level: 'info',
+      source: 'ipc',
+      message: 'library:refreshArtistImages invoked from renderer',
+    })
+    return likedArtistsService.refreshArtistImages()
+  })
   ipcMain.handle(
     'library:setArtistFavorite',
     (_event, artistId: string, isFavorite: boolean) =>
@@ -149,6 +182,46 @@ export function registerIpcHandlers(
     libraryService.getDriftSummary()
   )
   ipcMain.handle('library:listRoots', () => libraryService.listRoots())
+  ipcMain.handle(
+    'library:getAlbumArtwork',
+    async (_event, albumKeys: string[]) => {
+      const startedAt = Date.now()
+      const keys = Array.isArray(albumKeys) ? albumKeys : []
+      logMain({
+        level: 'debug',
+        source: 'ipc',
+        message: 'library:getAlbumArtwork invoked',
+        context: { albumCount: keys.length },
+      })
+      try {
+        const entries = await artworkService.getAlbumArtwork(keys)
+        logMain({
+          level: 'debug',
+          source: 'ipc',
+          message: 'library:getAlbumArtwork completed',
+          context: {
+            albumCount: keys.length,
+            resolvedCount: entries.filter((entry) => entry.artworkUrl != null)
+              .length,
+            durationMs: Date.now() - startedAt,
+          },
+        })
+        return { entries }
+      } catch (error) {
+        logMain({
+          level: 'error',
+          source: 'ipc',
+          message: 'library:getAlbumArtwork failed',
+          context: {
+            albumCount: keys.length,
+            durationMs: Date.now() - startedAt,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        })
+        throw error
+      }
+    }
+  )
 
   return {
     eventChannel,

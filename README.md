@@ -310,6 +310,7 @@ Logging format:
 - `warn`/`info`/`debug` lines go to `stdout`
 - parsed worker `log` events are mirrored into terminal as pretty `[worker]` lines
 - same terminal lines are mirrored into one combined temp log file per app launch
+- reprocess preview now emits incremental progress logs and flushes approval candidates in batches instead of staying silent until the full preview finishes
 - persisted lines are prefixed with `[stdout] ` or `[stderr] `
 - temp launch logs are not auto-cleaned up
 - in TTY terminals, only `[warn]` and `[error]` tokens are colored

@@ -5,10 +5,15 @@ import { app, BrowserWindow, shell } from 'electron'
 import icon from '../../resources/icon.png?asset'
 import { createDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc'
+import {
+  registerArtworkProtocol,
+  registerArtworkSchemePrivileges,
+} from './services/artwork-protocol'
+import { ArtworkService } from './services/artwork-service'
 import { AuthService } from './services/auth-service'
 import { LibraryService } from './services/library-service'
 import { LikedArtistsService } from './services/liked-artists-service'
-import { setTempLogMirror } from './services/logger'
+import { logMain, setTempLogMirror } from './services/logger'
 import { PoTokenService } from './services/po-token-service'
 import { PythonWorkerService } from './services/python-worker'
 import { SettingsService } from './services/settings-service'
@@ -20,6 +25,8 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let tempLogMirror: TempLogMirror | null = null
+
+registerArtworkSchemePrivileges()
 
 function getBundledFfmpegPath() {
   const candidate = is.dev
@@ -62,8 +69,18 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.electron')
-  tempLogMirror = createTempLogMirror(app.getPath('temp'))
-  setTempLogMirror(tempLogMirror)
+  const mirror = createTempLogMirror(app.getPath('temp'))
+  tempLogMirror = mirror
+  setTempLogMirror(mirror)
+  logMain({
+    level: 'info',
+    source: 'startup',
+    message: 'Main process logging ready',
+    context: {
+      tempLogFile: mirror?.getLogFilePath() ?? null,
+      artworkCacheDir: path.join(app.getPath('userData'), 'artwork-cache'),
+    },
+  })
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -77,10 +94,21 @@ app.whenReady().then(() => {
   const { db } = createDatabase(databaseFile)
   const settingsService = new SettingsService(db, settingsFile)
   const pythonWorkerService = new PythonWorkerService()
+  const artworkCacheDirectory = path.join(
+    app.getPath('userData'),
+    'artwork-cache'
+  )
+  const artworkService = new ArtworkService(
+    db,
+    pythonWorkerService,
+    artworkCacheDirectory
+  )
+  registerArtworkProtocol(artworkCacheDirectory)
   const libraryService = new LibraryService(
     db,
     settingsService,
-    pythonWorkerService
+    pythonWorkerService,
+    artworkService
   )
   const likedArtistsService = new LikedArtistsService(
     db,
@@ -107,6 +135,7 @@ app.whenReady().then(() => {
     syncService,
     libraryService,
     likedArtistsService,
+    artworkService,
     getBundledFfmpegPath
   )
   void libraryService.bootstrapLocalIndexIfNeeded().then(async (result) => {
@@ -117,12 +146,31 @@ app.whenReady().then(() => {
     }
     void likedArtistsService
       .refreshArtistImages()
-      .then(() => {
+      .then((result) => {
+        logMain({
+          level: result.ok ? 'info' : 'warn',
+          source: 'startup',
+          message: 'Startup artist image refresh complete',
+          context: {
+            ok: result.ok,
+            message: result.message,
+            details: result.details ?? null,
+          },
+        })
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('library:artistsUpdated')
         }
       })
-      .catch(() => undefined)
+      .catch((error) => {
+        logMain({
+          level: 'error',
+          source: 'startup',
+          message: 'Startup artist image refresh failed',
+          context: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        })
+      })
   })
 
   app.on('activate', () => {

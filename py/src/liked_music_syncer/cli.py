@@ -6,15 +6,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from .artwork import extract_embedded_cover_thumbnail
 from .auth import (
     check_browser_auth_status,
     capture_browser_auth_from_browser,
 )
 from .json_io import read_stdin_json, write_json
-from .liked_artists import fetch_artist_images, fetch_liked_artists
+from .liked_artists import (
+    fetch_artist_image,
+    fetch_artist_images,
+    fetch_liked_artists,
+)
 from .library_scan import inspect_local_files, reconcile_local_root, scan_root
 from .models import SyncConfig
-from .reprocess import apply_reprocess, preview_reprocess
+from .reprocess import apply_reprocess, preview_reprocess, preview_reprocess_stream
 from .sync_engine import run_sync
 
 
@@ -83,12 +88,20 @@ def main() -> int:
         write_json(inspect_local_files(payload))
         return 0
 
+    if command == "extract-embedded-cover":
+        write_json(extract_embedded_cover_thumbnail(payload))
+        return 0
+
     if command == "liked-artists":
         write_json(
             fetch_liked_artists(
                 browser_auth_input=str(payload.get("ytmusic_browser_auth", "")),
             )
         )
+        return 0
+
+    if command == "artist-image":
+        write_json(fetch_artist_image(payload))
         return 0
 
     if command == "artist-images":
@@ -107,6 +120,10 @@ def main() -> int:
 
     if command == "reprocess-preview":
         write_json(preview_reprocess(payload))
+        return 0
+
+    if command == "reprocess-preview-stream":
+        preview_reprocess_stream(payload)
         return 0
 
     if command == "reprocess-apply":

@@ -180,6 +180,18 @@ interface ReprocessApplyResult {
   replaced: boolean
 }
 
+interface ReprocessPreviewStreamEvent {
+  type: 'reprocess_preview'
+  event: 'started' | 'progress' | 'batch' | 'completed'
+  job_id: string
+  total_count: number
+  processed_count: number
+  changed_count: number
+  noop_count: number
+  items?: ReprocessPreviewRow[]
+  message?: string
+}
+
 interface ManagedFileRow {
   trackId: string
   artist: string | null
@@ -406,6 +418,9 @@ export class SyncService {
   private activeJobId: string | null = null
   private activeProcess: ChildProcessWithoutNullStreams | null = null
   private cancelKillTimer: NodeJS.Timeout | null = null
+  private activePreviewJobId: string | null = null
+  private activePreviewProcess: ChildProcessWithoutNullStreams | null = null
+  private previewCancelKillTimer: NodeJS.Timeout | null = null
   private cancelRequestedJobId: string | null = null
   private schedulerRunning = false
   private readonly poTokenService: PoTokenService
@@ -620,7 +635,42 @@ export class SyncService {
       return { ok: true, message: 'Cancellation requested.' }
     }
 
-    if (!['queued', 'waiting_approval'].includes(job.status)) {
+    if (this.activePreviewJobId === jobId) {
+      this.cancelRequestedJobId = jobId
+      if (this.activePreviewProcess) {
+        const child = this.activePreviewProcess
+        const killed = this.killPreviewProcess('SIGTERM')
+        if (!killed)
+          return { ok: false, message: 'Unable to stop the active job.' }
+        if (this.previewCancelKillTimer)
+          clearTimeout(this.previewCancelKillTimer)
+        this.previewCancelKillTimer = setTimeout(() => {
+          if (this.activePreviewProcess === child) {
+            this.killPreviewProcess('SIGKILL')
+          }
+        }, 5_000)
+      }
+      await this.failPendingTracksForCancellation(jobId)
+      await this.db
+        .update(syncJobsTable)
+        .set({
+          status: 'cancelled',
+          queueBucket: 'failures',
+          endedAt: nowIso(),
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobsTable.id, jobId))
+      await this.emitSnapshot()
+      return { ok: true, message: 'Cancellation requested.' }
+    }
+
+    // Allow cancelling queued jobs and those waiting for approval.
+    // Also allow cancelling reprocess preview jobs which are created with
+    // status 'running' while the preview pass executes (see startReprocessJob).
+    if (
+      !['queued', 'waiting_approval'].includes(job.status) &&
+      !(job.kind === 'reprocess' && job.status === 'running')
+    ) {
       return { ok: false, message: 'That job cannot be cancelled now.' }
     }
 
@@ -643,7 +693,12 @@ export class SyncService {
   }
 
   async clearSyncData(): Promise<CommandResult> {
-    if (this.activeJobId || this.activeProcess) {
+    if (
+      this.activeJobId ||
+      this.activeProcess ||
+      this.activePreviewJobId ||
+      this.activePreviewProcess
+    ) {
       return {
         ok: false,
         message: 'Stop the active job before clearing sync data.',
@@ -657,6 +712,50 @@ export class SyncService {
     return {
       ok: true,
       message: 'Sync database cleared. Settings and auth left intact.',
+    }
+  }
+
+  async clearFailures(): Promise<CommandResult> {
+    if (
+      this.activeJobId ||
+      this.activeProcess ||
+      this.activePreviewJobId ||
+      this.activePreviewProcess
+    ) {
+      return {
+        ok: false,
+        message: 'Stop the active job before clearing failures.',
+      }
+    }
+
+    const failedJobs = await this.db
+      .select({ id: syncJobsTable.id })
+      .from(syncJobsTable)
+      .where(eq(syncJobsTable.queueBucket, 'failures'))
+    const jobIds = failedJobs.map((job) => job.id)
+
+    if (jobIds.length === 0) {
+      return { ok: true, message: 'No failures to clear.' }
+    }
+
+    await this.db
+      .delete(syncApprovalItemsTable)
+      .where(inArray(syncApprovalItemsTable.jobId, jobIds))
+    await this.db
+      .delete(syncJobTracksTable)
+      .where(inArray(syncJobTracksTable.jobId, jobIds))
+    await this.db.delete(syncJobsTable).where(inArray(syncJobsTable.id, jobIds))
+
+    for (const jobId of jobIds) {
+      this.jobSelectedArtists.delete(jobId)
+      this.reprocessPreexistingManagedFiles.delete(jobId)
+      this.pendingWorkerLaunches.delete(jobId)
+    }
+
+    await this.emitSnapshot()
+    return {
+      ok: true,
+      message: `Cleared ${jobIds.length} failed job${jobIds.length === 1 ? '' : 's'}.`,
     }
   }
 
@@ -761,7 +860,7 @@ export class SyncService {
         bucket: job.queueBucket as SyncJobView['bucket'],
         startedAt: job.startedAt,
         endedAt: job.endedAt,
-        totalTracks: jobTracks.length,
+        totalTracks: Math.max(jobTracks.length, job.plannedCount ?? 0),
         processedTracks,
         completedTracks,
         failedTracks,
@@ -940,7 +1039,7 @@ export class SyncService {
       )
     }
 
-    if (this.activeJobId) {
+    if (this.activeJobId || this.activePreviewJobId) {
       this.pendingWorkerLaunches.set(jobId, launch)
       await this.emitSnapshot()
       return {
@@ -1104,6 +1203,19 @@ export class SyncService {
     await this.emitSnapshot()
   }
 
+  private async failPreparingJob(jobId: string) {
+    await this.db
+      .update(syncJobsTable)
+      .set({
+        status: 'failed',
+        queueBucket: 'failures',
+        endedAt: nowIso(),
+        updatedAt: nowIso(),
+      })
+      .where(eq(syncJobsTable.id, jobId))
+    await this.emitSnapshot()
+  }
+
   private async startReprocessJob(
     scope: 'library' | 'artist',
     selectedArtists: LikedArtistView[] = []
@@ -1123,44 +1235,6 @@ export class SyncService {
       }
     }
 
-    const indexStatus = await this.libraryService.ensureLocalIndexReady()
-    if (!indexStatus.ready) {
-      return this.libraryService.getIndexNotReadyResult(indexStatus)
-    }
-
-    const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        { browser_auth_input: runtime.ytmusicBrowserAuth }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
-      return {
-        ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
-      }
-    }
-
-    await this.poTokenService.ensureReady()
-    const poTokenBundle = this.getPoTokenBundle()
-    const browserAuthInput =
-      authResult.credential_json ?? runtime.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
-
-    const candidates = await this.buildReprocessCandidates(selectedArtists)
-    if (candidates.length === 0) {
-      return {
-        ok: false,
-        message:
-          scope === 'artist'
-            ? 'No eligible local artist tracks found to reprocess.'
-            : 'No eligible local tracks found to reprocess.',
-      }
-    }
-
     const jobId = await this.createJob({
       kind: 'reprocess',
       scope,
@@ -1168,46 +1242,341 @@ export class SyncService {
         scope === 'artist' ? 'Reprocess Artist Songs' : 'Reprocess Library',
       status: 'running',
       queueBucket: 'queue',
-      plannedCount: candidates.length,
+      plannedCount: 0,
     })
-    if (scope === 'artist' && selectedArtists.length > 0) {
-      this.reprocessPreexistingManagedFiles.set(
+    await this.emitSnapshot()
+
+    try {
+      const indexStatus = await this.libraryService.ensureLocalIndexReady()
+      if (!indexStatus.ready) {
+        await this.failPreparingJob(jobId)
+        return this.libraryService.getIndexNotReadyResult(indexStatus)
+      }
+
+      const authResult =
+        await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+          'auth-status',
+          { browser_auth_input: runtime.ytmusicBrowserAuth }
+        )
+      if (!authResult.ok || !authResult.is_authenticated) {
+        await this.failPreparingJob(jobId)
+        return {
+          ok: false,
+          message: authResult.message || 'YT Music auth check failed.',
+        }
+      }
+
+      await this.poTokenService.ensureReady()
+      const poTokenBundle = this.getPoTokenBundle()
+      const browserAuthInput =
+        authResult.credential_json ?? runtime.ytmusicBrowserAuth
+      if (authResult.credential_json) {
+        await this.settingsService.saveYtMusicBrowserAuth(
+          authResult.credential_json
+        )
+      }
+
+      const candidates = await this.buildReprocessCandidates(selectedArtists)
+      if (candidates.length === 0) {
+        await this.db
+          .update(syncJobsTable)
+          .set({
+            status: 'failed',
+            queueBucket: 'failures',
+            endedAt: nowIso(),
+            updatedAt: nowIso(),
+          })
+          .where(eq(syncJobsTable.id, jobId))
+        await this.emitSnapshot()
+        return {
+          ok: false,
+          message:
+            scope === 'artist'
+              ? 'No eligible local artist tracks found to reprocess.'
+              : 'No eligible local tracks found to reprocess.',
+        }
+      }
+
+      await this.db
+        .update(syncJobsTable)
+        .set({
+          plannedCount: candidates.length,
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobsTable.id, jobId))
+      await this.emitSnapshot()
+
+      if (scope === 'artist' && selectedArtists.length > 0) {
+        this.reprocessPreexistingManagedFiles.set(
+          jobId,
+          await this.getManagedFilesForArtists(selectedArtists)
+        )
+      }
+
+      const previewPayload = {
+        job_id: jobId,
+        output_directory: runtime.outputDirectory,
+        remote_copy_enabled: runtime.remoteCopyEnabled,
+        rclone_remote: runtime.rcloneRemote,
+        remote_music_root: runtime.remoteMusicRoot,
+        ytmusic_browser_auth: browserAuthInput,
+        yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
+        folder_template: runtime.folderTemplate,
+        file_template: runtime.fileTemplate,
+        embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
+        write_lrc_sidecar: runtime.writeLrcSidecar,
+        lyrics_api_base_url: runtime.lyricsApiBaseUrl,
+        spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
+        ffmpeg_path: this.getBundledFfmpegPath(),
+        yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
+        yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
+        items: candidates,
+        batch_size: 25,
+        progress_every: 25,
+      }
+      const autoApprove = Boolean(runtime.autoApproveChanges)
+      const visibleCount = await this.runReprocessPreview(
         jobId,
-        await this.getManagedFilesForArtists(selectedArtists)
+        previewPayload,
+        {
+          autoApprove,
+        }
       )
+
+      if (visibleCount === 0) {
+        await this.db
+          .update(syncJobsTable)
+          .set({
+            status: 'completed',
+            queueBucket: 'completed',
+            endedAt: nowIso(),
+            updatedAt: nowIso(),
+          })
+          .where(eq(syncJobsTable.id, jobId))
+        await this.emitSnapshot()
+        return {
+          ok: true,
+          message: 'Reprocess preview complete. No changes found.',
+        }
+      }
+
+      await this.recomputeJob(jobId)
+      await this.emitSnapshot()
+      if (autoApprove) void this.runScheduler()
+      return {
+        ok: true,
+        message: autoApprove
+          ? 'Reprocess queued.'
+          : 'Reprocess preview complete. Review changes in Needs Approval.',
+      }
+    } catch (error) {
+      await this.failPreparingJob(jobId)
+      throw error
+    }
+  }
+
+  private async runReprocessPreview(
+    jobId: string,
+    payload: Record<string, unknown>,
+    options: { autoApprove: boolean }
+  ): Promise<number> {
+    const child = this.pythonWorker.spawnNdjsonCommand(
+      'reprocess-preview-stream',
+      payload
+    )
+    this.activePreviewJobId = jobId
+    this.activePreviewProcess = child
+
+    let stdoutBuffer = ''
+    let stderrBuffer = ''
+    let visibleCount = 0
+    let nextSortIndex = 0
+    let finalized = false
+    let pending = Promise.resolve()
+
+    const finalize = async (
+      status: 'completed' | 'failed' | 'cancelled',
+      details?: {
+        code?: number | null
+        signal?: NodeJS.Signals | null
+        errorMessage?: string
+      }
+    ) => {
+      if (finalized) return
+      finalized = true
+      if (this.previewCancelKillTimer) {
+        clearTimeout(this.previewCancelKillTimer)
+        this.previewCancelKillTimer = null
+      }
+      this.activePreviewProcess = null
+      if (this.activePreviewJobId === jobId) this.activePreviewJobId = null
+      if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
+
+      if (status !== 'completed') {
+        this.logSync({
+          level: status === 'cancelled' ? 'warn' : 'error',
+          jobId,
+          stage: 'finalize',
+          event:
+            status === 'cancelled'
+              ? 'reprocess-preview-cancelled'
+              : 'reprocess-preview-exit',
+          message:
+            details?.errorMessage ??
+            stderrBuffer.trim().split('\n').filter(Boolean).at(-1) ??
+            'Reprocess preview failed.',
+          context: {
+            exit_code: details?.code ?? null,
+            signal: details?.signal ?? null,
+          },
+        })
+      }
+      await this.emitSnapshot()
+      void this.runScheduler()
     }
 
-    const preview = await this.pythonWorker.runJsonCommand<{
-      items: ReprocessPreviewRow[]
-    }>('reprocess-preview', {
-      job_id: jobId,
-      output_directory: runtime.outputDirectory,
-      remote_copy_enabled: runtime.remoteCopyEnabled,
-      rclone_remote: runtime.rcloneRemote,
-      remote_music_root: runtime.remoteMusicRoot,
-      ytmusic_browser_auth: browserAuthInput,
-      yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
-      folder_template: runtime.folderTemplate,
-      file_template: runtime.fileTemplate,
-      embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
-      write_lrc_sidecar: runtime.writeLrcSidecar,
-      lyrics_api_base_url: runtime.lyricsApiBaseUrl,
-      spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
-      ffmpeg_path: this.getBundledFfmpegPath(),
-      yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
-      yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
-      items: candidates,
-    })
+    return new Promise<number>((resolve, reject) => {
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        stdoutBuffer += chunk
+        let nextNewline = stdoutBuffer.indexOf('\n')
+        while (nextNewline >= 0) {
+          const line = stdoutBuffer.slice(0, nextNewline).trim()
+          stdoutBuffer = stdoutBuffer.slice(nextNewline + 1)
+          if (line.startsWith('{')) {
+            pending = pending
+              .then(() =>
+                this.handleReprocessPreviewEvent(jobId, line, {
+                  autoApprove: options.autoApprove,
+                  nextSortIndex,
+                })
+              )
+              .then((result) => {
+                visibleCount += result.visibleCountDelta
+                nextSortIndex = result.nextSortIndex
+              })
+              .catch(reject)
+          }
+          nextNewline = stdoutBuffer.indexOf('\n')
+        }
+      })
 
-    let visibleCount = 0
-    const timestamp = nowIso()
-    const autoApprove = Boolean(runtime.autoApproveChanges)
-    for (const [index, row] of preview.items.entries()) {
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (chunk: string) => {
+        stderrBuffer += chunk
+        writeStderrRaw(chunk)
+      })
+
+      child.on('exit', (code, signal) => {
+        const status =
+          this.cancelRequestedJobId === jobId
+            ? 'cancelled'
+            : code === 0
+              ? 'completed'
+              : signal === 'SIGTERM'
+                ? 'cancelled'
+                : 'failed'
+        void pending.finally(async () => {
+          await finalize(status, { code, signal })
+          if (status === 'completed') {
+            resolve(visibleCount)
+            return
+          }
+          reject(
+            new Error(
+              stderrBuffer.trim() ||
+                `Reprocess preview exited with status ${status}.`
+            )
+          )
+        })
+      })
+
+      child.on('error', (error) => {
+        void finalize('failed', { errorMessage: error.message })
+        reject(error)
+      })
+    })
+  }
+
+  private async handleReprocessPreviewEvent(
+    jobId: string,
+    line: string,
+    options: { autoApprove: boolean; nextSortIndex: number }
+  ) {
+    let event: ReprocessPreviewStreamEvent
+    try {
+      event = JSON.parse(line) as ReprocessPreviewStreamEvent
+    } catch (error) {
+      this.logSync({
+        level: 'error',
+        jobId,
+        stage: 'finalize',
+        event: 'reprocess-preview-parse-failed',
+        message: 'Reprocess preview emitted malformed NDJSON.',
+        context: {
+          line,
+          parse_error: error instanceof Error ? error.message : String(error),
+        },
+      })
+      return { visibleCountDelta: 0, nextSortIndex: options.nextSortIndex }
+    }
+
+    await this.db
+      .update(syncJobsTable)
+      .set({
+        plannedCount: event.total_count,
+        updatedAt: nowIso(),
+      })
+      .where(eq(syncJobsTable.id, jobId))
+
+    if (event.message) {
+      this.logSync({
+        level: event.event === 'completed' ? 'info' : 'debug',
+        jobId,
+        stage: 'finalize',
+        event: `reprocess-preview.${event.event}`,
+        message: event.message,
+        context: {
+          processed_count: event.processed_count,
+          total_count: event.total_count,
+          changed_count: event.changed_count,
+          noop_count: event.noop_count,
+        },
+      })
+    }
+
+    if (event.event !== 'batch') {
+      await this.emitSnapshot()
+      return { visibleCountDelta: 0, nextSortIndex: options.nextSortIndex }
+    }
+
+    const persisted = await this.persistReprocessPreviewBatch(
+      jobId,
+      event.items ?? [],
+      options.autoApprove,
+      options.nextSortIndex
+    )
+    await this.recomputeJob(jobId)
+    await this.emitSnapshot()
+    return persisted
+  }
+
+  private async persistReprocessPreviewBatch(
+    jobId: string,
+    rows: ReprocessPreviewRow[],
+    autoApprove: boolean,
+    startSortIndex: number
+  ) {
+    let visibleCountDelta = 0
+    let nextSortIndex = startSortIndex
+    for (const row of rows) {
       if (row.action_kind === 'noop' || Object.keys(row.diff).length === 0) {
         continue
       }
-      visibleCount += 1
+      visibleCountDelta += 1
+      nextSortIndex += 1
       const itemPayload = row.payload.item as WorkerTrackPayload
+      const timestamp = nowIso()
       await this.upsertJobTrack(jobId, itemPayload, {
         id: row.track_work_id,
         libraryTrackId: row.library_track_id,
@@ -1223,7 +1592,7 @@ export class SyncService {
           typeof row.after.lrcPath === 'string' ? row.after.lrcPath : null,
         visible: true,
         approvalRequired: true,
-        sortIndex: index,
+        sortIndex: nextSortIndex,
         status: 'pending',
         stage: 'idle',
         reasonCode: autoApprove ? '' : 'awaiting_approval',
@@ -1248,40 +1617,15 @@ export class SyncService {
         updatedAt: timestamp,
       })
     }
-
-    if (visibleCount === 0) {
-      await this.db
-        .update(syncJobsTable)
-        .set({
-          status: 'completed',
-          queueBucket: 'completed',
-          endedAt: nowIso(),
-          updatedAt: nowIso(),
-        })
-        .where(eq(syncJobsTable.id, jobId))
-      await this.emitSnapshot()
-      return {
-        ok: true,
-        message: 'Reprocess preview complete. No changes found.',
-      }
-    }
-
-    await this.recomputeJob(jobId)
-    await this.emitSnapshot()
-    if (autoApprove) void this.runScheduler()
-    return {
-      ok: true,
-      message: autoApprove
-        ? 'Reprocess queued.'
-        : 'Reprocess preview complete. Review changes in Needs Approval.',
-    }
+    return { visibleCountDelta, nextSortIndex }
   }
 
   private async runScheduler() {
-    if (this.schedulerRunning || this.activeJobId) return
+    if (this.schedulerRunning || this.activeJobId || this.activePreviewJobId)
+      return
     this.schedulerRunning = true
     try {
-      while (!this.activeJobId) {
+      while (!this.activeJobId && !this.activePreviewJobId) {
         const next = await this.getNextRunnableJob()
         if (!next) break
         if (this.pendingWorkerLaunches.has(next.id)) {
@@ -1904,13 +2248,13 @@ export class SyncService {
       status = 'running'
       queueBucket = 'queue'
       endedAt = null
-    } else if (hasPending) {
-      status = 'queued'
-      queueBucket = 'queue'
-      endedAt = null
     } else if (hasPendingApproval) {
       status = 'waiting_approval'
       queueBucket = 'needs_approval'
+      endedAt = null
+    } else if (hasPending) {
+      status = 'queued'
+      queueBucket = 'queue'
       endedAt = null
     } else {
       status = 'completed'
@@ -1953,17 +2297,54 @@ export class SyncService {
     return this.poTokenService.getBundleStatus() as PoTokenBundle
   }
 
+  private isReprocessEligibleTrack(
+    track: typeof libraryTracksTable.$inferSelect
+  ): boolean {
+    const hasSourcePlatformId = Boolean(
+      track.youtubeMusicTrackId ||
+        track.spotifyTrackId ||
+        track.soundcloudTrackId
+    )
+    // Liked-song downloads often keep only a legacy YouTube ID in comments, so the
+    // library index marks them as lms_source without managedByApp. Favorite-artist
+    // syncs write full LMS tags and were the only tracks passing the old filter.
+    if (track.identityKind === 'lms_source' && hasSourcePlatformId) {
+      return true
+    }
+    if (track.managedByApp && track.sourceOrigin) return true
+    return false
+  }
+
+  private async resolveLocalRootForOutput(outputDirectory: string) {
+    const outputDir = outputDirectory.trim()
+    if (!outputDir) return null
+
+    const exactMatch = await this.db.query.libraryRootsTable.findFirst({
+      where: and(
+        eq(libraryRootsTable.kind, 'local'),
+        eq(libraryRootsTable.uri, outputDir)
+      ),
+    })
+    if (exactMatch) return exactMatch
+
+    const resolvedOutput = path.resolve(outputDir)
+    const roots = await this.db
+      .select()
+      .from(libraryRootsTable)
+      .where(eq(libraryRootsTable.kind, 'local'))
+    return (
+      roots.find((root) => path.resolve(root.uri) === resolvedOutput) ?? null
+    )
+  }
+
   private async buildReprocessCandidates(
     selectedArtists: LikedArtistView[]
   ): Promise<ReprocessCandidatePayload[]> {
     const settings =
       (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
-    const localRoot = await this.db.query.libraryRootsTable.findFirst({
-      where: and(
-        eq(libraryRootsTable.kind, 'local'),
-        eq(libraryRootsTable.uri, settings.outputDirectory)
-      ),
-    })
+    const localRoot = await this.resolveLocalRootForOutput(
+      settings.outputDirectory
+    )
     if (!localRoot) return []
 
     const [tracks, files] = await Promise.all([
@@ -1982,7 +2363,7 @@ export class SyncService {
 
     const candidates: ReprocessCandidatePayload[] = []
     for (const track of tracks) {
-      if (!track.managedByApp || !track.sourceOrigin) continue
+      if (!this.isReprocessEligibleTrack(track)) continue
       if (
         selectedArtists.length > 0 &&
         !this.trackMatchesSelectedArtists(track.artist, selectedArtists)
@@ -1995,11 +2376,6 @@ export class SyncService {
         localFiles.find((file) => Boolean(file.absolutePathSnapshot)) ??
         null
       if (!selectedFile?.absolutePathSnapshot) continue
-      try {
-        await access(selectedFile.absolutePathSnapshot)
-      } catch {
-        continue
-      }
       candidates.push({
         track_work_id: createId('track'),
         library_track_id: track.id,
@@ -2286,6 +2662,21 @@ export class SyncService {
 
   private killActiveProcess(signal: NodeJS.Signals) {
     const child = this.activeProcess
+    if (!child) return false
+    try {
+      if (process.platform !== 'win32' && child.pid) {
+        process.kill(-child.pid, signal)
+      } else {
+        child.kill(signal)
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private killPreviewProcess(signal: NodeJS.Signals) {
+    const child = this.activePreviewProcess
     if (!child) return false
     try {
       if (process.platform !== 'win32' && child.pid) {
