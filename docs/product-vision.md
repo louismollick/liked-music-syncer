@@ -96,6 +96,14 @@ Needs approval should be its own Sync view because proposed changes and cleanup 
 
 Needs Approval should be track-first because approval decisions apply to concrete track-level diffs. It can remain less finalized than Queue, Completed, and Failures without blocking implementation of those other Sync views.
 
+When Needs Approval is shown, it should use a standard table-style selection model with row checkboxes, a header checkbox, and bulk approve or deny actions. Default selection should be none.
+
+The diff should be a full before/after comparison for every changed field, including empty-to-filled values and album art changes. For now, the app should not hide low-level fields from the diff.
+
+If the user denies a change, that track should leave Needs Approval and end in Completed rather than Failures.
+
+A global settings toggle should be able to auto-approve all modifications and deletions. When that toggle is enabled, qualifying items should bypass Needs Approval entirely.
+
 The user should not need to understand internal sync runs. Over time, sync should be able to run automatically on a schedule in the background, with the app surfacing the current library state and concrete problems that need action.
 
 The user should still be able to open Sync to see when likes were last checked, manually check now for new songs, confirm proposed changes before they modify existing library content, watch running jobs, review completed work, and inspect failures.
@@ -106,9 +114,29 @@ The user can refresh the list of artists found in their liked songs.
 
 They can select one or more artists and reprocess only those songs. This helps fix or improve part of the library without running the full sync again.
 
-Reprocessing should also be available from selected library items such as an artist, album, or song. If reprocessing finds metadata, artwork, lyrics, or file changes for existing library content, the app should show proposed changes before applying them.
+Reprocessing should also be available from selected library items such as an artist, album, or song. Artist reprocess and whole-library reprocess should be the same Reprocess workflow with different scopes.
 
-### 6. Build a Library From Favorite Artists
+Reprocess should target local library tracks that have a source-song tag identity, even if those tracks are no longer currently desired by liked-song or Favorite Artist discovery.
+
+When reprocessing starts, the app should still do all the same source resolution, metadata lookup, artwork lookup, and lyrics lookup work it would do for a fresh track.
+
+If reprocessing finds no actual diff for a track, that track should not enter Needs Approval.
+
+If the resolved YouTube video changes, the app should show one combined Proposed Change for that track, including the resolved-source replacement and all downstream metadata, lyrics, artwork, path, and file actions. After approval, the app should replace the existing track using the current replace-the-track behavior.
+
+If the resolved YouTube video stays the same, the app should skip the audio download step and focus on metadata, lyrics, artwork, tags, sidecars, and other local updates. Those updates should still be previewed and approved first when approval is required.
+
+Reprocess should compute its proposed changes before writing anything. The app should not modify or delete local artifacts until approval is granted, unless auto-approve is enabled.
+
+### 6. Reprocess the Whole Library
+
+The user can start a library-wide Reprocess from the Library area.
+
+This should use the same Reprocess workflow as artist reprocess, but with a whole-library scope.
+
+The goal is to refresh the existing library in place, not to re-fetch current desired songs first. Source reconciliation and cleanup still belong to the normal sync and cleanup flows.
+
+### 7. Build a Library From Favorite Artists
 
 The user can mark artists as favorites.
 
@@ -124,7 +152,7 @@ The user can filter Artists to show only favorites.
 
 The user can refresh one favorite artist from Artist detail, or refresh multiple favorite artists from the favorites-filtered Artists view.
 
-### 7. Test Setup Before a Real Download
+### 8. Test Setup Before a Real Download
 
 The user can run a dry run to check matching and metadata without writing final songs.
 
@@ -155,6 +183,7 @@ It can:
 - search local library artists
 - cache artist images after local artists are shown
 - reprocess selected artists
+- library-wide reprocess does not yet exist
 - mark local library artists as favorites
 - auto-start a favorite artist catalog sync the first time an artist is favorited
 - block sync actions until local library indexing/bootstrap is ready
@@ -200,13 +229,19 @@ It should add:
 - Queue sections for currently running work and queued work
 - a separate Needs Approval view for proposed changes and cleanup that require richer diff-style review
 - a track-first Needs Approval view for concrete per-track diffs and confirmation actions
+- standard table-style selection in Needs Approval, with row checkboxes, a header checkbox, and bulk approve or deny actions
+- full before/after diffs in Needs Approval across all changed fields, including empty-to-filled values and album art changes
 - a Completed view that mirrors Queue with job-first groups and expandable track rows
 - a Failures view that mirrors Queue and Completed with job-first groups and expandable track rows
 - mixed-result jobs grouped into Failures rather than split between Completed and Failures
 - explicit Sync terminology separating Queue State, Job Phase, and Track Step
 - automatic download for clean new matches by default
 - confirmation before destructive actions or modifications to existing library content, such as deleting songs no longer liked or updating metadata on existing files
+- a global setting to auto-approve all modifications and deletions, bypassing Needs Approval when enabled
 - proposed cleanup for songs no longer found in liked music libraries, with deletion requiring confirmation
+- one Reprocess workflow that can target song, album, artist, or whole-library scope
+- Reprocess scope based on local library tracks that have a source-song tag identity
+- preview-only Reprocess evaluation before writes, with same-video changes skipping redownload and resolved-video changes using full replacement after approval
 - a two-step sync flow:
   - pull liked songs, compare them with disk, and match metadata
   - auto-download clean new matches, while showing proposed changes for destructive or modifying actions

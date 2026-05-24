@@ -85,7 +85,7 @@ Sync Jobs and track work items that did not complete successfully. Failed Work u
 _Avoid_: Error log, failed runs
 
 **Reprocess**:
-User-requested work that revisits an existing library item to refresh matching, metadata, lyrics, artwork, or files.
+User-requested work that revisits an existing library item with a source-song identity to refresh matching, metadata, lyrics, artwork, or files. Reprocess can target one artist, one album, one song, or a wider library scope.
 _Avoid_: Resync, rerun
 
 **Proposed Change**:

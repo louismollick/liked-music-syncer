@@ -45,6 +45,7 @@ Current visible workflows include:
 - downloading and tagging songs locally
 - dry-run checks
 - selected artist reprocessing
+- library-wide reprocessing does not yet exist
 - remote copy and missing-remote review
 - setup doctor checks
 
@@ -74,6 +75,15 @@ Sync should likely become a guided workflow and status surface, without exposing
 4. Automatically download clean new matches by default.
 5. Ask for confirmation only before destructive actions, existing-library modifications, or unresolved matching choices.
 6. Download, tag, write lyrics, and copy remote if enabled.
+
+Reprocess should use that same Sync system, but with a preview-first workflow for existing library items:
+
+1. Select a scope such as song, album, artist, or whole library.
+2. Re-run source resolution, metadata lookup, artwork lookup, and lyrics lookup for each in-scope track.
+3. If a track has no resulting change, do not create approval work for it.
+4. If a track has changes, create a Proposed Change with a full before/after diff.
+5. Do not write or delete anything before approval, unless the global auto-approve setting is enabled.
+6. After approval, either replace the whole track when the resolved video changed, or skip download and apply metadata and lyrics updates when the resolved video stayed the same.
 
 Settings should not be a primary navigation item. It should be a utility button, likely placed near the bottom-left of the app shell with a cog icon.
 
@@ -128,6 +138,10 @@ Likely content:
 - processing history filtered to that artist
 
 Reprocess should be available from selected Library items such as artist, album, or song.
+
+Artist reprocess and whole-library reprocess should be the same Reprocess workflow with different scopes.
+
+Reprocess should target local library tracks that have a source-song tag identity, even if those tracks are no longer currently desired by liked-song or Favorite Artist discovery.
 
 Favorite Artist catalog refresh should be available on Artist detail for one artist. The Artists view should also support a bulk refresh action when filtered to favorites.
 
@@ -261,6 +275,17 @@ Needs Approval can diverge from the other Sync views:
 - Needs Approval should be track-first because approval decisions apply to concrete track-level diffs.
 - Small parent-job context can still be shown, but job grouping is not the primary unit there.
 - Needs Approval is still less finalized than Queue, Completed, and Failures and should not block implementation of those views.
+- Needs Approval should use a table-like selection model with a leading checkbox column.
+- The header checkbox should follow standard table behavior and toggle selection for the whole table.
+- Default selection should be none.
+- Needs Approval should support bulk approve and bulk deny actions on the explicit selection.
+- Needs Approval should show a full before/after diff for every changed field, including empty-to-filled values.
+- Diff detail should include all tracked fields for now, not only user-facing metadata.
+- Album art changes should be visible in the diff.
+- Same-video reprocess changes should stay preview-only until approval.
+- Resolved-video replacement changes should also stay preview-only until approval, then execute as one combined replacement action for that track.
+- Denied items should leave Needs Approval and end in Completed rather than Failures.
+- If the global auto-approve setting for modifications and deletions is enabled, qualifying items should bypass Needs Approval entirely and this view should not be shown.
 
 Terminology inside Sync should stay explicit:
 
@@ -307,7 +332,6 @@ Likely content:
 - Should artist reprocessing live on artist pages, sync review, or both?
 - Should completed track rows disappear from Queue immediately, or remain briefly marked done inside a running job group?
 - How much of the current run-history UI remains visible in the debug surface?
-- What exact diff detail and actions should Needs Approval show?
 
 ## Working Assumptions
 
@@ -325,6 +349,7 @@ Likely content:
 - Deleting songs that are no longer liked should be proposed cleanup only, not automatic.
 - No longer liked means absent from all connected liked music libraries, not merely removed from one contributing platform.
 - Reprocess actions belong on selected Library items such as artist, album, or song.
+- Reprocess can also target the whole library.
 - Sync remains a primary navigation item.
 - Sync shows last liked-song check time and allows a manual check for new songs.
 - Sync should use subnavigation for Queue, Needs approval, Completed, and Failures.
@@ -342,6 +367,7 @@ Likely content:
 - Mixed-result jobs should leave Queue as one group and land in Failures.
 - Needs Approval should be a separate Sync view rather than a section inside Queue.
 - Needs Approval should be track-first, even though Queue, Completed, and Failures stay job-first.
+- Needs Approval should support standard table-style selection with row checkboxes and a header checkbox.
 - Skipped is not a primary Sync bucket; already-known or already-present songs belong in Library inventory state.
 - Favorite Artists extend desired library contents beyond individually liked songs.
 - Favorite Artist MVP can mark artists already known from the scanned local library.
@@ -395,8 +421,19 @@ Likely content:
 - Favorite Artist catalog refresh should not be a default Sync action; Sync can still show resulting discovered songs, downloads, and failures.
 - Sync should not present "Skipped" as a main state. If a song already exists or needs no action, that should be visible through Library state instead.
 - Existing songs are normally left alone. Reprocessing existing songs is an explicit user action from Library.
+- Artist reprocess and whole-library reprocess are the same Reprocess workflow with different scopes.
+- Reprocess scope includes local library tracks with a source-song tag identity.
+- Reprocessing should re-run matching, metadata, artwork, and lyrics lookups even for already-processed tracks.
+- If reprocessing produces no actual diff, the track should not enter Needs Approval.
+- If reprocessing keeps the same resolved video, download can be skipped and the work can focus on metadata, artwork, lyrics, tags, and sidecars.
+- If reprocessing changes the resolved video, the existing replace-the-track behavior still applies after approval.
 - Reprocessing can create proposed metadata, artwork, lyrics, or file changes that require confirmation before applying.
+- Reprocessing should compute those changes as preview-only work first, with no writes before approval unless auto-approve is enabled.
 - Songs no longer found in liked music libraries can be shown as proposed cleanup, but the app should not auto-delete them.
+- Needs Approval should show a complete before/after diff across all changed fields, including empty-to-filled values and album art changes.
+- Needs Approval should use standard table-selection behavior with a header checkbox and bulk approve or deny actions.
+- Denied approval items should complete as no-op user decisions, not failures.
+- A global setting can auto-approve all modifications and deletions, bypassing Needs Approval entirely.
 - Multiple platforms can contribute to the same library item during the same sync. The UI should show all liked source contributions, not force a single original source.
 - Album detail should summarize source contributions; song detail should show full source-contribution rows.
 - Album identity should come from final library metadata. Liked source contributions explain provenance, not album grouping.
