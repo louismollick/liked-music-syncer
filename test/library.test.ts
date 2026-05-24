@@ -1203,6 +1203,147 @@ describe('liked artists service', () => {
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
+
+  it('remembers artist-image misses and skips retrying them later', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(likedArtistsTable).values({
+      id: 'local_artist_artist',
+      channelId: null,
+      name: 'Artist',
+      normalizedName: 'artist',
+      photoUrl: null,
+      likedTrackCount: 1,
+      lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+      isFavorite: false,
+      favoritedAt: null,
+      lastCatalogRefreshedAt: null,
+      catalogTrackCount: null,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    })
+    const runJsonCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        is_authenticated: true,
+        message: 'ok',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        artist: null,
+        message: 'No matching artist image found.',
+      })
+    const service = new LikedArtistsService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          ytmusicBrowserAuth: 'auth',
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      { runJsonCommand } as never
+    )
+
+    const first = await service.refreshArtistImages()
+    const second = await service.refreshArtistImages()
+    const [artist] = await service.listArtists()
+    const [stored] = await db.select().from(likedArtistsTable)
+
+    expect(first.ok).toBe(true)
+    expect(first.message).toContain('1 not found')
+    expect(second).toEqual({
+      ok: true,
+      message: 'Artist images already cached.',
+    })
+    expect(artist?.photoUrl).toBeNull()
+    expect(stored?.photoUrl).toBeTruthy()
+    expect(runJsonCommand).toHaveBeenCalledTimes(2)
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('preserves remembered artist-image misses across artist refreshes', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(libraryTracksTable).values({
+      id: 'track_1',
+      identityKind: 'file',
+      identityValue: '/music/artist-song.mp3',
+      managedByApp: false,
+      tagSchemaVersion: null,
+      youtubeMusicTrackId: null,
+      spotifyTrackId: null,
+      soundcloudTrackId: null,
+      resolvedYoutubeMusicTrackId: null,
+      sourceOrigin: null,
+      catalogReleaseBrowseId: null,
+      catalogReleaseTitle: null,
+      catalogReleaseKind: null,
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      albumArtist: 'Artist',
+      trackNumber: 1,
+      trackTotal: 1,
+      discNumber: 1,
+      discTotal: 1,
+      year: null,
+      date: null,
+      genre: null,
+      language: null,
+      isrc: null,
+      mbTrackId: null,
+      mbAlbumId: null,
+      mbReleaseGroupId: null,
+      lyricsStatus: 'missing',
+      hasEmbeddedLyrics: false,
+      hasSidecarLyrics: false,
+      coverArtPresent: false,
+      missingFieldsJson: '[]',
+      preferredFileId: null,
+      firstSeenAt: '2026-05-18T00:00:00.000Z',
+      lastSeenAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    })
+    const runJsonCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        is_authenticated: true,
+        message: 'ok',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        artist: null,
+        message: 'No matching artist image found.',
+      })
+    const service = new LikedArtistsService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          ytmusicBrowserAuth: 'auth',
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      { runJsonCommand } as never
+    )
+
+    await service.refreshArtists()
+    await service.refreshArtistImages()
+    await service.refreshArtists()
+    const result = await service.refreshArtistImages()
+    const [artist] = await service.listArtists()
+
+    expect(result).toEqual({
+      ok: true,
+      message: 'Artist images already cached.',
+    })
+    expect(artist?.photoUrl).toBeNull()
+    expect(runJsonCommand).toHaveBeenCalledTimes(2)
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
 })
 
 describe('favorite artist catalog sync', () => {

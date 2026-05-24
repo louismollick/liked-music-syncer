@@ -13,8 +13,17 @@ import type { SettingsService } from './settings-service'
 import { nowIso, runWithConcurrency } from './utils'
 
 const ARTIST_IMAGE_FETCH_CONCURRENCY = 3
+const MISSING_ARTIST_PHOTO_SENTINEL = 'app://artist-photo/not-found'
 
 export { isLowResArtistPhotoUrl } from '@shared/artist-photo-url'
+
+function decodeStoredArtistPhotoUrl(photoUrl: string | null): string | null {
+  return photoUrl === MISSING_ARTIST_PHOTO_SENTINEL ? null : photoUrl
+}
+
+function isKnownMissingArtistPhoto(photoUrl: string | null): boolean {
+  return photoUrl === MISSING_ARTIST_PHOTO_SENTINEL
+}
 
 function normalizeArtistName(value: string): string {
   return value
@@ -89,7 +98,7 @@ export class LikedArtistsService {
       channelId: row.channelId,
       name: row.name,
       normalizedName: row.normalizedName,
-      photoUrl: row.photoUrl,
+      photoUrl: decodeStoredArtistPhotoUrl(row.photoUrl),
       likedTrackCount: row.likedTrackCount,
       lastRefreshedAt: row.lastRefreshedAt,
       isFavorite: row.isFavorite,
@@ -246,7 +255,9 @@ export class LikedArtistsService {
       const existing =
         existingById.get(artist.id) ??
         existingByNormalizedName.get(artist.normalizedName)
-      if (existing?.photoUrl) preservedPhotoUrls++
+      if (decodeStoredArtistPhotoUrl(existing?.photoUrl ?? null)) {
+        preservedPhotoUrls++
+      }
       if (existing && existing.id !== artist.id) migratedArtistIds++
       await this.db
         .insert(likedArtistsTable)
@@ -343,9 +354,26 @@ export class LikedArtistsService {
 
     const startedAt = Date.now()
     const catalog = await this.listArtists({ logSnapshot: true })
-    const artists = catalog.filter((artist) =>
-      isLowResArtistPhotoUrl(artist.photoUrl)
-    )
+    const storedArtists = await this.db.select().from(likedArtistsTable)
+    const artists = storedArtists
+      .filter(
+        (artist) =>
+          !isKnownMissingArtistPhoto(artist.photoUrl) &&
+          isLowResArtistPhotoUrl(decodeStoredArtistPhotoUrl(artist.photoUrl))
+      )
+      .map((artist) => ({
+        id: artist.id,
+        channelId: artist.channelId,
+        name: artist.name,
+        normalizedName: artist.normalizedName,
+        photoUrl: decodeStoredArtistPhotoUrl(artist.photoUrl),
+        likedTrackCount: artist.likedTrackCount,
+        lastRefreshedAt: artist.lastRefreshedAt,
+        isFavorite: artist.isFavorite,
+        favoritedAt: artist.favoritedAt,
+        lastCatalogRefreshedAt: artist.lastCatalogRefreshedAt,
+        catalogTrackCount: artist.catalogTrackCount,
+      }))
     logMain({
       level: 'info',
       source: 'liked-artists',
@@ -468,6 +496,13 @@ export class LikedArtistsService {
 
           if (!payload.artist?.photo_url) {
             stats.notFound++
+            await this.db
+              .update(likedArtistsTable)
+              .set({
+                photoUrl: MISSING_ARTIST_PHOTO_SENTINEL,
+                updatedAt: nowIso(),
+              })
+              .where(eq(likedArtistsTable.id, artist.id))
             logMain({
               level: 'debug',
               source: 'liked-artists',

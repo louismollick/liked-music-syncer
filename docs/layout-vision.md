@@ -354,6 +354,7 @@ Likely content:
 - Albums is the default Library view.
 - Library grid and list views avoid status badge clutter by default.
 - Library search is global across Albums, Artists, and Songs, with grouped results.
+- Search results should update immediately while typing, even during background sync/status updates.
 - Remote state is part of Library, not a top-level navigation area.
 - Sync is a workflow, not the whole product.
 - Sync focuses on discovered songs, confirmation, active downloads, and finished downloads.

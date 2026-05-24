@@ -5,6 +5,7 @@
 - The **Albums** library view loads cover art from embedded tags in local indexed audio files.
 - Artwork is extracted in the main process, normalized to a square JPEG thumbnail, and cached under `userData/artwork-cache`.
 - The renderer loads images through the `app-media://` custom protocol (`app-media://artwork/<cache-key>.jpg`).
+- Artist-photo lookups now negative-cache "not found" results internally, so artists with no resolved image are not re-queried on every later refresh.
 - The renderer keeps an in-memory album-art cache and applies per-album IPC updates as they resolve, so revisiting **Albums** does not blank already-known covers and cold loads can fill progressively.
 - Albums without a readable local file or embedded cover keep the existing placeholder card.
 
