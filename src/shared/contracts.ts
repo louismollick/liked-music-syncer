@@ -1,9 +1,3 @@
-export type SyncTriggerMode =
-  | 'manual'
-  | 'artist_reprocess'
-  | 'remote_backfill'
-  | 'favorite_artist_catalog'
-
 export type SyncStage =
   | 'idle'
   | 'ytmusic_auth'
@@ -28,13 +22,6 @@ export type SyncItemStatus =
   | 'failed_terminal'
   | 'skipped_existing'
 
-export type RunStatus =
-  | 'idle'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type LyricsStatus = 'missing' | 'plain' | 'synced'
 export type IdentityKind =
@@ -54,6 +41,22 @@ export type YtDlpCookiesBrowser =
   | 'vivaldi'
   | 'whale'
 
+export type SyncJobKind =
+  | 'liked_songs_sync'
+  | 'reprocess'
+  | 'favorite_artist_catalog_refresh'
+  | 'sync_missing_to_remote'
+
+export type SyncJobScopeKind = 'library' | 'artist'
+export type SyncBucket = 'queue' | 'needs_approval' | 'completed' | 'failures'
+export type SyncJobStatus =
+  | 'queued'
+  | 'running'
+  | 'waiting_approval'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
 export interface AuthStatus {
   authMode: 'browser_headers' | 'none'
   isAuthenticated: boolean
@@ -63,7 +66,7 @@ export interface AuthStatus {
 
 export interface AppSettingsView {
   outputDirectory: string
-  dryRun: boolean
+  autoApproveChanges: boolean
   remoteCopyEnabled: boolean
   outputFormat: 'm4a'
   rcloneRemote: string
@@ -79,7 +82,7 @@ export interface AppSettingsView {
 
 export interface SaveSettingsInput {
   outputDirectory: string
-  dryRun: boolean
+  autoApproveChanges: boolean
   remoteCopyEnabled: boolean
   ytmusicBrowserAuth?: string
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
@@ -106,73 +109,64 @@ export interface BrowserAuthCaptureResult extends CommandResult {
   authStatus: AuthStatus
 }
 
-export interface SyncRunItemView {
+export interface SyncTrackWorkView {
   id: string
-  runId: string
-  youtubeMusicTrackId: string
-  spotifyTrackId: string | null
-  soundcloudTrackId: string | null
-  resolvedYoutubeMusicTrackId: string | null
+  jobId: string
   title: string
   artist: string
   album: string
-  albumArtist: string
-  sourceUrl: string
-  coverArtUrl: string | null
+  youtubeMusicTrackId: string
+  resolvedYoutubeMusicTrackId: string | null
   status: SyncItemStatus
   stage: SyncStage
   reasonCode: string
   reasonDetail: string
-  sourceKind: string
-  sourceOrigin: string | null
-  catalogReleaseBrowseId: string | null
-  catalogReleaseTitle: string | null
-  catalogReleaseKind: string | null
-  videoType: string | null
-  resolutionMethod: string
-  trackNumber: number | null
-  trackTotal: number | null
-  discNumber: number | null
-  discTotal: number | null
-  year: number | null
-  date: string | null
-  genre: string | null
-  language: string | null
-  isrc: string | null
-  mbTrackId: string | null
-  mbAlbumId: string | null
-  mbReleaseGroupId: string | null
-  lyricsStatus: LyricsStatus
-  audioCodec: string | null
-  metadataMatched: boolean
-  musicBrainzMatched: boolean
-  lyricsMatched: boolean
-  lyricsSource: string | null
-  selectedSourceUrl: string | null
   outputPath: string | null
   lrcPath: string | null
 }
 
-export interface SyncRunSummary {
+export interface SyncApprovalItemView {
   id: string
-  triggerMode: SyncTriggerMode
-  status: RunStatus
-  startedAt: string
-  endedAt: string | null
-  totalCount: number
-  processedCount: number
-  completedCount: number
-  failedCount: number
-  skippedCount: number
+  jobId: string
+  trackWorkId: string
+  title: string
+  artist: string
+  album: string
+  status: 'pending' | 'approved' | 'denied'
+  actionKind: 'update' | 'replace' | 'delete'
+  diffJson: string
+  beforeJson: string
+  afterJson: string
 }
 
-export interface SyncRunDetail extends SyncRunSummary {
-  items: SyncRunItemView[]
+export interface SyncJobView {
+  id: string
+  kind: SyncJobKind
+  scope: SyncJobScopeKind | null
+  label: string
+  status: SyncJobStatus
+  bucket: SyncBucket
+  startedAt: string
+  endedAt: string | null
+  totalTracks: number
+  processedTracks: number
+  completedTracks: number
+  failedTracks: number
+  pendingApprovalTracks: number
+  tracks: SyncTrackWorkView[]
 }
 
 export interface SyncSnapshot {
-  activeRun: SyncRunDetail | null
-  runs: SyncRunSummary[]
+  queue: SyncJobView[]
+  needsApproval: SyncApprovalItemView[]
+  completed: SyncJobView[]
+  failures: SyncJobView[]
+  counts: {
+    queue: number
+    needsApproval: number
+    completed: number
+    failures: number
+  }
 }
 
 export interface LibraryRootView {
@@ -323,15 +317,16 @@ export interface ElectronApi {
     pickOutputDirectory: () => Promise<string | null>
   }
   sync: {
-    start: (input?: { mode?: SyncTriggerMode }) => Promise<CommandResult>
+    startLikedSongsSync: () => Promise<CommandResult>
+    startLibraryReprocess: () => Promise<CommandResult>
     reprocessArtists: (artistIds: string[]) => Promise<CommandResult>
     refreshFavoriteArtists: (artistIds?: string[]) => Promise<CommandResult>
-    cancel: (runId: string) => Promise<CommandResult>
-    clearSyncData: () => Promise<CommandResult>
     syncMissingToRemote: () => Promise<CommandResult>
+    approveChanges: (approvalIds: string[]) => Promise<CommandResult>
+    denyChanges: (approvalIds: string[]) => Promise<CommandResult>
+    cancel: (jobId: string) => Promise<CommandResult>
+    clearSyncData: () => Promise<CommandResult>
     doctor: () => Promise<CommandResult>
-    listRuns: () => Promise<SyncRunSummary[]>
-    getRun: (runId: string) => Promise<SyncRunDetail | null>
     getSnapshot: () => Promise<SyncSnapshot>
     subscribe: (listener: (snapshot: SyncSnapshot) => void) => () => void
   }

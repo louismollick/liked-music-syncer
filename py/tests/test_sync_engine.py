@@ -27,9 +27,8 @@ def _config(tmp_path: Path) -> SyncConfig:
     plugin_dir = tmp_path / "yt-dlp-plugins"
     plugin_dir.mkdir()
     return SyncConfig(
-        run_id="run_123",
+        job_id="job_123",
         output_directory=tmp_path / "out",
-        dry_run=False,
         remote_copy_enabled=False,
         rclone_remote="",
         remote_music_root="",
@@ -131,7 +130,7 @@ def _run_sync_for_lyrics(
 
     run_sync(config)
 
-    item_events = [event["item"] for event in events if event.get("type") == "item"]
+    item_events = [event["item"] for event in events if event.get("type") == "track"]
     return item_events[-1], tag_calls
 
 
@@ -350,7 +349,6 @@ def test_run_sync_favorite_catalog_items_use_favorite_source_kind(
 ) -> None:
     events: list[dict[str, Any]] = []
     config = _config(tmp_path)
-    config.dry_run = True
     config.favorite_artist_catalogs = [
         {
             "id": "artist_1",
@@ -391,10 +389,22 @@ def test_run_sync_favorite_catalog_items_use_favorite_source_kind(
         "liked_music_syncer.sync_engine._resolve_lyrics",
         lambda *args, **kwargs: (None, None),
     )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._download_audio",
+        lambda *args, **kwargs: (tmp_path / "downloaded.m4a", {"acodec": "aac"}),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._normalize_audio",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine.write_media_tags",
+        lambda *args, **kwargs: None,
+    )
 
     run_sync(config)
 
-    item_events = [event["item"] for event in events if event.get("type") == "item"]
+    item_events = [event["item"] for event in events if event.get("type") == "track"]
     assert item_events[-1]["source_kind"] == "favorite_artist_catalog"
     completed = [event for event in events if event.get("event") == "completed"]
     assert completed[-1]["context"]["favorite_artist_catalog_counts"] == {
@@ -406,7 +416,6 @@ def test_run_sync_favorite_catalog_items_skip_generic_resolution(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = _config(tmp_path)
-    config.dry_run = True
     config.favorite_artist_catalogs = [
         {
             "id": "artist_1",
@@ -447,6 +456,18 @@ def test_run_sync_favorite_catalog_items_skip_generic_resolution(
     monkeypatch.setattr(
         "liked_music_syncer.sync_engine._resolve_exact_catalog",
         lambda *args, **kwargs: pytest.fail("generic resolution should be skipped"),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._download_audio",
+        lambda *args, **kwargs: (tmp_path / "downloaded.m4a", {"acodec": "aac"}),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._normalize_audio",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine.write_media_tags",
+        lambda *args, **kwargs: None,
     )
 
     run_sync(config)
@@ -490,7 +511,7 @@ def test_skip_existing_prevents_duplicate_favorite_catalog_download(
 
     run_sync(config)
 
-    item_events = [event["item"] for event in events if event.get("type") == "item"]
+    item_events = [event["item"] for event in events if event.get("type") == "track"]
     assert item_events[-1]["status"] == "skipped_existing"
     assert item_events[-1]["reason_code"] == "existing_library_identity"
 
@@ -498,9 +519,8 @@ def test_skip_existing_prevents_duplicate_favorite_catalog_download(
 def test_release_dedupe_skips_same_release_but_keeps_other_release() -> None:
     config = SyncConfig.from_payload(
         {
-            "run_id": "run_1",
+            "job_id": "job_1",
             "output_directory": "/tmp/out",
-            "dry_run": True,
             "remote_copy_enabled": False,
             "rclone_remote": "",
             "remote_music_root": "",

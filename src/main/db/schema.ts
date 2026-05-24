@@ -36,18 +36,24 @@ export const likedArtistsTable = sqliteTable('liked_artists', {
   updatedAt: text('updated_at').notNull(),
 })
 
-export const syncRunsTable = sqliteTable('sync_runs', {
+export const syncJobsTable = sqliteTable('sync_jobs', {
   id: text('id').primaryKey(),
-  triggerMode: text('trigger_mode').notNull(),
+  kind: text('kind').notNull(),
+  scope: text('scope'),
+  label: text('label').notNull(),
   status: text('status').notNull(),
+  queueBucket: text('queue_bucket').notNull(),
   startedAt: text('started_at').notNull(),
   endedAt: text('ended_at'),
   plannedCount: integer('planned_count').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
 })
 
-export const syncRunItemsTable = sqliteTable('sync_run_items', {
+export const syncJobTracksTable = sqliteTable('sync_job_tracks', {
   id: text('id').primaryKey(),
-  runId: text('run_id').notNull(),
+  jobId: text('job_id').notNull(),
+  libraryTrackId: text('library_track_id'),
   youtubeMusicTrackId: text('youtube_music_track_id').notNull(),
   spotifyTrackId: text('spotify_track_id'),
   soundcloudTrackId: text('soundcloud_track_id'),
@@ -94,6 +100,15 @@ export const syncRunItemsTable = sqliteTable('sync_run_items', {
     .default(false),
   lyricsSource: text('lyrics_source'),
   selectedSourceUrl: text('selected_source_url'),
+  visible: integer('visible', { mode: 'boolean' }).notNull().default(true),
+  approvalRequired: integer('approval_required', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  terminalOutcome: text('terminal_outcome'),
+  sortIndex: integer('sort_index'),
+  remoteTarget: text('remote_target'),
+  jobPhase: text('job_phase'),
+  currentOutputPath: text('current_output_path'),
   outputPath: text('output_path'),
   lrcPath: text('lrc_path'),
   createdAt: text('created_at').notNull(),
@@ -203,11 +218,18 @@ export const libraryFilesTable = sqliteTable(
   })
 )
 
-export const artifactsTable = sqliteTable('artifacts', {
+export const syncApprovalItemsTable = sqliteTable('sync_approval_items', {
   id: text('id').primaryKey(),
-  runItemId: text('run_item_id').notNull(),
-  audioPath: text('audio_path'),
-  lrcPath: text('lrc_path'),
-  remoteTarget: text('remote_target'),
+  jobId: text('job_id').notNull(),
+  trackWorkId: text('track_work_id').notNull(),
+  libraryTrackId: text('library_track_id'),
+  status: text('status').notNull(),
+  actionKind: text('action_kind').notNull(),
+  diffJson: text('diff_json').notNull(),
+  beforeJson: text('before_json').notNull(),
+  afterJson: text('after_json').notNull(),
+  albumArtDiffJson: text('album_art_diff_json'),
+  payloadJson: text('payload_json').notNull(),
   createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
 })

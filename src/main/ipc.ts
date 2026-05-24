@@ -77,27 +77,34 @@ export function registerIpcHandlers(
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  ipcMain.handle('sync:start', (_event, input) => syncService.start(input))
+  ipcMain.handle('sync:startLikedSongsSync', () =>
+    syncService.startLikedSongsSync()
+  )
+  ipcMain.handle('sync:startLibraryReprocess', () =>
+    syncService.startLibraryReprocess()
+  )
   ipcMain.handle('sync:reprocessArtists', (_event, artistIds: string[]) =>
     syncService.reprocessArtists(artistIds)
+  )
+  ipcMain.handle('sync:approveChanges', (_event, approvalIds: string[]) =>
+    syncService.approveChanges(approvalIds)
+  )
+  ipcMain.handle('sync:denyChanges', (_event, approvalIds: string[]) =>
+    syncService.denyChanges(approvalIds)
   )
   ipcMain.handle(
     'sync:refreshFavoriteArtists',
     (_event, artistIds?: string[]) =>
       syncService.refreshFavoriteArtists(artistIds)
   )
-  ipcMain.handle('sync:cancel', (_event, runId: string) =>
-    syncService.cancel(runId)
+  ipcMain.handle('sync:cancel', (_event, jobId: string) =>
+    syncService.cancel(jobId)
   )
   ipcMain.handle('sync:clearSyncData', () => syncService.clearSyncData())
   ipcMain.handle('sync:syncMissingToRemote', () =>
     syncService.syncMissingToRemote()
   )
   ipcMain.handle('sync:doctor', () => syncService.doctor())
-  ipcMain.handle('sync:listRuns', () => syncService.listRuns())
-  ipcMain.handle('sync:getRun', (_event, runId: string) =>
-    syncService.getRun(runId)
-  )
   ipcMain.handle('sync:getSnapshot', () => syncService.getSnapshot())
   ipcMain.handle('library:scanRoots', () => libraryService.scanRoots())
   ipcMain.handle('library:getIndexStatus', () =>

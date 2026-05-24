@@ -8,7 +8,8 @@
       "!**/release",
       "!**/drizzle/meta",
       "!resources/bin/bgutil-ytdlp-pot-provider",
-      "!py/.venv"
+      "!py/.venv",
+      "!**/*.css"
     ]
   },
   "formatter": {

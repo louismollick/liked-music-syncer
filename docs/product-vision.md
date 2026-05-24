@@ -90,7 +90,7 @@ If one Sync Job finishes with both completed and failed tracks, the whole job sh
 
 Sync terminology should distinguish Queue State, Job Phase, and Track Step so parent progress and child progress are not conflated.
 
-The user should be able to inspect an active song to see its current Track Step, such as matching, downloading, tagging, writing lyrics, or copying to remote. Multiple jobs can be active at the same time.
+The user should be able to inspect an active song to see its current Track Step, such as matching, downloading, tagging, writing lyrics, or copying to remote. The scheduler should run one executable job at a time while still showing queued follow-up jobs in Sync.
 
 Needs approval should be its own Sync view because proposed changes and cleanup may need richer diff-style detail than the main Queue. Once approval is granted, affected tracks should return to Queue to finish remaining work.
 
@@ -154,9 +154,9 @@ The user can refresh one favorite artist from Artist detail, or refresh multiple
 
 ### 8. Test Setup Before a Real Download
 
-The user can run a dry run to check matching and metadata without writing final songs.
+The user can check required tools, auth, and remote copy settings before starting a sync.
 
-They can also check required tools, auth, and remote copy settings before starting a full sync.
+For existing library tracks, they can use Reprocess preview and approval flow to inspect modifications before any write occurs.
 
 ## Current Features
 
@@ -167,9 +167,8 @@ It can:
 - pull YouTube Music auth from a selected browser
 - save and clear auth
 - fetch liked songs from YouTube Music
-- start, stop, and inspect sync runs
-- show run progress, item status, and item details
-- keep a history of previous runs
+- start, stop, and inspect sync jobs
+- show job progress, item status, and item details
 - download songs locally
 - enrich songs with metadata
 - add album art when found
@@ -178,12 +177,12 @@ It can:
 - embed unsynced lyrics
 - use custom folder and file naming templates
 - skip work for songs already processed
-- run in dry-run mode for metadata-only checks
 - refresh library by reconciling the persisted local index
 - search local library artists
 - cache artist images after local artists are shown
 - reprocess selected artists
-- library-wide reprocess does not yet exist
+- reprocess the whole library
+- preview reprocess diffs before apply, with approval or auto-approve
 - mark local library artists as favorites
 - auto-start a favorite artist catalog sync the first time an artist is favorited
 - block sync actions until local library indexing/bootstrap is ready
@@ -246,5 +245,5 @@ It should add:
   - pull liked songs, compare them with disk, and match metadata
   - auto-download clean new matches, while showing proposed changes for destructive or modifying actions
 - clear progress indicators for fetching, matching, metadata lookup, download, tagging, lyrics, and remote copy
-- the ability for more than one job to be active at once, while still showing per-track steps for running songs
+- one active executor at a time, while still showing per-track steps for the currently running song and queued follow-up jobs
 - visible errors, missing matches, already-present songs, and other concrete states before download

@@ -41,11 +41,10 @@ Current visible workflows include:
 - fetching liked songs
 - starting and stopping sync work
 - viewing progress, item statuses, and item details
-- viewing previous sync runs
 - downloading and tagging songs locally
-- dry-run checks
 - selected artist reprocessing
-- library-wide reprocessing does not yet exist
+- library-wide reprocessing
+- approval review for reprocess changes
 - remote copy and missing-remote review
 - setup doctor checks
 
@@ -264,7 +263,7 @@ Within each Queue state section, rows should still preserve the parent job and n
 
 Currently running tracks should sort before queued siblings inside a running job group.
 
-Queue should be the live operational view for running and waiting work. A separate Active view is not needed if Queue already shows Job Phase and Track Step inline. More than one job can be active at the same time.
+Queue should be the live operational view for running and waiting work. A separate Active view is not needed if Queue already shows Job Phase and Track Step inline. One executable job should run at a time, with later jobs remaining visibly queued behind it.
 
 Needs Approval should be its own Sync view because approval work may need richer diff-style detail than the main Queue.
 
@@ -360,7 +359,7 @@ Likely content:
 - Queue should preserve parent jobs with nested track rows, expanded by default when tracks are known.
 - Running work should appear inline in Queue with Job Phase and Track Step visible there.
 - No persistent live sync UI should appear outside Sync for now.
-- More than one active job can exist at the same time.
+- One executable job should run at a time.
 - Completed should use the same job-first grouped shape as Queue, with expandable nested tracks.
 - Completed and Queue should look very similar visually.
 - Failures should use the same job-first grouped shape as Queue and Completed.
@@ -412,7 +411,7 @@ Likely content:
 - Needs Approval should be track-first and may remain less finalized than the other Sync views for now.
 - Once approval is granted, affected tracks should return to Queue for the rest of their lifecycle.
 - Running work should appear inline in Queue with Job Phase and Track Step visible there.
-- More than one active job can run at the same time.
+- One executable job should run at a time.
 - Completed should be job-first with expandable track rows, and should visually mirror Queue.
 - Failures should be job-first with expandable track rows, and should visually mirror Queue and Completed.
 - If one job finishes with both completed and failed tracks, that whole job group should land in Failures.

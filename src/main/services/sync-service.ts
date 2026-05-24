@@ -1,28 +1,29 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { access, rm } from 'node:fs/promises'
+import { access } from 'node:fs/promises'
 import path from 'node:path'
 import type {
   CommandResult,
   LikedArtistView,
   LogLevel,
+  SyncApprovalItemView,
   SyncItemStatus,
-  SyncRunDetail,
-  SyncRunItemView,
-  SyncRunSummary,
+  SyncJobKind,
+  SyncJobStatus,
+  SyncJobView,
   SyncSnapshot,
   SyncStage,
-  SyncTriggerMode,
+  SyncTrackWorkView,
 } from '@shared/contracts'
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { execa } from 'execa'
 import type { AppDatabase } from '../db/database'
 import {
-  artifactsTable,
   libraryFilesTable,
   libraryRootsTable,
   libraryTracksTable,
-  syncRunItemsTable,
-  syncRunsTable,
+  syncApprovalItemsTable,
+  syncJobsTable,
+  syncJobTracksTable,
 } from '../db/schema'
 import type { LibraryService } from './library-service'
 import type { LikedArtistsService } from './liked-artists-service'
@@ -33,10 +34,11 @@ import type { SettingsService } from './settings-service'
 import { createId, nowIso } from './utils'
 
 type SyncListener = (snapshot: SyncSnapshot) => void
-interface WorkerRunEvent {
-  type: 'run'
+
+interface WorkerJobEvent {
+  type: 'job'
   event: 'started' | 'progress' | 'completed' | 'failed'
-  run_id: string
+  job_id: string
   total_count?: number
   processed_count?: number
   stage?: SyncStage
@@ -44,14 +46,7 @@ interface WorkerRunEvent {
   context?: Record<string, unknown>
 }
 
-interface FavoriteArtistCatalogPayload {
-  id: string
-  channel_id: string | null
-  name: string
-  normalized_name: string
-}
-
-interface WorkerItemPayload {
+interface WorkerTrackPayload {
   id: string
   youtube_music_track_id: string
   spotify_track_id?: string | null
@@ -86,7 +81,7 @@ interface WorkerItemPayload {
   mb_track_id?: string | null
   mb_album_id?: string | null
   mb_releasegroup_id?: string | null
-  lyrics_status?: SyncRunItemView['lyricsStatus']
+  lyrics_status?: 'missing' | 'plain' | 'synced'
   audio_codec?: string | null
   metadata_matched?: boolean
   musicbrainz_matched?: boolean
@@ -97,16 +92,16 @@ interface WorkerItemPayload {
   lrc_path?: string | null
 }
 
-interface WorkerItemEvent {
-  type: 'item'
+interface WorkerTrackEvent {
+  type: 'track'
   event: 'upsert'
-  run_id: string
-  item: WorkerItemPayload
+  job_id: string
+  item: WorkerTrackPayload
 }
 
 interface WorkerLogEvent {
   type: 'log'
-  run_id: string
+  job_id: string
   item_id: string
   youtube_music_track_id: string
   timestamp: string
@@ -117,7 +112,7 @@ interface WorkerLogEvent {
   context?: Record<string, unknown>
 }
 
-type WorkerEvent = WorkerRunEvent | WorkerItemEvent | WorkerLogEvent
+type WorkerEvent = WorkerJobEvent | WorkerTrackEvent | WorkerLogEvent
 
 interface WorkerAuthStatusResponse {
   ok: boolean
@@ -126,12 +121,63 @@ interface WorkerAuthStatusResponse {
   credential_json?: string
 }
 
-interface RunStartOptions {
-  mode: SyncTriggerMode
-  artistChannelIds?: string[]
-  artistNamesNormalized?: string[]
-  forceReprocess?: boolean
-  favoriteArtistCatalogs?: FavoriteArtistCatalogPayload[]
+interface FavoriteArtistCatalogPayload {
+  id: string
+  channel_id: string | null
+  name: string
+  normalized_name: string
+}
+
+interface ReprocessCandidatePayload {
+  track_work_id: string
+  library_track_id: string
+  youtube_music_track_id: string | null
+  spotify_track_id: string | null
+  soundcloud_track_id: string | null
+  resolved_youtube_music_track_id: string | null
+  source_origin: string | null
+  catalog_release_browse_id: string | null
+  catalog_release_title: string | null
+  catalog_release_kind: string | null
+  title: string | null
+  artist: string | null
+  album: string | null
+  album_artist: string | null
+  track_number: number | null
+  track_total: number | null
+  disc_number: number | null
+  disc_total: number | null
+  year: number | null
+  date: string | null
+  genre: string | null
+  language: string | null
+  isrc: string | null
+  mb_track_id: string | null
+  mb_album_id: string | null
+  mb_releasegroup_id: string | null
+  lyrics_status: string
+  current_output_path: string
+  current_lrc_path: string | null
+  cover_art_present: boolean
+}
+
+interface ReprocessPreviewRow {
+  track_work_id: string
+  library_track_id: string
+  same_video: boolean
+  action_kind: 'noop' | 'update' | 'replace'
+  diff: Record<string, { before: unknown; after: unknown }>
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+  album_art_diff: Record<string, unknown> | null
+  payload: Record<string, unknown>
+}
+
+interface ReprocessApplyResult {
+  ok: boolean
+  output_path: string
+  lrc_path: string | null
+  replaced: boolean
 }
 
 interface ManagedFileRow {
@@ -141,6 +187,46 @@ interface ManagedFileRow {
   rootUri: string
   absolutePathSnapshot: string | null
   relativePath: string
+}
+
+interface RuntimeSettingsLike {
+  outputDirectory: string
+  remoteCopyEnabled: boolean
+  rcloneRemote: string
+  remoteMusicRoot: string
+  lyricsApiBaseUrl: string
+  ytmusicBrowserAuth?: string
+  ytDlpCookiesBrowser?: string
+  folderTemplate: string
+  fileTemplate: string
+  embedUnsyncedLyrics: boolean
+  writeLrcSidecar: boolean
+  autoApproveChanges?: boolean
+}
+
+interface PoTokenBundle {
+  pluginDirectory: string
+  baseUrl: string
+  hasPluginZip?: boolean
+  hasProviderEntry?: boolean
+}
+
+interface JobCreateInput {
+  kind: SyncJobKind
+  scope: 'library' | 'artist' | null
+  label: string
+  plannedCount?: number
+  status?: SyncJobStatus
+  queueBucket?: SyncJobView['bucket']
+}
+
+interface RemoteBackfillCandidate {
+  trackId: string
+  trackWorkId: string
+  payload: WorkerTrackPayload
+  localAudioPath: string
+  localLrcPath: string | null
+  remoteTarget: string
 }
 
 export interface RemoteShellTrackIdentity {
@@ -170,6 +256,12 @@ interface ExiftoolJsonRow {
 
 const REMOTE_EXIFTOOL_MISSING_MESSAGE =
   'Remote scanner requires exiftool on the VPS. Install libimage-exiftool-perl.'
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
 
 export function parseRcloneSftpConfig(output: string): RcloneSftpConfig {
   const values = new Map<string, string>()
@@ -227,32 +319,6 @@ export function normalizeExiftoolJson(
   }
 }
 
-export function buildRemoteScannerSshArgs(input: {
-  config: RcloneSftpConfig
-  remoteMusicRoot: string
-}): string[] {
-  const shellRoot = resolveRemoteShellRoot(
-    input.remoteMusicRoot,
-    input.config.user
-  )
-  return [
-    '-i',
-    input.config.keyFile,
-    '-o',
-    'BatchMode=yes',
-    '-o',
-    'ConnectTimeout=15',
-    `${input.config.user}@${input.config.host}`,
-    buildRemoteScannerCommand(shellRoot),
-  ]
-}
-
-function stringOrNull(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  return trimmed ? trimmed : null
-}
-
 function resolveRemoteShellRoot(remoteMusicRoot: string, user: string) {
   const trimmed = remoteMusicRoot.trim()
   if (trimmed.startsWith('/')) return trimmed
@@ -306,17 +372,44 @@ print(json.dumps(rows))
 PY`
 }
 
+export function buildRemoteScannerSshArgs(input: {
+  config: RcloneSftpConfig
+  remoteMusicRoot: string
+}): string[] {
+  const shellRoot = resolveRemoteShellRoot(
+    input.remoteMusicRoot,
+    input.config.user
+  )
+  return [
+    '-i',
+    input.config.keyFile,
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=15',
+    `${input.config.user}@${input.config.host}`,
+    buildRemoteScannerCommand(shellRoot),
+  ]
+}
+
 export class SyncService {
   private readonly listeners = new Set<SyncListener>()
-  private activeRunId: string | null = null
-  private activeProcess: ChildProcessWithoutNullStreams | null = null
-  private cancelKillTimer: NodeJS.Timeout | null = null
-  private cancelRequestedRunId: string | null = null
-  private readonly runSelectedArtists = new Map<string, LikedArtistView[]>()
-  private readonly runPreexistingManagedFiles = new Map<
+  private readonly jobSelectedArtists = new Map<string, LikedArtistView[]>()
+  private readonly reprocessPreexistingManagedFiles = new Map<
     string,
     ManagedFileRow[]
   >()
+  private readonly pendingWorkerLaunches = new Map<
+    string,
+    () => Promise<void>
+  >()
+  private activeJobId: string | null = null
+  private activeProcess: ChildProcessWithoutNullStreams | null = null
+  private cancelKillTimer: NodeJS.Timeout | null = null
+  private cancelRequestedJobId: string | null = null
+  private schedulerRunning = false
+  private readonly poTokenService: PoTokenService
+  private readonly getBundledFfmpegPath: () => string
 
   constructor(
     private readonly db: AppDatabase,
@@ -324,17 +417,41 @@ export class SyncService {
     private readonly pythonWorker: PythonWorkerService,
     private readonly libraryService: LibraryService,
     private readonly likedArtistsService: LikedArtistsService,
-    private readonly poTokenService: PoTokenService,
-    private readonly getBundledFfmpegPath: () => string
-  ) {}
+    poTokenServiceOrGetFfmpeg: PoTokenService | (() => string),
+    maybeGetBundledFfmpegPath?: () => string
+  ) {
+    if (typeof poTokenServiceOrGetFfmpeg === 'function') {
+      this.getBundledFfmpegPath = poTokenServiceOrGetFfmpeg
+      this.poTokenService = {
+        ensureReady: async () => {},
+        getBundleStatus: () => ({
+          pluginDirectory: '',
+          baseUrl: '',
+          hasPluginZip: false,
+          hasProviderEntry: false,
+        }),
+      } as PoTokenService
+    } else {
+      this.poTokenService = poTokenServiceOrGetFfmpeg
+      this.getBundledFfmpegPath = maybeGetBundledFfmpegPath ?? (() => 'ffmpeg')
+    }
+  }
 
   subscribe(listener: SyncListener) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
   }
 
-  async start(input?: { mode?: SyncTriggerMode }): Promise<CommandResult> {
-    return this.startRun({ mode: input?.mode ?? 'manual' })
+  async startLikedSongsSync(): Promise<CommandResult> {
+    return this.startWorkerJob({
+      kind: 'liked_songs_sync',
+      scope: null,
+      label: 'Liked Songs Sync',
+    })
+  }
+
+  async startLibraryReprocess(): Promise<CommandResult> {
+    return this.startReprocessJob('library')
   }
 
   async reprocessArtists(artistIds: string[]): Promise<CommandResult> {
@@ -350,508 +467,193 @@ export class SyncService {
         message: 'Some selected artists are missing. Refresh library first.',
       }
     }
-    const artistChannelIds = selectedArtists
-      .map((artist) => artist.channelId)
-      .filter((value): value is string => Boolean(value))
-    const artistNamesNormalized = selectedArtists.map(
-      (artist) => artist.normalizedName
-    )
-    return this.startRun(
-      {
-        mode: 'artist_reprocess',
-        artistChannelIds,
-        artistNamesNormalized,
-        forceReprocess: true,
-      },
-      selectedArtists
-    )
+    return this.startReprocessJob('artist', selectedArtists)
   }
 
   async refreshFavoriteArtists(artistIds?: string[]): Promise<CommandResult> {
     const uniqueIds = artistIds
       ? [...new Set(artistIds.filter(Boolean))]
       : undefined
-    logMain({
-      level: 'debug',
-      source: 'sync',
-      message: 'refreshFavoriteArtists requested',
-      context: {
-        requestedCount: uniqueIds?.length ?? null,
-        requestedIds: uniqueIds ?? null,
-      },
-    })
     const selectedArtists =
       await this.likedArtistsService.listFavoriteArtists(uniqueIds)
-    logMain({
-      level: 'debug',
-      source: 'sync',
-      message: 'refreshFavoriteArtists selected favorites',
-      context: {
-        selectedCount: selectedArtists.length,
-        selectedIds: selectedArtists.map((artist) => artist.id),
-      },
-    })
     if (selectedArtists.length === 0) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'refreshFavoriteArtists no favorites selected',
-        context: {
-          requestedCount: uniqueIds?.length ?? null,
-          requestedIds: uniqueIds ?? null,
-        },
-      })
-      return {
-        ok: false,
-        message: 'Select at least one favorite artist.',
-      }
+      return { ok: false, message: 'Select at least one favorite artist.' }
     }
     if (uniqueIds && selectedArtists.length !== uniqueIds.length) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'refreshFavoriteArtists request mismatch',
-        context: {
-          requestedCount: uniqueIds.length,
-          selectedCount: selectedArtists.length,
-          requestedIds: uniqueIds,
-          selectedIds: selectedArtists.map((artist) => artist.id),
-        },
-      })
-      return {
-        ok: false,
-        message: 'Some selected artists are not favorites.',
-      }
+      return { ok: false, message: 'Some selected artists are not favorites.' }
     }
-    logMain({
-      level: 'info',
-      source: 'sync',
-      message: 'refreshFavoriteArtists starting run',
-      context: {
-        selectedCount: selectedArtists.length,
-        withChannelId: selectedArtists.filter((artist) => artist.channelId)
-          .length,
-        withoutChannelId: selectedArtists.filter((artist) => !artist.channelId)
-          .length,
-      },
-    })
 
-    return this.startRun(
+    return this.startWorkerJob(
       {
-        mode: 'favorite_artist_catalog',
-        forceReprocess: false,
-        favoriteArtistCatalogs: selectedArtists.map((artist) => ({
-          id: artist.id,
-          channel_id: artist.channelId,
-          name: artist.name,
-          normalized_name: artist.normalizedName,
-        })),
+        kind: 'favorite_artist_catalog_refresh',
+        scope: 'artist',
+        label: 'Refresh Favorite Catalog',
       },
+      selectedArtists.map((artist) => ({
+        id: artist.id,
+        channel_id: artist.channelId,
+        name: artist.name,
+        normalized_name: artist.normalizedName,
+      })),
       selectedArtists
     )
   }
 
-  private async startRun(
-    options: RunStartOptions,
-    selectedArtists: LikedArtistView[] = []
-  ): Promise<CommandResult> {
-    if (this.activeRunId || this.activeProcess) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'startRun rejected because another run is active',
-        context: {
-          mode: options.mode,
-          activeRunId: this.activeRunId,
-        },
-      })
-      return { ok: false, message: 'A sync run is already active.' }
+  async approveChanges(approvalIds: string[]): Promise<CommandResult> {
+    const uniqueIds = [...new Set(approvalIds.filter(Boolean))]
+    if (uniqueIds.length === 0) {
+      return { ok: false, message: 'Select at least one change.' }
     }
 
-    logMain({
-      level: 'debug',
-      source: 'sync',
-      message: 'startRun setup started',
-      context: {
-        mode: options.mode,
-        selectedArtistCount: selectedArtists.length,
-        favoriteArtistCatalogCount: options.favoriteArtistCatalogs?.length ?? 0,
-      },
-    })
-
-    const settings = await this.settingsService.getRuntimeSettings()
-    if (!settings.outputDirectory) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'startRun blocked: missing output directory',
-        context: { mode: options.mode },
-      })
-      return {
-        ok: false,
-        message: 'Output directory must be configured first.',
-      }
+    const approvals = await this.db
+      .select()
+      .from(syncApprovalItemsTable)
+      .where(inArray(syncApprovalItemsTable.id, uniqueIds))
+    const pending = approvals.filter((row) => row.status === 'pending')
+    if (pending.length === 0) {
+      return { ok: false, message: 'No pending approvals selected.' }
     }
 
-    if (!settings.ytmusicBrowserAuth) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'startRun blocked: missing YT Music auth',
-        context: { mode: options.mode },
-      })
-      return {
-        ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
-
-    logMain({
-      level: 'debug',
-      source: 'sync',
-      message: 'startRun checking YT Music auth',
-      context: { mode: options.mode },
-    })
-    let authResult: WorkerAuthStatusResponse
-    try {
-      authResult =
-        await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-          'auth-status',
-          {
-            browser_auth_input: settings.ytmusicBrowserAuth,
-          }
-        )
-    } catch (error) {
-      logMain({
-        level: 'error',
-        source: 'sync',
-        message: 'startRun auth check failed',
-        context: {
-          mode: options.mode,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      })
-      throw error
-    }
-
-    if (!authResult.ok || !authResult.is_authenticated) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'startRun blocked: YT Music auth invalid',
-        context: {
-          mode: options.mode,
-          workerMessage: authResult.message,
-        },
-      })
-      return {
-        ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
-      }
-    }
-
-    logMain({
-      level: 'debug',
-      source: 'sync',
-      message: 'startRun preparing PO token provider',
-      context: { mode: options.mode },
-    })
-    try {
-      await this.poTokenService.ensureReady()
-    } catch (error) {
-      logMain({
-        level: 'error',
-        source: 'sync',
-        message: 'startRun PO token provider failed',
-        context: {
-          mode: options.mode,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      })
-      return {
-        ok: false,
-        message: error instanceof Error ? error.message : String(error),
-      }
-    }
-
-    const poTokenBundle = this.poTokenService.getBundleStatus()
-    logMain({
-      level: 'debug',
-      source: 'sync',
-      message: 'startRun checking local library index',
-      context: { mode: options.mode },
-    })
-    const indexStatus = await this.libraryService.ensureLocalIndexReady()
-    if (!indexStatus.ready) {
-      const blockedResult =
-        this.libraryService.getIndexNotReadyResult(indexStatus)
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'startRun blocked: local library index not ready',
-        context: {
-          mode: options.mode,
-          indexReason: indexStatus.reason,
-          inProgress: indexStatus.inProgress,
-          lastScanStatus: indexStatus.lastScanStatus,
-        },
-      })
-      return blockedResult
-    }
-    const existingLocalIds =
-      await this.libraryService.getManagedLocalSignatures()
-    const browserAuthInput =
-      authResult.credential_json ?? settings.ytmusicBrowserAuth
-
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
-
-    const runId = createId('run')
-    logMain({
-      level: 'info',
-      source: 'sync',
-      message: 'startRun spawning worker',
-      runId,
-      context: {
-        mode: options.mode,
-        favoriteArtistCatalogCount: options.favoriteArtistCatalogs?.length ?? 0,
-      },
-    })
-
-    await this.db.insert(syncRunsTable).values({
-      id: runId,
-      triggerMode: options.mode,
-      status: 'running',
-      startedAt: nowIso(),
-      endedAt: null,
-      plannedCount: 0,
-    })
-
-    const child = this.pythonWorker.spawnNdjsonCommand('sync-run', {
-      run_id: runId,
-      output_directory: settings.outputDirectory,
-      dry_run: settings.dryRun,
-      remote_copy_enabled: settings.remoteCopyEnabled,
-      rclone_remote: settings.rcloneRemote,
-      remote_music_root: settings.remoteMusicRoot,
-      ytmusic_browser_auth: browserAuthInput,
-      yt_dlp_cookies_browser: settings.ytDlpCookiesBrowser,
-      folder_template: settings.folderTemplate,
-      file_template: settings.fileTemplate,
-      embed_unsynced_lyrics: settings.embedUnsyncedLyrics,
-      write_lrc_sidecar: settings.writeLrcSidecar,
-      lyrics_api_base_url: settings.lyricsApiBaseUrl,
-      spotify_match_enabled: Boolean(settings.lyricsApiBaseUrl.trim()),
-      existing_local_youtube_music_track_ids: [...existingLocalIds.sourceIds],
-      existing_local_resolved_youtube_music_track_ids: [
-        ...existingLocalIds.resolvedIds,
-      ],
-      existing_local_track_signatures: existingLocalIds.trackSignatures,
-      existing_local_release_signatures: existingLocalIds.releaseSignatures,
-      artist_filter_channel_ids: [...(options.artistChannelIds ?? [])],
-      artist_filter_names_normalized: [
-        ...(options.artistNamesNormalized ?? []),
-      ],
-      favorite_artist_catalogs: options.favoriteArtistCatalogs ?? [],
-      force_reprocess: Boolean(options.forceReprocess),
-      ffmpeg_path: this.getBundledFfmpegPath(),
-      yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
-      yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
-    })
-
-    this.activeRunId = runId
-    this.activeProcess = child
-    if (selectedArtists.length > 0) {
-      this.runSelectedArtists.set(runId, selectedArtists)
-      this.runPreexistingManagedFiles.set(
-        runId,
-        await this.getManagedFilesForArtists(selectedArtists)
-      )
-    }
-
-    let stdoutBuffer = ''
-    let stderrBuffer = ''
-    let finalized = false
-
-    const finalize = async (
-      status: 'completed' | 'failed' | 'cancelled',
-      details?: {
-        code?: number | null
-        signal?: NodeJS.Signals | null
-        errorMessage?: string
-      }
-    ) => {
-      if (finalized) return
-      finalized = true
-      if (this.cancelKillTimer) {
-        clearTimeout(this.cancelKillTimer)
-        this.cancelKillTimer = null
-      }
-      this.cancelRequestedRunId = null
-      this.activeRunId = null
-      this.activeProcess = null
-      if (status === 'completed') {
-        await this.refreshIndexedOutputsForRun(runId)
-      }
-      if (status === 'completed' && options.mode === 'artist_reprocess') {
-        await this.cleanupArtistReprocessFiles(runId)
-      }
-      await this.updateRun(runId, {
-        status,
-        endedAt: nowIso(),
-      })
-      this.runSelectedArtists.delete(runId)
-      this.runPreexistingManagedFiles.delete(runId)
-
-      if (status !== 'completed') {
-        const stderrText = stderrBuffer.trim()
-        const message =
-          details?.errorMessage ??
-          stderrText.split('\n').filter(Boolean).at(-1) ??
-          `Worker exited with status ${status}.`
-
-        this.logSync({
-          level: status === 'cancelled' ? 'warn' : 'error',
-          runId,
-          stage: 'finalize',
-          event: status === 'cancelled' ? 'worker-cancelled' : 'worker-exit',
-          message,
-          context: {
-            exit_code: details?.code ?? null,
-            signal: details?.signal ?? null,
-            stderr: stderrText || null,
-          },
+    for (const row of pending) {
+      const timestamp = nowIso()
+      await this.db
+        .update(syncApprovalItemsTable)
+        .set({ status: 'approved', updatedAt: timestamp })
+        .where(eq(syncApprovalItemsTable.id, row.id))
+      await this.db
+        .update(syncJobTracksTable)
+        .set({
+          status: 'pending',
+          stage: 'idle',
+          reasonCode: '',
+          reasonDetail: '',
+          terminalOutcome: null,
+          updatedAt: timestamp,
         })
-      }
-      await this.emitSnapshot()
+        .where(eq(syncJobTracksTable.id, row.trackWorkId))
+      await this.recomputeJob(row.jobId)
     }
 
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      stdoutBuffer += chunk
+    await this.emitSnapshot()
+    void this.runScheduler()
+    return {
+      ok: true,
+      message: `Approved ${pending.length} change${pending.length === 1 ? '' : 's'}.`,
+    }
+  }
 
-      let nextNewline = stdoutBuffer.indexOf('\n')
-      while (nextNewline >= 0) {
-        const line = stdoutBuffer.slice(0, nextNewline).trim()
-        stdoutBuffer = stdoutBuffer.slice(nextNewline + 1)
-        if (line.startsWith('{')) {
-          void this.handleWorkerEvent(runId, line)
-        }
-        nextNewline = stdoutBuffer.indexOf('\n')
-      }
-    })
+  async denyChanges(approvalIds: string[]): Promise<CommandResult> {
+    const uniqueIds = [...new Set(approvalIds.filter(Boolean))]
+    if (uniqueIds.length === 0) {
+      return { ok: false, message: 'Select at least one change.' }
+    }
 
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => {
-      stderrBuffer += chunk
-      writeStderrRaw(chunk)
-    })
+    const approvals = await this.db
+      .select()
+      .from(syncApprovalItemsTable)
+      .where(inArray(syncApprovalItemsTable.id, uniqueIds))
+    const pending = approvals.filter((row) => row.status === 'pending')
+    if (pending.length === 0) {
+      return { ok: false, message: 'No pending approvals selected.' }
+    }
 
-    child.on('exit', (code, signal) => {
-      const status =
-        this.cancelRequestedRunId === runId
-          ? 'cancelled'
-          : code === 0
-            ? 'completed'
-            : signal === 'SIGTERM'
-              ? 'cancelled'
-              : 'failed'
-      void finalize(status, {
-        code,
-        signal,
-      })
-    })
-    child.on('error', (error) => {
-      void finalize('failed', { errorMessage: error.message })
-    })
+    for (const row of pending) {
+      const timestamp = nowIso()
+      await this.db
+        .update(syncApprovalItemsTable)
+        .set({ status: 'denied', updatedAt: timestamp })
+        .where(eq(syncApprovalItemsTable.id, row.id))
+      await this.db
+        .update(syncJobTracksTable)
+        .set({
+          status: 'completed_local_only',
+          stage: 'finalize',
+          reasonCode: 'approval_denied',
+          reasonDetail: 'Change denied by user.',
+          terminalOutcome: 'noop_denied',
+          updatedAt: timestamp,
+        })
+        .where(eq(syncJobTracksTable.id, row.trackWorkId))
+      await this.recomputeJob(row.jobId)
+    }
 
     await this.emitSnapshot()
     return {
       ok: true,
-      message:
-        options.mode === 'favorite_artist_catalog'
-          ? 'Favorite artist catalog refresh started.'
-          : options.mode === 'artist_reprocess'
-            ? 'Artist reprocess started.'
-            : 'Sync started.',
+      message: `Denied ${pending.length} change${pending.length === 1 ? '' : 's'}.`,
     }
   }
 
-  async cancel(runId: string): Promise<CommandResult> {
-    if (this.activeRunId !== runId) {
-      return { ok: false, message: 'That run is not active.' }
+  async cancel(jobId: string): Promise<CommandResult> {
+    const job = await this.db.query.syncJobsTable.findFirst({
+      where: eq(syncJobsTable.id, jobId),
+    })
+    if (!job) {
+      return { ok: false, message: 'That job does not exist.' }
     }
 
-    if (!this.activeProcess) {
-      this.cancelRequestedRunId = runId
-      await this.updateRun(runId, {
-        status: 'cancelled',
-        endedAt: nowIso(),
-      })
-      this.logSync({
-        level: 'warn',
-        runId,
-        stage: 'finalize',
-        event: 'cancel-requested',
-        message: 'Cancellation requested.',
-      })
+    if (this.activeJobId === jobId) {
+      this.cancelRequestedJobId = jobId
+      if (this.activeProcess) {
+        const child = this.activeProcess
+        const killed = this.killActiveProcess('SIGTERM')
+        if (!killed)
+          return { ok: false, message: 'Unable to stop the active job.' }
+        if (this.cancelKillTimer) clearTimeout(this.cancelKillTimer)
+        this.cancelKillTimer = setTimeout(() => {
+          if (this.activeProcess === child) {
+            this.killActiveProcess('SIGKILL')
+          }
+        }, 5_000)
+      }
+      await this.failPendingTracksForCancellation(jobId)
+      await this.db
+        .update(syncJobsTable)
+        .set({
+          status: 'cancelled',
+          queueBucket: 'failures',
+          endedAt: nowIso(),
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobsTable.id, jobId))
       await this.emitSnapshot()
       return { ok: true, message: 'Cancellation requested.' }
     }
 
-    const child = this.activeProcess
-    const killed = this.killActiveRun('SIGTERM')
-    if (!killed) {
-      return { ok: false, message: 'Unable to stop the active run.' }
+    if (!['queued', 'waiting_approval'].includes(job.status)) {
+      return { ok: false, message: 'That job cannot be cancelled now.' }
     }
 
-    if (this.cancelKillTimer) {
-      clearTimeout(this.cancelKillTimer)
-    }
-    this.cancelRequestedRunId = runId
-    this.activeRunId = null
-    this.cancelKillTimer = setTimeout(() => {
-      if (this.activeProcess === child) {
-        this.killActiveRun('SIGKILL')
-      }
-    }, 5_000)
-
-    await this.updateRun(runId, {
-      status: 'cancelled',
-      endedAt: nowIso(),
-    })
-
-    this.logSync({
-      level: 'warn',
-      runId,
-      stage: 'finalize',
-      event: 'cancel-requested',
-      message: 'Cancellation requested.',
-    })
+    await this.failPendingTracksForCancellation(jobId)
+    await this.db
+      .update(syncJobsTable)
+      .set({
+        status: 'cancelled',
+        queueBucket: 'failures',
+        endedAt: nowIso(),
+        updatedAt: nowIso(),
+      })
+      .where(eq(syncJobsTable.id, jobId))
+    await this.db
+      .update(syncApprovalItemsTable)
+      .set({ status: 'denied', updatedAt: nowIso() })
+      .where(eq(syncApprovalItemsTable.jobId, jobId))
     await this.emitSnapshot()
-
     return { ok: true, message: 'Cancellation requested.' }
   }
 
   async clearSyncData(): Promise<CommandResult> {
-    if (this.activeRunId || this.activeProcess) {
+    if (this.activeJobId || this.activeProcess) {
       return {
         ok: false,
-        message: 'Stop the active run before clearing sync data.',
+        message: 'Stop the active job before clearing sync data.',
       }
     }
 
-    await this.db.delete(artifactsTable)
-    await this.db.delete(libraryFilesTable)
-    await this.db.delete(libraryTracksTable)
-    await this.db.delete(libraryRootsTable)
-    await this.db.delete(syncRunItemsTable)
-    await this.db.delete(syncRunsTable)
+    await this.db.delete(syncApprovalItemsTable)
+    await this.db.delete(syncJobTracksTable)
+    await this.db.delete(syncJobsTable)
     await this.emitSnapshot()
-
     return {
       ok: true,
       message: 'Sync database cleared. Settings and auth left intact.',
@@ -859,20 +661,14 @@ export class SyncService {
   }
 
   async syncMissingToRemote(): Promise<CommandResult> {
-    if (this.activeRunId || this.activeProcess) {
-      return { ok: false, message: 'A sync run is already active.' }
-    }
-
-    const settings = await this.settingsService.getRuntimeSettings()
+    const settings =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
     if (
       !settings.remoteCopyEnabled ||
       !settings.rcloneRemote.trim() ||
       !settings.remoteMusicRoot.trim()
     ) {
-      return {
-        ok: false,
-        message: 'Remote copy settings are incomplete.',
-      }
+      return { ok: false, message: 'Remote copy settings are incomplete.' }
     }
 
     const indexStatus = await this.libraryService.ensureLocalIndexReady()
@@ -880,389 +676,152 @@ export class SyncService {
       return this.libraryService.getIndexNotReadyResult(indexStatus)
     }
 
-    const runId = createId('run')
-    await this.db.insert(syncRunsTable).values({
-      id: runId,
-      triggerMode: 'remote_backfill',
-      status: 'running',
-      startedAt: nowIso(),
-      endedAt: null,
-      plannedCount: 0,
-    })
-    this.activeRunId = runId
-    this.logSync({
-      level: 'info',
-      runId,
-      stage: 'remote_copy',
-      event: 'remote-backfill-started',
-      message: 'Finding local tracks missing from remote.',
+    const jobId = await this.createJob({
+      kind: 'sync_missing_to_remote',
+      scope: null,
+      label: 'Sync Missing to Remote',
     })
     await this.emitSnapshot()
+    if (this.activeJobId) {
+      void this.runScheduler()
+      return { ok: true, message: 'Sync Missing to Remote queued.' }
+    }
+    return this.runRemoteBackfillJob(jobId)
+  }
 
-    let copied = 0
-    let skippedExisting = 0
-    let skippedNoLocal = 0
-    let skippedMissingIdentity = 0
-    let failed = 0
-    let result: CommandResult = {
-      ok: true,
-      message: 'Remote backfill complete.',
-      details: 'Copied 0; skipped existing 0; skipped no local 0; failed 0.',
+  async doctor(): Promise<CommandResult> {
+    const runtime =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    const poTokenBundle = this.getPoTokenBundle()
+    return this.pythonWorker.runJsonCommand<CommandResult>('doctor', {
+      output_directory: runtime.outputDirectory,
+      has_browser_auth: Boolean(runtime.ytmusicBrowserAuth),
+      ffmpeg_path: this.getBundledFfmpegPath(),
+      remote_copy_enabled: runtime.remoteCopyEnabled,
+      rclone_remote: runtime.rcloneRemote,
+      remote_music_root: runtime.remoteMusicRoot,
+      yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
+      yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
+      yt_dlp_plugin_zip_exists: poTokenBundle.hasPluginZip,
+      yt_dlp_provider_entry_exists: poTokenBundle.hasProviderEntry,
+    })
+  }
+
+  async getSnapshot(): Promise<SyncSnapshot> {
+    const [jobs, tracks, approvals] = await Promise.all([
+      this.db
+        .select()
+        .from(syncJobsTable)
+        .orderBy(desc(syncJobsTable.startedAt)),
+      this.db.select().from(syncJobTracksTable),
+      this.db
+        .select()
+        .from(syncApprovalItemsTable)
+        .where(eq(syncApprovalItemsTable.status, 'pending')),
+    ])
+
+    const visibleTracks = tracks.filter((track) => track.visible)
+    const tracksByJobId = new Map<string, typeof visibleTracks>()
+    for (const track of visibleTracks) {
+      const current = tracksByJobId.get(track.jobId) ?? []
+      current.push(track)
+      tracksByJobId.set(track.jobId, current)
     }
 
-    try {
-      const localRootUri = settings.outputDirectory.trim()
-      const remoteRootUri = `${settings.rcloneRemote.trim()}:${settings.remoteMusicRoot.trim()}`
-      const roots = await this.db.select().from(libraryRootsTable)
-      const localRoot = roots.find(
-        (root) => root.kind === 'local' && root.uri === localRootUri
-      )
-      if (!localRoot) {
-        result = {
-          ok: false,
-          message: 'Local output root not found in library scan.',
-        }
-        return result
-      }
+    const approvalsByTrackId = new Map(
+      approvals.map((row) => [row.trackWorkId, row])
+    )
+    const queue: SyncJobView[] = []
+    const completed: SyncJobView[] = []
+    const failures: SyncJobView[] = []
 
-      this.logSync({
-        level: 'info',
-        runId,
-        stage: 'remote_copy',
-        event: 'remote-shell-scan-started',
-        message: 'Scanning remote tags over SSH.',
+    for (const job of jobs) {
+      const jobTracks = [...(tracksByJobId.get(job.id) ?? [])].sort((a, b) => {
+        const left = a.sortIndex ?? Number.MAX_SAFE_INTEGER
+        const right = b.sortIndex ?? Number.MAX_SAFE_INTEGER
+        if (left !== right) return left - right
+        return a.createdAt.localeCompare(b.createdAt)
       })
-      await this.emitSnapshot()
+      const completedTracks = jobTracks.filter((track) =>
+        ['completed', 'completed_local_only'].includes(track.status)
+      ).length
+      const failedTracks = jobTracks.filter((track) =>
+        track.status.startsWith('failed')
+      ).length
+      const processedTracks = completedTracks + failedTracks
+      const pendingApprovalTracks = jobTracks.filter((track) =>
+        Boolean(approvalsByTrackId.get(track.id))
+      ).length
+      const view: SyncJobView = {
+        id: job.id,
+        kind: job.kind as SyncJobKind,
+        scope: (job.scope as SyncJobView['scope']) ?? null,
+        label: job.label,
+        status: job.status as SyncJobStatus,
+        bucket: job.queueBucket as SyncJobView['bucket'],
+        startedAt: job.startedAt,
+        endedAt: job.endedAt,
+        totalTracks: jobTracks.length,
+        processedTracks,
+        completedTracks,
+        failedTracks,
+        pendingApprovalTracks,
+        tracks:
+          job.queueBucket === 'needs_approval'
+            ? []
+            : jobTracks.map((track) => this.toTrackView(track)),
+      }
 
-      const remoteScan = await this.scanRemoteShell(
-        settings.rcloneRemote.trim(),
-        settings.remoteMusicRoot.trim()
-      )
-      this.logSync({
-        level: 'info',
-        runId,
-        stage: 'remote_copy',
-        event: 'remote-shell-scan-completed',
-        message: `Scanned ${remoteScan.filesScanned} remote files.`,
-        context: {
-          scannedAt: remoteScan.scannedAt,
-          identityCount: remoteScan.identities.length,
-        },
+      if (view.bucket === 'queue') queue.push(view)
+      else if (view.bucket === 'completed') completed.push(view)
+      else if (view.bucket === 'failures') failures.push(view)
+    }
+
+    const trackById = new Map(tracks.map((track) => [track.id, track]))
+    const needsApproval: SyncApprovalItemView[] = approvals
+      .map((approval) => {
+        const track = trackById.get(approval.trackWorkId)
+        if (!track) return null
+        return {
+          id: approval.id,
+          jobId: approval.jobId,
+          trackWorkId: approval.trackWorkId,
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          status: 'pending',
+          actionKind: approval.actionKind as 'update' | 'replace' | 'delete',
+          diffJson: approval.diffJson,
+          beforeJson: approval.beforeJson,
+          afterJson: approval.afterJson,
+        }
       })
+      .filter((value): value is SyncApprovalItemView => Boolean(value))
 
-      const tracks = (await this.db.select().from(libraryTracksTable)).filter(
-        (track) => track.managedByApp
-      )
-      await this.updateRun(runId, { plannedCount: tracks.length })
-      this.logSync({
-        level: 'info',
-        runId,
-        stage: 'remote_copy',
-        event: 'remote-backfill-planned',
-        message: `Checking ${tracks.length} managed tracks.`,
-      })
-      await this.emitSnapshot()
-
-      const files = await this.db.select().from(libraryFilesTable)
-      const filesByTrackId = new Map<string, typeof files>()
-      for (const file of files) {
-        const list = filesByTrackId.get(file.trackId) ?? []
-        list.push(file)
-        filesByTrackId.set(file.trackId, list)
-      }
-
-      const remoteSourceIds = new Set<string>()
-      const remoteResolvedIds = new Set<string>()
-      for (const identity of remoteScan.identities) {
-        if (identity.youtubeMusicTrackId) {
-          remoteSourceIds.add(identity.youtubeMusicTrackId)
-        }
-        if (identity.resolvedYoutubeMusicTrackId) {
-          remoteResolvedIds.add(identity.resolvedYoutubeMusicTrackId)
-        }
-      }
-
-      let processed = 0
-      let lastSnapshotAt = 0
-      const emitProgressSnapshot = async (force = false) => {
-        const now = Date.now()
-        if (force || processed % 10 === 0 || now - lastSnapshotAt >= 500) {
-          lastSnapshotAt = now
-          await this.emitSnapshot()
-        }
-      }
-
-      for (const track of tracks) {
-        const runItem = this.toRemoteBackfillRunItem(runId, track)
-        if (this.cancelRequestedRunId === runId) {
-          result = { ok: false, message: 'Remote backfill cancelled.' }
-          break
-        }
-
-        await this.upsertRunItem(runId, {
-          ...runItem,
-          status: 'processing',
-          stage: 'remote_copy',
-        })
-        await emitProgressSnapshot()
-
-        const sourceId = track.youtubeMusicTrackId
-        const resolvedId = track.resolvedYoutubeMusicTrackId
-        if (
-          (sourceId && remoteSourceIds.has(sourceId)) ||
-          (resolvedId && remoteResolvedIds.has(resolvedId))
-        ) {
-          skippedExisting += 1
-          await this.upsertRunItem(runId, {
-            ...runItem,
-            status: 'skipped_existing',
-            stage: 'remote_copy',
-            reason_code: 'remote_exists',
-            reason_detail:
-              'Matching source or resolved id already exists on remote.',
-          })
-          processed += 1
-          await emitProgressSnapshot()
-          continue
-        }
-
-        if (!sourceId && !resolvedId) {
-          skippedMissingIdentity += 1
-          await this.upsertRunItem(runId, {
-            ...runItem,
-            status: 'skipped_existing',
-            stage: 'remote_copy',
-            reason_code: 'missing_source_identity',
-            reason_detail: 'No source or resolved id exists to compare.',
-          })
-          processed += 1
-          await emitProgressSnapshot()
-          continue
-        }
-
-        const localFiles = (filesByTrackId.get(track.id) ?? []).filter(
-          (file) => file.rootId === localRoot.id
-        )
-        if (localFiles.length === 0) {
-          skippedNoLocal += 1
-          await this.upsertRunItem(runId, {
-            ...runItem,
-            status: 'skipped_existing',
-            stage: 'remote_copy',
-            reason_code: 'missing_local_file',
-            reason_detail: 'No local file exists to copy.',
-          })
-          processed += 1
-          await emitProgressSnapshot()
-          continue
-        }
-
-        localFiles.sort((left, right) => {
-          const leftPreferred = left.id === track.preferredFileId ? 1 : 0
-          const rightPreferred = right.id === track.preferredFileId ? 1 : 0
-          if (leftPreferred !== rightPreferred)
-            return rightPreferred - leftPreferred
-          const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
-          const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
-          if (leftAbsolute !== rightAbsolute)
-            return rightAbsolute - leftAbsolute
-          return left.relativePath.localeCompare(right.relativePath)
-        })
-
-        const selected = localFiles[0]
-        if (!selected) {
-          skippedNoLocal += 1
-          await this.upsertRunItem(runId, {
-            ...runItem,
-            status: 'skipped_existing',
-            stage: 'remote_copy',
-            reason_code: 'missing_local_file',
-            reason_detail: 'No local file exists to copy.',
-          })
-          processed += 1
-          await emitProgressSnapshot()
-          continue
-        }
-
-        const localAudioPath =
-          selected.absolutePathSnapshot ||
-          path.join(localRoot.uri, selected.relativePath)
-        const remoteAudioPath = `${remoteRootUri.replace(/\/$/, '')}/${selected.relativePath}`
-
-        const audioCopy = await execa(
-          'rclone',
-          ['copyto', localAudioPath, remoteAudioPath],
-          {
-            reject: false,
-          }
-        )
-        if (audioCopy.exitCode !== 0) {
-          failed += 1
-          this.logSync({
-            level: 'error',
-            runId,
-            itemId: runItem.id,
-            stage: 'remote_copy',
-            event: 'backfill-copy-failed',
-            message: 'rclone audio copy failed.',
-            context: {
-              track_id: track.id,
-              local_audio_path: localAudioPath,
-              remote_audio_path: remoteAudioPath,
-              stderr: audioCopy.stderr || null,
-            },
-          })
-          await this.upsertRunItem(runId, {
-            ...runItem,
-            status: 'failed_retryable',
-            stage: 'remote_copy',
-            reason_code: 'remote_audio_copy_failed',
-            reason_detail: audioCopy.stderr || 'rclone audio copy failed.',
-            output_path: localAudioPath,
-          })
-          processed += 1
-          await emitProgressSnapshot(true)
-          continue
-        }
-
-        const lrcCandidates = [
-          selected.lrcPath,
-          localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
-        ].filter((value): value is string => Boolean(value))
-        let lrcPath: string | null = null
-        for (const candidate of [...new Set(lrcCandidates)]) {
-          try {
-            await access(candidate)
-            lrcPath = candidate
-            break
-          } catch {
-            // ignore missing candidate
-          }
-        }
-
-        if (lrcPath) {
-          const remoteLrcPath = `${remoteRootUri.replace(/\/$/, '')}/${selected.relativePath.replace(/\.[^/.]+$/, '.lrc')}`
-          const lrcCopy = await execa(
-            'rclone',
-            ['copyto', lrcPath, remoteLrcPath],
-            {
-              reject: false,
-            }
-          )
-          if (lrcCopy.exitCode !== 0) {
-            failed += 1
-            this.logSync({
-              level: 'error',
-              runId,
-              itemId: runItem.id,
-              stage: 'remote_copy',
-              event: 'backfill-copy-lrc-failed',
-              message: 'rclone lrc copy failed.',
-              context: {
-                track_id: track.id,
-                local_lrc_path: lrcPath,
-                remote_lrc_path: remoteLrcPath,
-                stderr: lrcCopy.stderr || null,
-              },
-            })
-            await this.upsertRunItem(runId, {
-              ...runItem,
-              status: 'failed_retryable',
-              stage: 'remote_copy',
-              reason_code: 'remote_lrc_copy_failed',
-              reason_detail: lrcCopy.stderr || 'rclone lrc copy failed.',
-              output_path: localAudioPath,
-              lrc_path: lrcPath,
-            })
-            processed += 1
-            await emitProgressSnapshot(true)
-            continue
-          }
-        }
-
-        await this.libraryService.upsertRemoteCopyFromLocalPath(localAudioPath)
-        copied += 1
-        await this.upsertRunItem(runId, {
-          ...runItem,
-          status: 'completed',
-          stage: 'remote_copy',
-          reason_code: 'remote_copied',
-          reason_detail: 'Copied local file to remote.',
-          output_path: localAudioPath,
-          lrc_path: lrcPath,
-        })
-        processed += 1
-        await emitProgressSnapshot()
-      }
-
-      if (this.cancelRequestedRunId !== runId) {
-        result = {
-          ok: failed === 0,
-          message:
-            failed === 0
-              ? 'Remote backfill complete.'
-              : 'Remote backfill completed with failures.',
-          details: `Copied ${copied}; skipped existing ${skippedExisting}; skipped no local ${skippedNoLocal}; skipped missing identity ${skippedMissingIdentity}; failed ${failed}.`,
-        }
-      }
-      return result
-    } catch (error) {
-      result = {
-        ok: false,
-        message:
-          error instanceof Error ? error.message : 'Remote backfill failed.',
-      }
-      this.logSync({
-        level: 'error',
-        runId,
-        stage: 'remote_copy',
-        event: 'remote-backfill-failed',
-        message: result.message,
-      })
-      await this.emitSnapshot()
-      return result
-    } finally {
-      const cancelled = this.cancelRequestedRunId === runId
-      if (!cancelled && !result.ok) {
-        await this.updateRun(runId, {
-          status: 'failed',
-          endedAt: nowIso(),
-        })
-      } else if (!cancelled) {
-        await this.updateRun(runId, {
-          status: failed === 0 ? 'completed' : 'failed',
-          endedAt: nowIso(),
-        })
-      }
-      if (!cancelled) {
-        this.logSync({
-          level: failed === 0 && result.ok ? 'info' : 'error',
-          runId,
-          stage: 'remote_copy',
-          event: 'remote-backfill-finished',
-          message: result.details
-            ? `${result.message} ${result.details}`
-            : result.message,
-        })
-      }
-      if (this.activeRunId === runId) {
-        this.activeRunId = null
-      }
-      if (this.cancelRequestedRunId === runId) {
-        this.cancelRequestedRunId = null
-      }
-      await this.emitSnapshot()
+    return {
+      queue,
+      needsApproval,
+      completed,
+      failures,
+      counts: {
+        queue: queue.reduce((sum, job) => sum + job.totalTracks, 0),
+        needsApproval: needsApproval.length,
+        completed: completed.reduce((sum, job) => sum + job.totalTracks, 0),
+        failures: failures.reduce((sum, job) => sum + job.totalTracks, 0),
+      },
     }
   }
 
-  private async scanRemoteShell(
+  async scanRemoteShell(
     rcloneRemote: string,
     remoteMusicRoot: string
   ): Promise<RemoteShellScanResult> {
     const configResult = await execa(
       'rclone',
       ['config', 'show', rcloneRemote],
-      { reject: false }
+      {
+        reject: false,
+      }
     )
     if (configResult.exitCode !== 0) {
       throw new Error(
@@ -1283,80 +842,809 @@ export class SyncService {
       }
       throw new Error(scanResult.stderr || 'Remote shell scan failed.')
     }
-
     return normalizeExiftoolJson(scanResult.stdout)
   }
 
-  async doctor(): Promise<CommandResult> {
-    const runtime = await this.settingsService.getRuntimeSettings()
-    const poTokenBundle = this.poTokenService.getBundleStatus()
-    const result = await this.pythonWorker.runJsonCommand<{
-      ok: boolean
-      message: string
-      details?: string
-    }>('doctor', {
+  private async startWorkerJob(
+    input: Pick<JobCreateInput, 'kind' | 'scope' | 'label'>,
+    favoriteArtistCatalogs: FavoriteArtistCatalogPayload[] = [],
+    selectedArtists: LikedArtistView[] = []
+  ): Promise<CommandResult> {
+    logMain({
+      level: 'debug',
+      source: 'sync',
+      message: 'startRun setup started',
+      context: {
+        kind: input.kind,
+        selectedArtistCount: selectedArtists.length,
+        favoriteArtistCatalogCount: favoriteArtistCatalogs.length,
+      },
+    })
+    const runtime =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    if (!runtime.outputDirectory) {
+      logMain({
+        level: 'warn',
+        source: 'sync',
+        message: 'startRun blocked: missing output directory',
+        context: { kind: input.kind },
+      })
+      return {
+        ok: false,
+        message: 'Output directory must be configured first.',
+      }
+    }
+    if (!runtime.ytmusicBrowserAuth) {
+      logMain({
+        level: 'warn',
+        source: 'sync',
+        message: 'startRun blocked: missing YT Music auth',
+        context: { kind: input.kind },
+      })
+      return {
+        ok: false,
+        message: 'Pull YT Music auth from your browser first.',
+      }
+    }
+
+    const authResult =
+      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+        'auth-status',
+        { browser_auth_input: runtime.ytmusicBrowserAuth }
+      )
+    if (!authResult.ok || !authResult.is_authenticated) {
+      return {
+        ok: false,
+        message: authResult.message || 'YT Music auth check failed.',
+      }
+    }
+
+    const indexStatus = await this.libraryService.ensureLocalIndexReady()
+    if (!indexStatus.ready) {
+      return this.libraryService.getIndexNotReadyResult(indexStatus)
+    }
+
+    await this.poTokenService.ensureReady()
+    const poTokenBundle = this.getPoTokenBundle()
+    const existingLocalIds =
+      await this.libraryService.getManagedLocalSignatures()
+    const browserAuthInput =
+      authResult.credential_json ?? runtime.ytmusicBrowserAuth
+    if (authResult.credential_json) {
+      await this.settingsService.saveYtMusicBrowserAuth(
+        authResult.credential_json
+      )
+    }
+
+    const jobId = await this.createJob({
+      kind: input.kind,
+      scope: input.scope,
+      label: input.label,
+    })
+    if (selectedArtists.length > 0) {
+      this.jobSelectedArtists.set(jobId, selectedArtists)
+    }
+    const launch = async () => {
+      await this.launchWorkerJob(
+        jobId,
+        runtime,
+        browserAuthInput,
+        poTokenBundle,
+        {
+          sourceIds: [...existingLocalIds.sourceIds],
+          resolvedIds: [...existingLocalIds.resolvedIds],
+          trackSignatures: existingLocalIds.trackSignatures,
+          releaseSignatures: existingLocalIds.releaseSignatures,
+          favoriteArtistCatalogs,
+        }
+      )
+    }
+
+    if (this.activeJobId) {
+      this.pendingWorkerLaunches.set(jobId, launch)
+      await this.emitSnapshot()
+      return {
+        ok: true,
+        message:
+          input.kind === 'favorite_artist_catalog_refresh'
+            ? 'Favorite artist catalog refresh queued.'
+            : 'Sync queued.',
+      }
+    }
+
+    await launch()
+    return {
+      ok: true,
+      message:
+        input.kind === 'favorite_artist_catalog_refresh'
+          ? 'Favorite artist catalog refresh started.'
+          : 'Sync started.',
+    }
+  }
+
+  private async launchWorkerJob(
+    jobId: string,
+    runtime: RuntimeSettingsLike,
+    browserAuthInput: string,
+    poTokenBundle: PoTokenBundle,
+    existingLocalIds: {
+      sourceIds: string[]
+      resolvedIds: string[]
+      trackSignatures: unknown[]
+      releaseSignatures: unknown[]
+      favoriteArtistCatalogs: FavoriteArtistCatalogPayload[]
+    }
+  ) {
+    const child = this.pythonWorker.spawnNdjsonCommand('sync-job', {
+      job_id: jobId,
       output_directory: runtime.outputDirectory,
-      has_browser_auth: Boolean(runtime.ytmusicBrowserAuth),
-      ffmpeg_path: this.getBundledFfmpegPath(),
       remote_copy_enabled: runtime.remoteCopyEnabled,
       rclone_remote: runtime.rcloneRemote,
       remote_music_root: runtime.remoteMusicRoot,
+      ytmusic_browser_auth: browserAuthInput,
+      yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
+      folder_template: runtime.folderTemplate,
+      file_template: runtime.fileTemplate,
+      embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
+      write_lrc_sidecar: runtime.writeLrcSidecar,
+      lyrics_api_base_url: runtime.lyricsApiBaseUrl,
+      spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
+      existing_local_youtube_music_track_ids: existingLocalIds.sourceIds,
+      existing_local_resolved_youtube_music_track_ids:
+        existingLocalIds.resolvedIds,
+      existing_local_track_signatures: existingLocalIds.trackSignatures,
+      existing_local_release_signatures: existingLocalIds.releaseSignatures,
+      favorite_artist_catalogs: existingLocalIds.favoriteArtistCatalogs,
+      force_reprocess: false,
+      ffmpeg_path: this.getBundledFfmpegPath(),
       yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
       yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
-      yt_dlp_plugin_zip_exists: poTokenBundle.hasPluginZip,
-      yt_dlp_provider_entry_exists: poTokenBundle.hasProviderEntry,
     })
 
+    this.pendingWorkerLaunches.delete(jobId)
+    await this.db
+      .update(syncJobsTable)
+      .set({
+        status: 'running',
+        queueBucket: 'queue',
+        updatedAt: nowIso(),
+      })
+      .where(eq(syncJobsTable.id, jobId))
+
+    this.activeJobId = jobId
+    this.activeProcess = child
+
+    let stdoutBuffer = ''
+    let stderrBuffer = ''
+    let finalized = false
+
+    const finalize = async (
+      status: 'completed' | 'failed' | 'cancelled',
+      details?: {
+        code?: number | null
+        signal?: NodeJS.Signals | null
+        errorMessage?: string
+      }
+    ) => {
+      if (finalized) return
+      finalized = true
+      if (this.cancelKillTimer) {
+        clearTimeout(this.cancelKillTimer)
+        this.cancelKillTimer = null
+      }
+
+      const cancelled =
+        this.cancelRequestedJobId === jobId || status === 'cancelled'
+      this.activeProcess = null
+      if (this.activeJobId === jobId) this.activeJobId = null
+      if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
+
+      await this.recomputeJob(jobId, cancelled ? 'cancelled' : undefined)
+      const job = await this.db.query.syncJobsTable.findFirst({
+        where: eq(syncJobsTable.id, jobId),
+      })
+      if (status === 'completed' && job?.status === 'completed') {
+        await this.refreshIndexedOutputsForJob(jobId)
+      }
+      if (status !== 'completed') {
+        this.logSync({
+          level: status === 'cancelled' ? 'warn' : 'error',
+          jobId,
+          stage: 'finalize',
+          event: status === 'cancelled' ? 'worker-cancelled' : 'worker-exit',
+          message:
+            details?.errorMessage ??
+            stderrBuffer.trim().split('\n').filter(Boolean).at(-1) ??
+            `Worker exited with status ${status}.`,
+          context: {
+            exit_code: details?.code ?? null,
+            signal: details?.signal ?? null,
+          },
+        })
+      }
+      await this.emitSnapshot()
+      void this.runScheduler()
+    }
+
+    child.stdout.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdoutBuffer += chunk
+      let nextNewline = stdoutBuffer.indexOf('\n')
+      while (nextNewline >= 0) {
+        const line = stdoutBuffer.slice(0, nextNewline).trim()
+        stdoutBuffer = stdoutBuffer.slice(nextNewline + 1)
+        if (line.startsWith('{')) {
+          void this.handleWorkerEvent(jobId, line)
+        }
+        nextNewline = stdoutBuffer.indexOf('\n')
+      }
+    })
+
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      stderrBuffer += chunk
+      writeStderrRaw(chunk)
+    })
+
+    child.on('exit', (code, signal) => {
+      const status =
+        this.cancelRequestedJobId === jobId
+          ? 'cancelled'
+          : code === 0
+            ? 'completed'
+            : signal === 'SIGTERM'
+              ? 'cancelled'
+              : 'failed'
+      void finalize(status, { code, signal })
+    })
+    child.on('error', (error) => {
+      void finalize('failed', { errorMessage: error.message })
+    })
+
+    await this.emitSnapshot()
+  }
+
+  private async startReprocessJob(
+    scope: 'library' | 'artist',
+    selectedArtists: LikedArtistView[] = []
+  ): Promise<CommandResult> {
+    const runtime =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    if (!runtime.outputDirectory) {
+      return {
+        ok: false,
+        message: 'Output directory must be configured first.',
+      }
+    }
+    if (!runtime.ytmusicBrowserAuth) {
+      return {
+        ok: false,
+        message: 'Pull YT Music auth from your browser first.',
+      }
+    }
+
+    const indexStatus = await this.libraryService.ensureLocalIndexReady()
+    if (!indexStatus.ready) {
+      return this.libraryService.getIndexNotReadyResult(indexStatus)
+    }
+
+    const authResult =
+      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+        'auth-status',
+        { browser_auth_input: runtime.ytmusicBrowserAuth }
+      )
+    if (!authResult.ok || !authResult.is_authenticated) {
+      return {
+        ok: false,
+        message: authResult.message || 'YT Music auth check failed.',
+      }
+    }
+
+    await this.poTokenService.ensureReady()
+    const poTokenBundle = this.getPoTokenBundle()
+    const browserAuthInput =
+      authResult.credential_json ?? runtime.ytmusicBrowserAuth
+    if (authResult.credential_json) {
+      await this.settingsService.saveYtMusicBrowserAuth(
+        authResult.credential_json
+      )
+    }
+
+    const candidates = await this.buildReprocessCandidates(selectedArtists)
+    if (candidates.length === 0) {
+      return {
+        ok: false,
+        message:
+          scope === 'artist'
+            ? 'No eligible local artist tracks found to reprocess.'
+            : 'No eligible local tracks found to reprocess.',
+      }
+    }
+
+    const jobId = await this.createJob({
+      kind: 'reprocess',
+      scope,
+      label:
+        scope === 'artist' ? 'Reprocess Artist Songs' : 'Reprocess Library',
+      status: 'running',
+      queueBucket: 'queue',
+      plannedCount: candidates.length,
+    })
+    if (scope === 'artist' && selectedArtists.length > 0) {
+      this.reprocessPreexistingManagedFiles.set(
+        jobId,
+        await this.getManagedFilesForArtists(selectedArtists)
+      )
+    }
+
+    const preview = await this.pythonWorker.runJsonCommand<{
+      items: ReprocessPreviewRow[]
+    }>('reprocess-preview', {
+      job_id: jobId,
+      output_directory: runtime.outputDirectory,
+      remote_copy_enabled: runtime.remoteCopyEnabled,
+      rclone_remote: runtime.rcloneRemote,
+      remote_music_root: runtime.remoteMusicRoot,
+      ytmusic_browser_auth: browserAuthInput,
+      yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
+      folder_template: runtime.folderTemplate,
+      file_template: runtime.fileTemplate,
+      embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
+      write_lrc_sidecar: runtime.writeLrcSidecar,
+      lyrics_api_base_url: runtime.lyricsApiBaseUrl,
+      spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
+      ffmpeg_path: this.getBundledFfmpegPath(),
+      yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
+      yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
+      items: candidates,
+    })
+
+    let visibleCount = 0
+    const timestamp = nowIso()
+    const autoApprove = Boolean(runtime.autoApproveChanges)
+    for (const [index, row] of preview.items.entries()) {
+      if (row.action_kind === 'noop' || Object.keys(row.diff).length === 0) {
+        continue
+      }
+      visibleCount += 1
+      const itemPayload = row.payload.item as WorkerTrackPayload
+      await this.upsertJobTrack(jobId, itemPayload, {
+        id: row.track_work_id,
+        libraryTrackId: row.library_track_id,
+        currentOutputPath:
+          typeof row.before.outputPath === 'string'
+            ? row.before.outputPath
+            : null,
+        outputPath:
+          typeof row.after.outputPath === 'string'
+            ? row.after.outputPath
+            : null,
+        lrcPath:
+          typeof row.after.lrcPath === 'string' ? row.after.lrcPath : null,
+        visible: true,
+        approvalRequired: true,
+        sortIndex: index,
+        status: 'pending',
+        stage: 'idle',
+        reasonCode: autoApprove ? '' : 'awaiting_approval',
+        reasonDetail: autoApprove ? '' : 'Waiting for approval.',
+        jobPhase: 'reprocess_preview',
+      })
+      await this.db.insert(syncApprovalItemsTable).values({
+        id: createId('approval'),
+        jobId,
+        trackWorkId: row.track_work_id,
+        libraryTrackId: row.library_track_id,
+        status: autoApprove ? 'approved' : 'pending',
+        actionKind: row.action_kind,
+        diffJson: JSON.stringify(row.diff),
+        beforeJson: JSON.stringify(row.before),
+        afterJson: JSON.stringify(row.after),
+        albumArtDiffJson: row.album_art_diff
+          ? JSON.stringify(row.album_art_diff)
+          : null,
+        payloadJson: JSON.stringify(row.payload),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+    }
+
+    if (visibleCount === 0) {
+      await this.db
+        .update(syncJobsTable)
+        .set({
+          status: 'completed',
+          queueBucket: 'completed',
+          endedAt: nowIso(),
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobsTable.id, jobId))
+      await this.emitSnapshot()
+      return {
+        ok: true,
+        message: 'Reprocess preview complete. No changes found.',
+      }
+    }
+
+    await this.recomputeJob(jobId)
+    await this.emitSnapshot()
+    if (autoApprove) void this.runScheduler()
+    return {
+      ok: true,
+      message: autoApprove
+        ? 'Reprocess queued.'
+        : 'Reprocess preview complete. Review changes in Needs Approval.',
+    }
+  }
+
+  private async runScheduler() {
+    if (this.schedulerRunning || this.activeJobId) return
+    this.schedulerRunning = true
+    try {
+      while (!this.activeJobId) {
+        const next = await this.getNextRunnableJob()
+        if (!next) break
+        if (this.pendingWorkerLaunches.has(next.id)) {
+          await this.pendingWorkerLaunches.get(next.id)!()
+        } else if (next.kind === 'reprocess') {
+          await this.runReprocessApplyJob(
+            next.id,
+            next.scope as 'library' | 'artist' | null
+          )
+        } else if (next.kind === 'sync_missing_to_remote') {
+          await this.runRemoteBackfillJob(next.id)
+        } else {
+          break
+        }
+      }
+    } finally {
+      this.schedulerRunning = false
+    }
+  }
+
+  private async getNextRunnableJob() {
+    const jobs = await this.db
+      .select()
+      .from(syncJobsTable)
+      .where(eq(syncJobsTable.status, 'queued'))
+      .orderBy(desc(syncJobsTable.createdAt))
+    for (const job of jobs.reverse()) {
+      if (job.kind !== 'reprocess') return job
+      const approved = await this.db
+        .select()
+        .from(syncApprovalItemsTable)
+        .where(
+          and(
+            eq(syncApprovalItemsTable.jobId, job.id),
+            eq(syncApprovalItemsTable.status, 'approved')
+          )
+        )
+      if (approved.length > 0) return job
+    }
+    return null
+  }
+
+  private async runReprocessApplyJob(
+    jobId: string,
+    scope: 'library' | 'artist' | null
+  ) {
+    this.activeJobId = jobId
+    await this.db
+      .update(syncJobsTable)
+      .set({ status: 'running', queueBucket: 'queue', updatedAt: nowIso() })
+      .where(eq(syncJobsTable.id, jobId))
+    await this.emitSnapshot()
+
+    const approvals = await this.db
+      .select()
+      .from(syncApprovalItemsTable)
+      .where(
+        and(
+          eq(syncApprovalItemsTable.jobId, jobId),
+          eq(syncApprovalItemsTable.status, 'approved')
+        )
+      )
+
+    for (const approval of approvals) {
+      if (this.cancelRequestedJobId === jobId) break
+      await this.applyApprovedReprocessTrack(
+        jobId,
+        approval.trackWorkId,
+        approval.id
+      )
+    }
+
+    if (scope === 'artist' && this.cancelRequestedJobId !== jobId) {
+      await this.cleanupArtistReprocessFiles(jobId)
+    }
+    await this.recomputeJob(
+      jobId,
+      this.cancelRequestedJobId === jobId ? 'cancelled' : undefined
+    )
+    if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
+    this.activeJobId = null
+    await this.emitSnapshot()
+  }
+
+  private async runRemoteBackfillJob(jobId: string) {
+    this.activeJobId = jobId
+    const settings =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    let copied = 0
+    let skippedExisting = 0
+    let skippedNoLocal = 0
+    let skippedMissingIdentity = 0
+    let failed = 0
+    let result: CommandResult = {
+      ok: true,
+      message: 'Remote backfill complete.',
+      details:
+        'Copied 0; skipped existing 0; skipped no local 0; skipped missing identity 0; failed 0.',
+    }
+
+    try {
+      await this.db
+        .update(syncJobsTable)
+        .set({ status: 'running', queueBucket: 'queue', updatedAt: nowIso() })
+        .where(eq(syncJobsTable.id, jobId))
+      await this.emitSnapshot()
+
+      const localRootUri = settings.outputDirectory.trim()
+      const remoteRootUri = `${settings.rcloneRemote.trim()}:${settings.remoteMusicRoot.trim()}`
+      const roots = await this.db.select().from(libraryRootsTable)
+      const localRoot = roots.find(
+        (root) => root.kind === 'local' && root.uri === localRootUri
+      )
+      if (!localRoot)
+        throw new Error('Local output root not found in library scan.')
+
+      const remoteScan = await this.scanRemoteShell(
+        settings.rcloneRemote.trim(),
+        settings.remoteMusicRoot.trim()
+      )
+      const tracks = (await this.db.select().from(libraryTracksTable)).filter(
+        (track) => track.managedByApp
+      )
+      const files = await this.db.select().from(libraryFilesTable)
+      const filesByTrackId = new Map<string, typeof files>()
+      for (const file of files) {
+        const current = filesByTrackId.get(file.trackId) ?? []
+        current.push(file)
+        filesByTrackId.set(file.trackId, current)
+      }
+
+      const remoteSourceIds = new Set<string>()
+      const remoteResolvedIds = new Set<string>()
+      for (const identity of remoteScan.identities) {
+        if (identity.youtubeMusicTrackId)
+          remoteSourceIds.add(identity.youtubeMusicTrackId)
+        if (identity.resolvedYoutubeMusicTrackId) {
+          remoteResolvedIds.add(identity.resolvedYoutubeMusicTrackId)
+        }
+      }
+
+      const actionable: RemoteBackfillCandidate[] = []
+      for (const [index, track] of tracks.entries()) {
+        const payload = this.toRemoteBackfillTrackPayload(track)
+        const sourceId = track.youtubeMusicTrackId
+        const resolvedId = track.resolvedYoutubeMusicTrackId
+        if (
+          (sourceId && remoteSourceIds.has(sourceId)) ||
+          (resolvedId && remoteResolvedIds.has(resolvedId))
+        ) {
+          skippedExisting += 1
+          continue
+        }
+        if (!sourceId && !resolvedId) {
+          skippedMissingIdentity += 1
+          continue
+        }
+
+        const localFiles = (filesByTrackId.get(track.id) ?? [])
+          .filter((file) => file.rootId === localRoot.id)
+          .sort((left, right) => {
+            const leftPreferred = left.id === track.preferredFileId ? 1 : 0
+            const rightPreferred = right.id === track.preferredFileId ? 1 : 0
+            if (leftPreferred !== rightPreferred)
+              return rightPreferred - leftPreferred
+            const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
+            const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
+            if (leftAbsolute !== rightAbsolute)
+              return rightAbsolute - leftAbsolute
+            return left.relativePath.localeCompare(right.relativePath)
+          })
+
+        const selected = localFiles[0]
+        if (!selected) {
+          skippedNoLocal += 1
+          continue
+        }
+
+        const localAudioPath =
+          selected.absolutePathSnapshot ||
+          path.join(localRoot.uri, selected.relativePath)
+        const lrcCandidates = [
+          selected.lrcPath,
+          localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
+        ].filter((value): value is string => Boolean(value))
+        let localLrcPath: string | null = null
+        for (const candidate of [...new Set(lrcCandidates)]) {
+          try {
+            await access(candidate)
+            localLrcPath = candidate
+            break
+          } catch {
+            // ignore
+          }
+        }
+
+        const remoteTarget = `${remoteRootUri.replace(/\/$/, '')}/${selected.relativePath}`
+        const trackWorkId = `${jobId}:${track.id}`
+        actionable.push({
+          trackId: track.id,
+          trackWorkId,
+          payload,
+          localAudioPath,
+          localLrcPath,
+          remoteTarget,
+        })
+        await this.upsertJobTrack(jobId, payload, {
+          id: trackWorkId,
+          libraryTrackId: track.id,
+          visible: true,
+          approvalRequired: false,
+          sortIndex: index,
+          status: 'pending',
+          stage: 'remote_copy',
+          reasonCode: '',
+          reasonDetail: '',
+          jobPhase: 'remote_backfill',
+          remoteTarget,
+          outputPath: localAudioPath,
+          lrcPath: localLrcPath,
+        })
+      }
+
+      await this.db
+        .update(syncJobsTable)
+        .set({ plannedCount: actionable.length, updatedAt: nowIso() })
+        .where(eq(syncJobsTable.id, jobId))
+      await this.recomputeJob(jobId)
+      await this.emitSnapshot()
+
+      for (const candidate of actionable) {
+        if (this.cancelRequestedJobId === jobId) break
+        await this.db
+          .update(syncJobTracksTable)
+          .set({
+            status: 'processing',
+            stage: 'remote_copy',
+            updatedAt: nowIso(),
+          })
+          .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+        await this.emitSnapshot()
+
+        const audioCopy = await execa(
+          'rclone',
+          ['copyto', candidate.localAudioPath, candidate.remoteTarget],
+          { reject: false }
+        )
+        if (audioCopy.exitCode !== 0) {
+          failed += 1
+          await this.db
+            .update(syncJobTracksTable)
+            .set({
+              status: 'failed_retryable',
+              stage: 'finalize',
+              reasonCode: 'remote_audio_copy_failed',
+              reasonDetail: audioCopy.stderr || 'rclone audio copy failed.',
+              terminalOutcome: 'failed_remote_copy',
+              updatedAt: nowIso(),
+            })
+            .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+          await this.emitSnapshot()
+          continue
+        }
+
+        if (candidate.localLrcPath) {
+          const remoteLrcPath = candidate.remoteTarget.replace(
+            /\.[^/.]+$/,
+            '.lrc'
+          )
+          const lrcCopy = await execa(
+            'rclone',
+            ['copyto', candidate.localLrcPath, remoteLrcPath],
+            { reject: false }
+          )
+          if (lrcCopy.exitCode !== 0) {
+            failed += 1
+            await this.db
+              .update(syncJobTracksTable)
+              .set({
+                status: 'failed_retryable',
+                stage: 'finalize',
+                reasonCode: 'remote_lrc_copy_failed',
+                reasonDetail: lrcCopy.stderr || 'rclone lrc copy failed.',
+                terminalOutcome: 'failed_remote_copy',
+                updatedAt: nowIso(),
+              })
+              .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+            await this.emitSnapshot()
+            continue
+          }
+        }
+
+        await this.libraryService.upsertRemoteCopyFromLocalPath(
+          candidate.localAudioPath
+        )
+        copied += 1
+        await this.db
+          .update(syncJobTracksTable)
+          .set({
+            status: 'completed',
+            stage: 'finalize',
+            reasonCode: 'remote_copied',
+            reasonDetail: 'Copied local file to remote.',
+            terminalOutcome: 'remote_copied',
+            updatedAt: nowIso(),
+          })
+          .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+        await this.emitSnapshot()
+      }
+      result = {
+        ok: failed === 0,
+        message:
+          failed === 0
+            ? 'Remote backfill complete.'
+            : 'Remote backfill completed with failures.',
+        details: `Copied ${copied}; skipped existing ${skippedExisting}; skipped no local ${skippedNoLocal}; skipped missing identity ${skippedMissingIdentity}; failed ${failed}.`,
+      }
+    } catch (error) {
+      await this.db
+        .update(syncJobsTable)
+        .set({
+          status: 'failed',
+          queueBucket: 'failures',
+          endedAt: nowIso(),
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobsTable.id, jobId))
+      this.activeJobId = null
+      if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
+      await this.emitSnapshot()
+      return {
+        ok: false,
+        message:
+          error instanceof Error ? error.message : 'Remote backfill failed.',
+      }
+    }
+
+    await this.recomputeJob(
+      jobId,
+      this.cancelRequestedJobId === jobId ? 'cancelled' : undefined
+    )
+    this.activeJobId = null
+    if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
+    await this.emitSnapshot()
+    logMain({
+      level: failed === 0 ? 'info' : 'error',
+      source: 'sync',
+      runId: jobId,
+      message: result.details
+        ? `${result.message} ${result.details}`
+        : result.message,
+    })
     return result
   }
 
-  async listRuns(): Promise<SyncRunSummary[]> {
-    const rows = await this.db
-      .select()
-      .from(syncRunsTable)
-      .orderBy(desc(syncRunsTable.startedAt))
-
-    return Promise.all(rows.map((row) => this.hydrateRunSummary(row.id)))
-  }
-
-  async getRun(runId: string): Promise<SyncRunDetail | null> {
-    const row = await this.db.query.syncRunsTable.findFirst({
-      where: eq(syncRunsTable.id, runId),
-    })
-    if (!row) return null
-
-    const summary = await this.hydrateRunSummary(runId)
-    const itemRows = await this.db
-      .select()
-      .from(syncRunItemsTable)
-      .where(eq(syncRunItemsTable.runId, runId))
-      .orderBy(
-        asc(syncRunItemsTable.trackNumber),
-        asc(syncRunItemsTable.title),
-        asc(syncRunItemsTable.createdAt)
-      )
-
-    return {
-      ...summary,
-      items: itemRows.map((item) => this.toRunItemView(item)),
-    }
-  }
-
-  async getSnapshot(): Promise<SyncSnapshot> {
-    return {
-      activeRun: this.activeRunId ? await this.getRun(this.activeRunId) : null,
-      runs: await this.listRuns(),
-    }
-  }
-
-  private async handleWorkerEvent(runId: string, line: string) {
+  private async handleWorkerEvent(jobId: string, line: string) {
     let event: WorkerEvent
     try {
       event = JSON.parse(line) as WorkerEvent
     } catch (error) {
       this.logSync({
         level: 'error',
-        runId,
+        jobId,
         stage: 'finalize',
         event: 'ndjson-parse-failed',
         message: 'Worker emitted malformed NDJSON.',
@@ -1368,9 +1656,12 @@ export class SyncService {
       return
     }
 
-    if (event.type === 'run') {
+    if (event.type === 'job') {
       if (event.total_count != null) {
-        await this.updateRun(runId, { plannedCount: event.total_count })
+        await this.db
+          .update(syncJobsTable)
+          .set({ plannedCount: event.total_count, updatedAt: nowIso() })
+          .where(eq(syncJobsTable.id, jobId))
       }
       if (event.message) {
         this.logSync({
@@ -1380,36 +1671,30 @@ export class SyncService {
               : event.event === 'completed'
                 ? 'info'
                 : 'debug',
-          runId,
+          jobId,
           stage: event.stage ?? 'finalize',
-          event: `run-${event.event}`,
+          event: `job.${event.event}`,
           message: event.message,
           context: event.context,
         })
       }
-      if (this.cancelRequestedRunId === runId) {
-        await this.emitSnapshot()
-        return
-      }
-      if (event.event === 'failed') {
-        await this.updateRun(runId, {
-          status: 'failed',
-          endedAt: nowIso(),
-        })
-      }
       if (event.event === 'completed') {
-        await this.updateFavoriteCatalogStatsFromEvent(runId, event.context)
-        await this.updateRun(runId, {
-          status: 'completed',
-          endedAt: nowIso(),
-        })
+        await this.updateFavoriteCatalogStatsFromContext(jobId, event.context)
       }
+      await this.recomputeJob(
+        jobId,
+        event.event === 'failed' ? 'failed' : undefined
+      )
       await this.emitSnapshot()
       return
     }
 
-    if (event.type === 'item') {
-      await this.upsertRunItem(runId, event.item)
+    if (event.type === 'track') {
+      await this.upsertJobTrack(jobId, event.item, {
+        visible: event.item.status !== 'skipped_existing',
+        approvalRequired: false,
+      })
+      await this.recomputeJob(jobId)
       await this.emitSnapshot()
       return
     }
@@ -1421,7 +1706,7 @@ export class SyncService {
     logMain({
       level: event.level,
       source: 'worker',
-      runId: event.run_id,
+      runId: event.job_id,
       itemId: event.item_id,
       timestamp: event.timestamp,
       message: `[${event.stage}] ${event.event} ${event.message}`,
@@ -1429,16 +1714,506 @@ export class SyncService {
     })
   }
 
-  private async updateFavoriteCatalogStatsFromEvent(
-    runId: string,
+  private logSync(input: {
+    level: LogLevel
+    jobId: string
+    stage: SyncStage
+    event: string
+    message: string
+    context?: Record<string, unknown>
+  }) {
+    logMain({
+      level: input.level,
+      source: 'sync',
+      runId: input.jobId,
+      message: `[${input.stage}] ${input.event} ${input.message}`,
+      context: input.context,
+    })
+  }
+
+  private async createJob(input: JobCreateInput) {
+    const id = createId('job')
+    const timestamp = nowIso()
+    await this.db.insert(syncJobsTable).values({
+      id,
+      kind: input.kind,
+      scope: input.scope,
+      label: input.label,
+      status: input.status ?? 'queued',
+      queueBucket: input.queueBucket ?? 'queue',
+      startedAt: timestamp,
+      endedAt: null,
+      plannedCount: input.plannedCount ?? 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+    return id
+  }
+
+  private async upsertJobTrack(
+    jobId: string,
+    item: WorkerTrackPayload,
+    overrides: Partial<{
+      id: string
+      libraryTrackId: string | null
+      currentOutputPath: string | null
+      outputPath: string | null
+      lrcPath: string | null
+      visible: boolean
+      approvalRequired: boolean
+      terminalOutcome: string | null
+      sortIndex: number | null
+      remoteTarget: string | null
+      jobPhase: string | null
+      status: SyncItemStatus
+      stage: SyncStage
+      reasonCode: string
+      reasonDetail: string
+    }> = {}
+  ) {
+    const timestamp = nowIso()
+    const visible = overrides.visible ?? item.status !== 'skipped_existing'
+    const status = overrides.status ?? item.status
+    const stage = overrides.stage ?? item.stage
+    const reasonCode = overrides.reasonCode ?? item.reason_code ?? ''
+    const reasonDetail = overrides.reasonDetail ?? item.reason_detail ?? ''
+    const terminalOutcome =
+      overrides.terminalOutcome ??
+      (status === 'completed'
+        ? 'completed'
+        : status === 'completed_local_only'
+          ? 'completed_local_only'
+          : status.startsWith('failed')
+            ? status
+            : status === 'skipped_existing'
+              ? 'skipped_existing'
+              : null)
+
+    const values = {
+      id: overrides.id ?? item.id,
+      jobId,
+      libraryTrackId: overrides.libraryTrackId ?? null,
+      youtubeMusicTrackId: item.youtube_music_track_id,
+      spotifyTrackId: item.spotify_track_id ?? null,
+      soundcloudTrackId: item.soundcloud_track_id ?? null,
+      resolvedYoutubeMusicTrackId: item.resolved_youtube_music_track_id ?? null,
+      title: item.title,
+      artist: item.artist,
+      album: item.album,
+      albumArtist: item.album_artist,
+      sourceUrl: item.source_url,
+      coverArtUrl: item.cover_art_url ?? null,
+      status,
+      stage,
+      reasonCode,
+      reasonDetail,
+      sourceKind: item.source_kind ?? 'unknown',
+      sourceOrigin: item.source_origin ?? null,
+      catalogReleaseBrowseId: item.catalog_release_browse_id ?? null,
+      catalogReleaseTitle: item.catalog_release_title ?? null,
+      catalogReleaseKind: item.catalog_release_kind ?? null,
+      videoType: item.video_type ?? null,
+      resolutionMethod: item.resolution_method ?? 'unresolved',
+      trackNumber: item.track_number ?? null,
+      trackTotal: item.track_total ?? null,
+      discNumber: item.disc_number ?? null,
+      discTotal: item.disc_total ?? null,
+      year: item.year ?? null,
+      date: item.date ?? null,
+      genre: item.genre ?? null,
+      language: item.language ?? null,
+      isrc: item.isrc ?? null,
+      mbTrackId: item.mb_track_id ?? null,
+      mbAlbumId: item.mb_album_id ?? null,
+      mbReleaseGroupId: item.mb_releasegroup_id ?? null,
+      lyricsStatus: item.lyrics_status ?? 'missing',
+      audioCodec: item.audio_codec ?? null,
+      metadataMatched: item.metadata_matched ?? false,
+      musicBrainzMatched: item.musicbrainz_matched ?? false,
+      lyricsMatched: item.lyrics_matched ?? false,
+      lyricsSource: item.lyrics_source ?? null,
+      selectedSourceUrl: item.selected_source_url ?? null,
+      visible,
+      approvalRequired: overrides.approvalRequired ?? false,
+      terminalOutcome,
+      sortIndex: overrides.sortIndex ?? null,
+      remoteTarget: overrides.remoteTarget ?? null,
+      jobPhase: overrides.jobPhase ?? null,
+      currentOutputPath: overrides.currentOutputPath ?? null,
+      outputPath: overrides.outputPath ?? item.output_path ?? null,
+      lrcPath: overrides.lrcPath ?? item.lrc_path ?? null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+
+    await this.db
+      .insert(syncJobTracksTable)
+      .values(values)
+      .onConflictDoUpdate({
+        target: syncJobTracksTable.id,
+        set: {
+          ...values,
+          createdAt: undefined,
+          updatedAt: timestamp,
+        },
+      })
+  }
+
+  private async recomputeJob(
+    jobId: string,
+    forcedTerminal?: 'failed' | 'cancelled'
+  ) {
+    const [job, tracks, approvals] = await Promise.all([
+      this.db.query.syncJobsTable.findFirst({
+        where: eq(syncJobsTable.id, jobId),
+      }),
+      this.db
+        .select()
+        .from(syncJobTracksTable)
+        .where(eq(syncJobTracksTable.jobId, jobId)),
+      this.db
+        .select()
+        .from(syncApprovalItemsTable)
+        .where(eq(syncApprovalItemsTable.jobId, jobId)),
+    ])
+    if (!job) return
+
+    const visibleTracks = tracks.filter((track) => track.visible)
+    const hasFailedVisibleTrack = visibleTracks.some((track) =>
+      track.status.startsWith('failed')
+    )
+    const hasPendingApproval = approvals.some((row) => row.status === 'pending')
+    const hasProcessing = visibleTracks.some(
+      (track) => track.status === 'processing'
+    )
+    const hasPending = visibleTracks.some((track) => track.status === 'pending')
+
+    let status: SyncJobStatus
+    let queueBucket: SyncJobView['bucket']
+    let endedAt: string | null
+
+    if (forcedTerminal === 'cancelled' || job.status === 'cancelled') {
+      status = 'cancelled'
+      queueBucket = 'failures'
+      endedAt = nowIso()
+    } else if (forcedTerminal === 'failed' || hasFailedVisibleTrack) {
+      status = 'failed'
+      queueBucket = 'failures'
+      endedAt = nowIso()
+    } else if (hasProcessing || this.activeJobId === jobId) {
+      status = 'running'
+      queueBucket = 'queue'
+      endedAt = null
+    } else if (hasPending) {
+      status = 'queued'
+      queueBucket = 'queue'
+      endedAt = null
+    } else if (hasPendingApproval) {
+      status = 'waiting_approval'
+      queueBucket = 'needs_approval'
+      endedAt = null
+    } else {
+      status = 'completed'
+      queueBucket = 'completed'
+      endedAt = nowIso()
+    }
+
+    await this.db
+      .update(syncJobsTable)
+      .set({
+        status,
+        queueBucket,
+        endedAt,
+        updatedAt: nowIso(),
+      })
+      .where(eq(syncJobsTable.id, jobId))
+  }
+
+  private toTrackView(
+    track: typeof syncJobTracksTable.$inferSelect
+  ): SyncTrackWorkView {
+    return {
+      id: track.id,
+      jobId: track.jobId,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      youtubeMusicTrackId: track.youtubeMusicTrackId,
+      resolvedYoutubeMusicTrackId: track.resolvedYoutubeMusicTrackId,
+      status: track.status as SyncItemStatus,
+      stage: track.stage as SyncStage,
+      reasonCode: track.reasonCode,
+      reasonDetail: track.reasonDetail,
+      outputPath: track.outputPath,
+      lrcPath: track.lrcPath,
+    }
+  }
+
+  private getPoTokenBundle(): PoTokenBundle {
+    return this.poTokenService.getBundleStatus() as PoTokenBundle
+  }
+
+  private async buildReprocessCandidates(
+    selectedArtists: LikedArtistView[]
+  ): Promise<ReprocessCandidatePayload[]> {
+    const settings =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    const localRoot = await this.db.query.libraryRootsTable.findFirst({
+      where: and(
+        eq(libraryRootsTable.kind, 'local'),
+        eq(libraryRootsTable.uri, settings.outputDirectory)
+      ),
+    })
+    if (!localRoot) return []
+
+    const [tracks, files] = await Promise.all([
+      this.db.select().from(libraryTracksTable),
+      this.db
+        .select()
+        .from(libraryFilesTable)
+        .where(eq(libraryFilesTable.rootId, localRoot.id)),
+    ])
+    const filesByTrackId = new Map<string, typeof files>()
+    for (const file of files) {
+      const current = filesByTrackId.get(file.trackId) ?? []
+      current.push(file)
+      filesByTrackId.set(file.trackId, current)
+    }
+
+    const candidates: ReprocessCandidatePayload[] = []
+    for (const track of tracks) {
+      if (!track.managedByApp || !track.sourceOrigin) continue
+      if (
+        selectedArtists.length > 0 &&
+        !this.trackMatchesSelectedArtists(track.artist, selectedArtists)
+      ) {
+        continue
+      }
+      const localFiles = filesByTrackId.get(track.id) ?? []
+      const selectedFile =
+        localFiles.find((file) => file.id === track.preferredFileId) ??
+        localFiles.find((file) => Boolean(file.absolutePathSnapshot)) ??
+        null
+      if (!selectedFile?.absolutePathSnapshot) continue
+      try {
+        await access(selectedFile.absolutePathSnapshot)
+      } catch {
+        continue
+      }
+      candidates.push({
+        track_work_id: createId('track'),
+        library_track_id: track.id,
+        youtube_music_track_id: track.youtubeMusicTrackId,
+        spotify_track_id: track.spotifyTrackId,
+        soundcloud_track_id: track.soundcloudTrackId,
+        resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+        source_origin: track.sourceOrigin,
+        catalog_release_browse_id: track.catalogReleaseBrowseId,
+        catalog_release_title: track.catalogReleaseTitle,
+        catalog_release_kind: track.catalogReleaseKind,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        album_artist: track.albumArtist,
+        track_number: track.trackNumber,
+        track_total: track.trackTotal,
+        disc_number: track.discNumber,
+        disc_total: track.discTotal,
+        year: track.year,
+        date: track.date,
+        genre: track.genre,
+        language: track.language,
+        isrc: track.isrc,
+        mb_track_id: track.mbTrackId,
+        mb_album_id: track.mbAlbumId,
+        mb_releasegroup_id: track.mbReleaseGroupId,
+        lyrics_status: track.lyricsStatus,
+        current_output_path: selectedFile.absolutePathSnapshot,
+        current_lrc_path: selectedFile.lrcPath,
+        cover_art_present: track.coverArtPresent,
+      })
+    }
+    return candidates
+  }
+
+  private async applyApprovedReprocessTrack(
+    jobId: string,
+    trackId: string,
+    approvalId: string
+  ) {
+    const [track, approval, settings] = await Promise.all([
+      this.db.query.syncJobTracksTable.findFirst({
+        where: eq(syncJobTracksTable.id, trackId),
+      }),
+      this.db.query.syncApprovalItemsTable.findFirst({
+        where: eq(syncApprovalItemsTable.id, approvalId),
+      }),
+      this.settingsService.getRuntimeSettings(),
+    ])
+    if (!track || !approval) return
+
+    await this.db
+      .update(syncJobTracksTable)
+      .set({
+        status: 'processing',
+        stage: approval.actionKind === 'replace' ? 'download' : 'tagging',
+        reasonCode: '',
+        reasonDetail: '',
+        jobPhase: 'reprocess_apply',
+        updatedAt: nowIso(),
+      })
+      .where(eq(syncJobTracksTable.id, trackId))
+    await this.emitSnapshot()
+
+    try {
+      await this.poTokenService.ensureReady()
+      const poTokenBundle = this.getPoTokenBundle()
+      const runtime = settings as RuntimeSettingsLike
+      const authStatus =
+        await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+          'auth-status',
+          { browser_auth_input: runtime.ytmusicBrowserAuth }
+        )
+      const browserAuthInput =
+        authStatus.credential_json ?? runtime.ytmusicBrowserAuth
+      const result =
+        await this.pythonWorker.runJsonCommand<ReprocessApplyResult>(
+          'reprocess-apply',
+          {
+            job_id: jobId,
+            output_directory: runtime.outputDirectory,
+            remote_copy_enabled: runtime.remoteCopyEnabled,
+            rclone_remote: runtime.rcloneRemote,
+            remote_music_root: runtime.remoteMusicRoot,
+            ytmusic_browser_auth: browserAuthInput,
+            yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
+            folder_template: runtime.folderTemplate,
+            file_template: runtime.fileTemplate,
+            embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
+            write_lrc_sidecar: runtime.writeLrcSidecar,
+            lyrics_api_base_url: runtime.lyricsApiBaseUrl,
+            spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
+            ffmpeg_path: this.getBundledFfmpegPath(),
+            yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
+            yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
+            payload: JSON.parse(approval.payloadJson),
+          }
+        )
+
+      const before = JSON.parse(approval.beforeJson) as {
+        outputPath?: string | null
+        lrcPath?: string | null
+      }
+      await this.db
+        .update(syncJobTracksTable)
+        .set({
+          status: 'completed',
+          stage: 'finalize',
+          reasonCode: 'reprocess_applied',
+          reasonDetail: 'Approved reprocess applied.',
+          outputPath: result.output_path,
+          lrcPath: result.lrc_path,
+          terminalOutcome: result.replaced ? 'replaced' : 'updated',
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobTracksTable.id, trackId))
+      await this.syncIndexedArtifacts({
+        previousOutputPath: before.outputPath ?? null,
+        previousLrcPath: before.lrcPath ?? null,
+        nextOutputPath: result.output_path,
+      })
+    } catch (error) {
+      await this.db
+        .update(syncJobTracksTable)
+        .set({
+          status: 'failed_terminal',
+          stage: 'finalize',
+          reasonCode: 'reprocess_apply_failed',
+          reasonDetail:
+            error instanceof Error ? error.message : 'Reprocess apply failed.',
+          terminalOutcome: 'failed_reprocess_apply',
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobTracksTable.id, trackId))
+    }
+  }
+
+  private async syncIndexedArtifacts(input: {
+    previousOutputPath: string | null
+    previousLrcPath: string | null
+    nextOutputPath: string
+  }) {
+    const settings =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    await this.libraryService.upsertLocalOutputs([input.nextOutputPath])
+    if (
+      input.previousOutputPath &&
+      input.previousOutputPath !== input.nextOutputPath
+    ) {
+      const relativePath = path
+        .relative(settings.outputDirectory, input.previousOutputPath)
+        .split(path.sep)
+        .join('/')
+      await this.libraryService.pruneIndexedFile(
+        settings.outputDirectory,
+        relativePath
+      )
+    }
+    if (settings.remoteCopyEnabled) {
+      await this.libraryService.upsertRemoteCopyFromLocalPath(
+        input.nextOutputPath
+      )
+    }
+    await this.likedArtistsService.refreshArtists()
+  }
+
+  private async refreshIndexedOutputsForJob(jobId: string) {
+    try {
+      const tracks = await this.db
+        .select()
+        .from(syncJobTracksTable)
+        .where(eq(syncJobTracksTable.jobId, jobId))
+
+      const touchedLocalOutputs = tracks
+        .filter((track) =>
+          ['completed', 'completed_local_only'].includes(track.status)
+        )
+        .map((track) => track.outputPath)
+        .filter((value): value is string => Boolean(value))
+
+      if (touchedLocalOutputs.length > 0) {
+        await this.libraryService.upsertLocalOutputs(touchedLocalOutputs)
+        await this.likedArtistsService.refreshArtists()
+      }
+
+      for (const track of tracks) {
+        if (track.status !== 'completed' || !track.outputPath) continue
+        await this.libraryService.upsertRemoteCopyFromLocalPath(
+          track.outputPath
+        )
+      }
+    } catch (error) {
+      this.logSync({
+        level: 'error',
+        jobId,
+        stage: 'finalize',
+        event: 'post-job-index-update-failed',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Post-job index update failed.',
+      })
+    }
+  }
+
+  private async updateFavoriteCatalogStatsFromContext(
+    jobId: string,
     context?: Record<string, unknown>
   ) {
     const counts = context?.favorite_artist_catalog_counts
-    if (!counts || typeof counts !== 'object' || Array.isArray(counts)) {
-      return
-    }
+    if (!counts || typeof counts !== 'object' || Array.isArray(counts)) return
 
-    const selectedArtists = this.runSelectedArtists.get(runId) ?? []
+    const selectedArtists = this.jobSelectedArtists.get(jobId) ?? []
     const selectedIds = new Set(selectedArtists.map((artist) => artist.id))
     const parsed: Record<string, number> = {}
     for (const [artistId, count] of Object.entries(counts)) {
@@ -1456,13 +2231,11 @@ export class SyncService {
     }
   }
 
-  private toRemoteBackfillRunItem(
-    runId: string,
+  private toRemoteBackfillTrackPayload(
     track: typeof libraryTracksTable.$inferSelect
-  ): WorkerItemPayload {
-    const fallbackTitle = track.title ?? track.identityValue
+  ): WorkerTrackPayload {
     return {
-      id: `${runId}:${track.id}`,
+      id: track.id,
       youtube_music_track_id:
         track.youtubeMusicTrackId ??
         track.resolvedYoutubeMusicTrackId ??
@@ -1470,7 +2243,7 @@ export class SyncService {
       spotify_track_id: track.spotifyTrackId,
       soundcloud_track_id: track.soundcloudTrackId,
       resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
-      title: fallbackTitle,
+      title: track.title ?? track.identityValue,
       artist: track.artist ?? 'Unknown artist',
       album: track.album ?? 'Unknown album',
       album_artist: track.albumArtist ?? track.artist ?? 'Unknown artist',
@@ -1499,276 +2272,21 @@ export class SyncService {
       mb_track_id: track.mbTrackId,
       mb_album_id: track.mbAlbumId,
       mb_releasegroup_id: track.mbReleaseGroupId,
-      lyrics_status: track.lyricsStatus as SyncRunItemView['lyricsStatus'],
+      lyrics_status: track.lyricsStatus as 'missing' | 'plain' | 'synced',
       metadata_matched: true,
       musicbrainz_matched: Boolean(track.mbTrackId),
       lyrics_matched: track.lyricsStatus !== 'missing',
     }
   }
 
-  private logSync(input: {
-    level: LogLevel
-    runId: string
-    stage: SyncStage
-    event: string
-    message: string
-    context?: Record<string, unknown>
-    itemId?: string
-    timestamp?: string
-  }) {
-    logMain({
-      level: input.level,
-      source: 'sync',
-      runId: input.runId,
-      itemId: input.itemId,
-      timestamp: input.timestamp,
-      message: `[${input.stage}] ${input.event} ${input.message}`,
-      context: input.context,
-    })
-  }
-
-  private async upsertRunItem(runId: string, item: WorkerItemPayload) {
-    const timestamp = nowIso()
-    await this.db
-      .insert(syncRunItemsTable)
-      .values({
-        id: item.id,
-        runId,
-        youtubeMusicTrackId: item.youtube_music_track_id,
-        spotifyTrackId: item.spotify_track_id ?? null,
-        soundcloudTrackId: item.soundcloud_track_id ?? null,
-        resolvedYoutubeMusicTrackId:
-          item.resolved_youtube_music_track_id ?? null,
-        title: item.title,
-        artist: item.artist,
-        album: item.album,
-        albumArtist: item.album_artist,
-        sourceUrl: item.source_url,
-        coverArtUrl: item.cover_art_url ?? null,
-        status: item.status,
-        stage: item.stage,
-        reasonCode: item.reason_code ?? '',
-        reasonDetail: item.reason_detail ?? '',
-        sourceKind: item.source_kind ?? 'unknown',
-        sourceOrigin: item.source_origin ?? null,
-        catalogReleaseBrowseId: item.catalog_release_browse_id ?? null,
-        catalogReleaseTitle: item.catalog_release_title ?? null,
-        catalogReleaseKind: item.catalog_release_kind ?? null,
-        videoType: item.video_type ?? null,
-        resolutionMethod: item.resolution_method ?? 'unresolved',
-        trackNumber: item.track_number ?? null,
-        trackTotal: item.track_total ?? null,
-        discNumber: item.disc_number ?? null,
-        discTotal: item.disc_total ?? null,
-        year: item.year ?? null,
-        date: item.date ?? null,
-        genre: item.genre ?? null,
-        language: item.language ?? null,
-        isrc: item.isrc ?? null,
-        mbTrackId: item.mb_track_id ?? null,
-        mbAlbumId: item.mb_album_id ?? null,
-        mbReleaseGroupId: item.mb_releasegroup_id ?? null,
-        lyricsStatus: item.lyrics_status ?? 'missing',
-        audioCodec: item.audio_codec ?? null,
-        metadataMatched: item.metadata_matched ?? false,
-        musicBrainzMatched: item.musicbrainz_matched ?? false,
-        lyricsMatched: item.lyrics_matched ?? false,
-        lyricsSource: item.lyrics_source ?? null,
-        selectedSourceUrl: item.selected_source_url ?? null,
-        outputPath: item.output_path ?? null,
-        lrcPath: item.lrc_path ?? null,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-      .onConflictDoUpdate({
-        target: syncRunItemsTable.id,
-        set: {
-          youtubeMusicTrackId: item.youtube_music_track_id,
-          spotifyTrackId: item.spotify_track_id ?? null,
-          soundcloudTrackId: item.soundcloud_track_id ?? null,
-          resolvedYoutubeMusicTrackId:
-            item.resolved_youtube_music_track_id ?? null,
-          title: item.title,
-          artist: item.artist,
-          album: item.album,
-          albumArtist: item.album_artist,
-          sourceUrl: item.source_url,
-          coverArtUrl: item.cover_art_url ?? null,
-          status: item.status,
-          stage: item.stage,
-          reasonCode: item.reason_code ?? '',
-          reasonDetail: item.reason_detail ?? '',
-          sourceKind: item.source_kind ?? 'unknown',
-          sourceOrigin: item.source_origin ?? null,
-          catalogReleaseBrowseId: item.catalog_release_browse_id ?? null,
-          catalogReleaseTitle: item.catalog_release_title ?? null,
-          catalogReleaseKind: item.catalog_release_kind ?? null,
-          videoType: item.video_type ?? null,
-          resolutionMethod: item.resolution_method ?? 'unresolved',
-          trackNumber: item.track_number ?? null,
-          trackTotal: item.track_total ?? null,
-          discNumber: item.disc_number ?? null,
-          discTotal: item.disc_total ?? null,
-          year: item.year ?? null,
-          date: item.date ?? null,
-          genre: item.genre ?? null,
-          language: item.language ?? null,
-          isrc: item.isrc ?? null,
-          mbTrackId: item.mb_track_id ?? null,
-          mbAlbumId: item.mb_album_id ?? null,
-          mbReleaseGroupId: item.mb_releasegroup_id ?? null,
-          lyricsStatus: item.lyrics_status ?? 'missing',
-          audioCodec: item.audio_codec ?? null,
-          metadataMatched: item.metadata_matched ?? false,
-          musicBrainzMatched: item.musicbrainz_matched ?? false,
-          lyricsMatched: item.lyrics_matched ?? false,
-          lyricsSource: item.lyrics_source ?? null,
-          selectedSourceUrl: item.selected_source_url ?? null,
-          outputPath: item.output_path ?? null,
-          lrcPath: item.lrc_path ?? null,
-          updatedAt: timestamp,
-        },
-      })
-
-    if (item.output_path && item.status === 'completed') {
-      await this.db
-        .insert(artifactsTable)
-        .values({
-          id: createId('artifact'),
-          runItemId: item.id,
-          audioPath: item.output_path,
-          lrcPath: item.lrc_path ?? null,
-          remoteTarget: null,
-          createdAt: timestamp,
-        })
-        .onConflictDoNothing()
-    }
-  }
-
-  private async updateRun(
-    runId: string,
-    patch: Partial<{
-      status: string
-      endedAt: string | null
-      plannedCount: number
-    }>
-  ) {
-    await this.db
-      .update(syncRunsTable)
-      .set({
-        ...(patch.status ? { status: patch.status } : {}),
-        ...(patch.endedAt !== undefined ? { endedAt: patch.endedAt } : {}),
-        ...(patch.plannedCount !== undefined
-          ? { plannedCount: patch.plannedCount }
-          : {}),
-      })
-      .where(eq(syncRunsTable.id, runId))
-  }
-
-  private async hydrateRunSummary(runId: string): Promise<SyncRunSummary> {
-    const row = await this.db.query.syncRunsTable.findFirst({
-      where: eq(syncRunsTable.id, runId),
-    })
-    if (!row) {
-      throw new Error(`Run not found: ${runId}`)
-    }
-
-    const items = await this.db
-      .select({
-        status: syncRunItemsTable.status,
-      })
-      .from(syncRunItemsTable)
-      .where(eq(syncRunItemsTable.runId, runId))
-
-    const totalCount = Math.max(row.plannedCount, items.length)
-    const completedCount = items.filter(
-      (item) =>
-        item.status === 'completed' || item.status === 'completed_local_only'
-    ).length
-    const failedCount = items.filter((item) =>
-      item.status.startsWith('failed')
-    ).length
-    const skippedCount = items.filter(
-      (item) => item.status === 'skipped_existing'
-    ).length
-    const processedCount = completedCount + failedCount + skippedCount
-
-    return {
-      id: row.id,
-      triggerMode: row.triggerMode as SyncTriggerMode,
-      status: row.status as SyncRunSummary['status'],
-      startedAt: row.startedAt,
-      endedAt: row.endedAt,
-      totalCount,
-      processedCount,
-      completedCount,
-      failedCount,
-      skippedCount,
-    }
-  }
-
-  private toRunItemView(
-    item: typeof syncRunItemsTable.$inferSelect
-  ): SyncRunItemView {
-    return {
-      id: item.id,
-      runId: item.runId,
-      youtubeMusicTrackId: item.youtubeMusicTrackId,
-      spotifyTrackId: item.spotifyTrackId,
-      soundcloudTrackId: item.soundcloudTrackId,
-      resolvedYoutubeMusicTrackId: item.resolvedYoutubeMusicTrackId,
-      title: item.title,
-      artist: item.artist,
-      album: item.album,
-      albumArtist: item.albumArtist,
-      sourceUrl: item.sourceUrl,
-      coverArtUrl: item.coverArtUrl,
-      status: item.status as SyncItemStatus,
-      stage: item.stage as SyncStage,
-      reasonCode: item.reasonCode,
-      reasonDetail: item.reasonDetail,
-      sourceKind: item.sourceKind,
-      sourceOrigin: item.sourceOrigin,
-      catalogReleaseBrowseId: item.catalogReleaseBrowseId,
-      catalogReleaseTitle: item.catalogReleaseTitle,
-      catalogReleaseKind: item.catalogReleaseKind,
-      videoType: item.videoType,
-      resolutionMethod: item.resolutionMethod,
-      trackNumber: item.trackNumber,
-      trackTotal: item.trackTotal,
-      discNumber: item.discNumber,
-      discTotal: item.discTotal,
-      year: item.year,
-      date: item.date,
-      genre: item.genre,
-      language: item.language,
-      isrc: item.isrc,
-      mbTrackId: item.mbTrackId,
-      mbAlbumId: item.mbAlbumId,
-      mbReleaseGroupId: item.mbReleaseGroupId,
-      lyricsStatus: item.lyricsStatus as SyncRunItemView['lyricsStatus'],
-      audioCodec: item.audioCodec,
-      metadataMatched: item.metadataMatched,
-      musicBrainzMatched: item.musicBrainzMatched,
-      lyricsMatched: item.lyricsMatched,
-      lyricsSource: item.lyricsSource,
-      selectedSourceUrl: item.selectedSourceUrl,
-      outputPath: item.outputPath,
-      lrcPath: item.lrcPath,
-    }
-  }
-
   private async emitSnapshot() {
     const snapshot = await this.getSnapshot()
-    for (const listener of this.listeners) {
-      listener(snapshot)
-    }
+    for (const listener of this.listeners) listener(snapshot)
   }
 
-  private killActiveRun(signal: NodeJS.Signals) {
+  private killActiveProcess(signal: NodeJS.Signals) {
     const child = this.activeProcess
     if (!child) return false
-
     try {
       if (process.platform !== 'win32' && child.pid) {
         process.kill(-child.pid, signal)
@@ -1779,6 +2297,20 @@ export class SyncService {
     } catch {
       return false
     }
+  }
+
+  private async failPendingTracksForCancellation(jobId: string) {
+    await this.db
+      .update(syncJobTracksTable)
+      .set({
+        status: 'failed_terminal',
+        stage: 'finalize',
+        reasonCode: 'cancelled',
+        reasonDetail: 'Job cancelled.',
+        terminalOutcome: 'cancelled',
+        updatedAt: nowIso(),
+      })
+      .where(eq(syncJobTracksTable.jobId, jobId))
   }
 
   private normalizeArtistName(value: string) {
@@ -1838,62 +2370,18 @@ export class SyncService {
       })
   }
 
-  private async refreshIndexedOutputsForRun(runId: string) {
-    try {
-      const items = await this.db
-        .select({
-          status: syncRunItemsTable.status,
-          outputPath: syncRunItemsTable.outputPath,
-        })
-        .from(syncRunItemsTable)
-        .where(eq(syncRunItemsTable.runId, runId))
-
-      const touchedLocalOutputs = items
-        .filter((item) =>
-          ['completed', 'completed_local_only'].includes(item.status)
-        )
-        .map((item) => item.outputPath)
-        .filter((value): value is string => Boolean(value))
-
-      if (touchedLocalOutputs.length === 0) return
-
-      await this.libraryService.upsertLocalOutputs(touchedLocalOutputs)
-      await this.likedArtistsService.refreshArtists()
-
-      for (const item of items) {
-        if (item.status !== 'completed' || !item.outputPath) continue
-        await this.libraryService.upsertRemoteCopyFromLocalPath(item.outputPath)
-      }
-    } catch (error) {
-      this.logSync({
-        level: 'error',
-        runId,
-        stage: 'finalize',
-        event: 'post-run-index-update-failed',
-        message:
-          error instanceof Error
-            ? error.message
-            : 'Post-run index update failed.',
-      })
-    }
-  }
-
-  private async cleanupArtistReprocessFiles(runId: string) {
-    const selected = this.runSelectedArtists.get(runId)
-    if (!selected || selected.length === 0) return
-    const previous = this.runPreexistingManagedFiles.get(runId) ?? []
+  private async cleanupArtistReprocessFiles(jobId: string) {
+    const previous = this.reprocessPreexistingManagedFiles.get(jobId) ?? []
     if (previous.length === 0) return
 
-    const settings = await this.settingsService.getRuntimeSettings()
-    const currentRunItems = await this.db
-      .select({
-        status: syncRunItemsTable.status,
-        outputPath: syncRunItemsTable.outputPath,
-      })
-      .from(syncRunItemsTable)
-      .where(eq(syncRunItemsTable.runId, runId))
+    const settings =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    const tracks = await this.db
+      .select()
+      .from(syncJobTracksTable)
+      .where(eq(syncJobTracksTable.jobId, jobId))
     const currentLocal = new Set(
-      currentRunItems
+      tracks
         .filter((row) =>
           ['completed', 'completed_local_only'].includes(row.status)
         )
@@ -1901,7 +2389,7 @@ export class SyncService {
         .filter((value): value is string => Boolean(value))
     )
     const currentRemote = new Set(
-      currentRunItems
+      tracks
         .filter((row) => row.status === 'completed' && Boolean(row.outputPath))
         .map((row) => {
           if (
@@ -1923,31 +2411,26 @@ export class SyncService {
 
     for (const row of previous) {
       if (row.rootKind === 'local') {
-        if (!row.absolutePathSnapshot) continue
-        if (currentLocal.has(row.absolutePathSnapshot)) continue
-        try {
-          await rm(row.absolutePathSnapshot, { force: true })
-        } catch {
-          // non-fatal: continue cleanup for other files
+        if (
+          !row.absolutePathSnapshot ||
+          currentLocal.has(row.absolutePathSnapshot)
+        ) {
+          continue
         }
+        const relativePath = path
+          .relative(settings.outputDirectory, row.absolutePathSnapshot)
+          .split(path.sep)
+          .join('/')
+        await this.libraryService.pruneIndexedFile(row.rootUri, relativePath)
+      } else {
+        const remoteKey = `${row.rootUri}|${row.relativePath}`
+        if (currentRemote.has(remoteKey)) continue
         await this.libraryService.pruneIndexedFile(
           row.rootUri,
           row.relativePath
         )
-        continue
       }
-
-      const remoteKey = `${row.rootUri}|${row.relativePath}`
-      if (currentRemote.has(remoteKey)) continue
-      const remoteTarget = `${row.rootUri.replace(/\/$/, '')}/${row.relativePath}`
-      try {
-        await execa('rclone', ['deletefile', remoteTarget], {
-          reject: false,
-        })
-      } catch {
-        // non-fatal: continue cleanup for other files
-      }
-      await this.libraryService.pruneIndexedFile(row.rootUri, row.relativePath)
     }
+    this.reprocessPreexistingManagedFiles.delete(jobId)
   }
 }

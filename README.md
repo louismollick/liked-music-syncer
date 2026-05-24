@@ -229,19 +229,18 @@ pnpm dev
 
 Use this order:
 
-1. set `Dry run = on`
-2. run sync once
+1. run `Liked Songs Sync` once
+2. inspect the Library and Sync surfaces
 3. inspect tabs:
    - `No Metadata`
    - `No Lyrics`
    - `Matched to YT Music`
    - `Not Matched to YT Music`
    - `Not in Music Category`
-4. watch terminal diagnostics while run executes, or inspect the per-launch temp log file
-5. turn off dry run
-6. run again
+4. watch terminal diagnostics while the job executes, or inspect the per-launch temp log file
+5. use `Reprocess Library` or `Reprocess Artist Songs` to preview modifications before approving them
 
-This is the fastest way to debug matching before downloading media.
+This is the fastest way to debug matching and reprocess diffs before approving updates.
 
 ## Commands
 

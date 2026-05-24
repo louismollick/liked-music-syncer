@@ -29,8 +29,8 @@ from .media_tags import write_media_tags
 from .models import SyncConfig, SyncItemState
 from .templating import OutputLayout
 
-RUN_LOG_ITEM_ID = "__run__"
-RUN_LOG_SOURCE_VIDEO_ID = "__run__"
+JOB_LOG_ITEM_ID = "__job__"
+JOB_LOG_SOURCE_VIDEO_ID = "__job__"
 SPOTIFY_WEB_BASE_URL = "https://open.spotify.com"
 SPOTIFY_SECRETS_URL = (
     "https://raw.githubusercontent.com/xyloflake/spot-secrets-go/refs/heads/main/secrets/secretDict.json"
@@ -63,7 +63,7 @@ def _slug(prefix: str) -> str:
 
 
 def _log(
-    run_id: str,
+    job_id: str,
     item: SyncItemState,
     stage: str,
     level: str,
@@ -74,7 +74,7 @@ def _log(
     emit_event(
         {
             "type": "log",
-            "run_id": run_id,
+            "job_id": job_id,
             "item_id": item.id,
             "youtube_music_track_id": item.youtube_music_track_id,
             "timestamp": _now_iso(),
@@ -88,7 +88,7 @@ def _log(
 
 
 def _run_log(
-    run_id: str,
+    job_id: str,
     stage: str,
     level: str,
     event: str,
@@ -98,9 +98,9 @@ def _run_log(
     emit_event(
         {
             "type": "log",
-            "run_id": run_id,
-            "item_id": RUN_LOG_ITEM_ID,
-            "youtube_music_track_id": RUN_LOG_SOURCE_VIDEO_ID,
+            "job_id": job_id,
+            "item_id": JOB_LOG_ITEM_ID,
+            "youtube_music_track_id": JOB_LOG_SOURCE_VIDEO_ID,
             "timestamp": _now_iso(),
             "level": level,
             "stage": stage,
@@ -111,8 +111,8 @@ def _run_log(
     )
 
 
-def _emit_run_event(
-    run_id: str,
+def _emit_job_event(
+    job_id: str,
     event: str,
     stage: str,
     message: str,
@@ -120,9 +120,9 @@ def _emit_run_event(
     context: dict[str, Any] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
-        "type": "run",
+        "type": "job",
         "event": event,
-        "run_id": run_id,
+        "job_id": job_id,
         "stage": stage,
         "message": message,
     }
@@ -133,12 +133,12 @@ def _emit_run_event(
     emit_event(payload)
 
 
-def _emit_item(run_id: str, item: SyncItemState) -> None:
+def _emit_item(job_id: str, item: SyncItemState) -> None:
     emit_event(
         {
-            "type": "item",
+            "type": "track",
             "event": "upsert",
-            "run_id": run_id,
+            "job_id": job_id,
             "item": item.as_event_payload(),
         }
     )
@@ -1644,27 +1644,26 @@ def run_sync(config: SyncConfig) -> None:
     stage = "ytmusic_auth"
     try:
         _run_log(
-            config.run_id,
+            config.job_id,
             stage,
             "info",
             "auth-init",
             "Initializing YT Music client.",
             {
                 "output_directory": str(config.output_directory),
-                "dry_run": config.dry_run,
                 "remote_copy_enabled": config.remote_copy_enabled,
                 "write_lrc_sidecar": config.write_lrc_sidecar,
                 "embed_unsynced_lyrics": config.embed_unsynced_lyrics,
             },
         )
         ytmusic = _build_ytmusic_client(config.ytmusic_browser_auth)
-        _run_log(config.run_id, stage, "info", "auth-ready", "YT Music client ready.")
+        _run_log(config.job_id, stage, "info", "auth-ready", "YT Music client ready.")
 
         stage = "liked_songs_fetch"
         favorite_catalog_counts: dict[str, int] = {}
         if config.favorite_artist_catalogs:
             _run_log(
-                config.run_id,
+                config.job_id,
                 stage,
                 "info",
                 "favorite-catalog-fetch-start",
@@ -1681,7 +1680,7 @@ def run_sync(config: SyncConfig) -> None:
             raw_count = len(tracks)
             tracks = _dedupe_tracks(tracks)
             _run_log(
-                config.run_id,
+                config.job_id,
                 stage,
                 "info",
                 "favorite-catalog-fetch-complete",
@@ -1694,7 +1693,7 @@ def run_sync(config: SyncConfig) -> None:
             )
         else:
             _run_log(
-                config.run_id,
+                config.job_id,
                 stage,
                 "info",
                 "liked-fetch-start",
@@ -1706,15 +1705,15 @@ def run_sync(config: SyncConfig) -> None:
             raw_count = len(tracks)
             tracks = [track for track in tracks if _track_matches_artist_filters(track, config)]
             _run_log(
-                config.run_id,
+                config.job_id,
                 stage,
                 "info",
                 "liked-fetch-complete",
                 "Liked songs fetch complete.",
                 {"total_count": len(tracks), "raw_total_count": raw_count},
             )
-        _emit_run_event(
-            config.run_id,
+        _emit_job_event(
+            config.job_id,
             "started",
             stage,
             "Favorite artist catalog fetch complete."
@@ -1732,15 +1731,15 @@ def run_sync(config: SyncConfig) -> None:
             item = _build_item(track, index)
             item.stage = "liked_songs_fetch"
             item.status = "processing"
-            _emit_item(config.run_id, item)
-            _log(config.run_id, item, item.stage, "info", "fetch", "Fetched liked item.")
+            _emit_item(config.job_id, item)
+            _log(config.job_id, item, item.stage, "info", "fetch", "Fetched liked item.")
 
             if _should_skip_existing_by_source_id(config, item):
                 item.status = "skipped_existing"
                 item.stage = "finalize"
                 item.reason_code = "existing_library_identity"
                 item.reason_detail = "Matching managed local library source identity already scanned."
-                _emit_item(config.run_id, item)
+                _emit_item(config.job_id, item)
                 continue
 
             try:
@@ -1752,13 +1751,13 @@ def run_sync(config: SyncConfig) -> None:
                         ytmusic, item.youtube_music_track_id
                     )
                 else:
-                    lyrics_browse_id = _resolve_exact_catalog(ytmusic, item, run_id=config.run_id)
-                _emit_item(config.run_id, item)
-                _log(config.run_id, item, item.stage, "info", "resolve", f"Resolution method: {item.resolution_method}.")
+                    lyrics_browse_id = _resolve_exact_catalog(ytmusic, item, run_id=config.job_id)
+                _emit_item(config.job_id, item)
+                _log(config.job_id, item, item.stage, "info", "resolve", f"Resolution method: {item.resolution_method}.")
             except Exception as exc:  # noqa: BLE001
-                _log(config.run_id, item, "source_resolve", "warn", "resolve-fallback", str(exc))
+                _log(config.job_id, item, "source_resolve", "warn", "resolve-fallback", str(exc))
                 _resolve_fallback_metadata(config, item)
-                _emit_item(config.run_id, item)
+                _emit_item(config.job_id, item)
                 lyrics_browse_id = None
 
             try:
@@ -1766,9 +1765,9 @@ def run_sync(config: SyncConfig) -> None:
                     item.stage = "musicbrainz_enrich"
                     stage = item.stage
                     _musicbrainz_enrich(item)
-                    _emit_item(config.run_id, item)
+                    _emit_item(config.job_id, item)
             except Exception as exc:  # noqa: BLE001
-                _log(config.run_id, item, item.stage, "warn", "musicbrainz", str(exc))
+                _log(config.job_id, item, item.stage, "warn", "musicbrainz", str(exc))
 
             context = {
                 "albumartist": item.album_artist,
@@ -1785,7 +1784,7 @@ def run_sync(config: SyncConfig) -> None:
                 item.stage = "finalize"
                 item.output_path = str(output_path)
                 item.reason_code, item.reason_detail = skip_reason
-                _emit_item(config.run_id, item)
+                _emit_item(config.job_id, item)
                 continue
 
             if (not config.force_reprocess) and output_path.exists():
@@ -1794,7 +1793,7 @@ def run_sync(config: SyncConfig) -> None:
                 item.output_path = str(output_path)
                 item.reason_code = "existing_output"
                 item.reason_detail = "Output path already exists."
-                _emit_item(config.run_id, item)
+                _emit_item(config.job_id, item)
                 continue
 
             item.stage = "lyrics_resolve"
@@ -1807,35 +1806,28 @@ def run_sync(config: SyncConfig) -> None:
                     lyrics_browse_id,
                 )
             except Exception as exc:  # noqa: BLE001
-                _log(config.run_id, item, item.stage, "warn", "lyrics", str(exc))
+                _log(config.job_id, item, item.stage, "warn", "lyrics", str(exc))
                 lyrics_text, lyrics_source = None, None
             item.lyrics_status = _classify_lyrics_text(lyrics_text)
             item.language = detect_primary_lyrics_language(lyrics_text)
             if lyrics_text:
                 item.lyrics_matched = True
                 item.lyrics_source = lyrics_source
-            _emit_item(config.run_id, item)
-
-            if config.dry_run:
-                item.status = "completed_local_only"
-                item.stage = "finalize"
-                item.output_path = str(output_path)
-                _emit_item(config.run_id, item)
-                continue
+            _emit_item(config.job_id, item)
 
             try:
                 with tempfile.TemporaryDirectory(prefix="lmsync_") as temp_dir_raw:
                     temp_dir = Path(temp_dir_raw)
                     item.stage = "download"
                     stage = item.stage
-                    _emit_item(config.run_id, item)
+                    _emit_item(config.job_id, item)
                     downloaded_path, info = _download_audio(config, item, temp_dir)
                     codec = info.get("acodec")
                     item.audio_codec = str(codec) if isinstance(codec, str) else item.audio_codec
 
                     item.stage = "fixup"
                     stage = item.stage
-                    _emit_item(config.run_id, item)
+                    _emit_item(config.job_id, item)
                     _normalize_audio(downloaded_path, output_path, config.ffmpeg_path, item.audio_codec)
 
                     cover_bytes: bytes | None = None
@@ -1843,11 +1835,11 @@ def run_sync(config: SyncConfig) -> None:
                         try:
                             cover_bytes = make_square_cover(_download_bytes(item.cover_art_url))
                         except Exception as exc:  # noqa: BLE001
-                            _log(config.run_id, item, "tagging", "warn", "cover", str(exc))
+                            _log(config.job_id, item, "tagging", "warn", "cover", str(exc))
 
                     item.stage = "tagging"
                     stage = item.stage
-                    _emit_item(config.run_id, item)
+                    _emit_item(config.job_id, item)
                     embedded_lyrics = lyrics_text if (lyrics_text and (item.lyrics_status == "synced" or config.embed_unsynced_lyrics)) else None
                     write_media_tags(output_path, item, cover_bytes, embedded_lyrics)
 
@@ -1861,23 +1853,23 @@ def run_sync(config: SyncConfig) -> None:
 
                     item.stage = "remote_copy"
                     stage = item.stage
-                    _emit_item(config.run_id, item)
+                    _emit_item(config.job_id, item)
                     _copy_remote(config, output_path)
 
                 item.status = "completed"
                 item.stage = "finalize"
                 item.output_path = str(output_path)
-                _emit_item(config.run_id, item)
+                _emit_item(config.job_id, item)
             except Exception as exc:  # noqa: BLE001
                 item.status = "failed_terminal"
                 item.stage = "finalize"
                 item.reason_code = "sync_failed"
                 item.reason_detail = str(exc)
-                _log(config.run_id, item, item.stage, "error", "item-failed", str(exc))
-                _emit_item(config.run_id, item)
+                _log(config.job_id, item, item.stage, "error", "item-failed", str(exc))
+                _emit_item(config.job_id, item)
 
-        _emit_run_event(
-            config.run_id,
+        _emit_job_event(
+            config.job_id,
             "completed",
             "finalize",
             "Sync run complete.",
@@ -1887,21 +1879,21 @@ def run_sync(config: SyncConfig) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         _run_log(
-            config.run_id,
+            config.job_id,
             stage,
             "error",
-            "run-failed",
+            "job-failed",
             str(exc),
             {
                 "error_type": type(exc).__name__,
                 "traceback": traceback.format_exc(),
             },
         )
-        _emit_run_event(
-            config.run_id,
+        _emit_job_event(
+            config.job_id,
             "failed",
             stage,
-            f"Run failed during {stage}: {exc}",
+            f"Job failed during {stage}: {exc}",
             context={"error_type": type(exc).__name__},
         )
         raise

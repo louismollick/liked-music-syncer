@@ -14,6 +14,7 @@ from .json_io import read_stdin_json, write_json
 from .liked_artists import fetch_artist_images, fetch_liked_artists
 from .library_scan import inspect_local_files, reconcile_local_root, scan_root
 from .models import SyncConfig
+from .reprocess import apply_reprocess, preview_reprocess
 from .sync_engine import run_sync
 
 
@@ -100,8 +101,16 @@ def main() -> int:
         )
         return 0
 
-    if command == "sync-run":
+    if command == "sync-job":
         run_sync(SyncConfig.from_payload(payload))
+        return 0
+
+    if command == "reprocess-preview":
+        write_json(preview_reprocess(payload))
+        return 0
+
+    if command == "reprocess-apply":
+        write_json(apply_reprocess(payload))
         return 0
 
     raise SystemExit(f"unknown command: {command}")

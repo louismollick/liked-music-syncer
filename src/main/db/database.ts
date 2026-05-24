@@ -4,15 +4,15 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
 
-const SCHEMA_VERSION = '8'
+const SCHEMA_VERSION = '11'
 
 const ALL_TABLES = [
-  'artifacts',
   'library_files',
   'library_tracks',
   'library_roots',
-  'sync_run_items',
-  'sync_runs',
+  'sync_approval_items',
+  'sync_job_tracks',
+  'sync_jobs',
   'liked_artists',
   'settings',
   'ytmusic_decisions',
@@ -53,18 +53,24 @@ function resetSchema(sqlite: Database.Database) {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE sync_runs (
+    CREATE TABLE sync_jobs (
       id TEXT PRIMARY KEY,
-      trigger_mode TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      scope TEXT,
+      label TEXT NOT NULL,
       status TEXT NOT NULL,
+      queue_bucket TEXT NOT NULL,
       started_at TEXT NOT NULL,
       ended_at TEXT,
-      planned_count INTEGER NOT NULL DEFAULT 0
+      planned_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE sync_run_items (
+    CREATE TABLE sync_job_tracks (
       id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      library_track_id TEXT,
       youtube_music_track_id TEXT NOT NULL,
       spotify_track_id TEXT,
       soundcloud_track_id TEXT,
@@ -105,8 +111,31 @@ function resetSchema(sqlite: Database.Database) {
       lyrics_matched INTEGER NOT NULL DEFAULT 0,
       lyrics_source TEXT,
       selected_source_url TEXT,
+      visible INTEGER NOT NULL DEFAULT 1,
+      approval_required INTEGER NOT NULL DEFAULT 0,
+      terminal_outcome TEXT,
+      sort_index INTEGER,
+      remote_target TEXT,
+      job_phase TEXT,
+      current_output_path TEXT,
       output_path TEXT,
       lrc_path TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE sync_approval_items (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL,
+      track_work_id TEXT NOT NULL,
+      library_track_id TEXT,
+      status TEXT NOT NULL,
+      action_kind TEXT NOT NULL,
+      diff_json TEXT NOT NULL,
+      before_json TEXT NOT NULL,
+      after_json TEXT NOT NULL,
+      album_art_diff_json TEXT,
+      payload_json TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -196,15 +225,6 @@ function resetSchema(sqlite: Database.Database) {
     CREATE UNIQUE INDEX library_files_root_path_unique
       ON library_files (root_id, relative_path);
 
-    CREATE TABLE artifacts (
-      id TEXT PRIMARY KEY,
-      run_item_id TEXT NOT NULL,
-      audio_path TEXT,
-      lrc_path TEXT,
-      remote_target TEXT,
-      created_at TEXT NOT NULL
-    );
-
   `)
 
   sqlite
@@ -230,75 +250,8 @@ function readSchemaVersion(sqlite: Database.Database) {
   return row?.value ?? null
 }
 
-function addColumnIfMissing(
-  sqlite: Database.Database,
-  tableName: string,
-  columnName: string,
-  definition: string
-) {
-  const columns = sqlite
-    .prepare(`PRAGMA table_info(${tableName})`)
-    .all() as Array<{ name?: string }>
-  if (columns.some((column) => column.name === columnName)) {
-    return
-  }
-  sqlite.exec(
-    `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`
-  )
-}
-
 function migrateSchema(sqlite: Database.Database, version: string | null) {
   if (version === SCHEMA_VERSION) {
-    return
-  }
-
-  if (version === '6' || version === '7') {
-    addColumnIfMissing(sqlite, 'library_files', 'sidecar_modified_at', 'TEXT')
-  }
-
-  if (version === '6') {
-    addColumnIfMissing(sqlite, 'sync_run_items', 'source_origin', 'TEXT')
-    addColumnIfMissing(
-      sqlite,
-      'sync_run_items',
-      'catalog_release_browse_id',
-      'TEXT'
-    )
-    addColumnIfMissing(
-      sqlite,
-      'sync_run_items',
-      'catalog_release_title',
-      'TEXT'
-    )
-    addColumnIfMissing(sqlite, 'sync_run_items', 'catalog_release_kind', 'TEXT')
-    addColumnIfMissing(sqlite, 'library_tracks', 'source_origin', 'TEXT')
-    addColumnIfMissing(
-      sqlite,
-      'library_tracks',
-      'catalog_release_browse_id',
-      'TEXT'
-    )
-    addColumnIfMissing(
-      sqlite,
-      'library_tracks',
-      'catalog_release_title',
-      'TEXT'
-    )
-    addColumnIfMissing(sqlite, 'library_tracks', 'catalog_release_kind', 'TEXT')
-    sqlite
-      .prepare(
-        'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-      )
-      .run('schemaVersion', SCHEMA_VERSION)
-    return
-  }
-
-  if (version === '7') {
-    sqlite
-      .prepare(
-        'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-      )
-      .run('schemaVersion', SCHEMA_VERSION)
     return
   }
 

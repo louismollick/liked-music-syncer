@@ -18,17 +18,21 @@ const api: ElectronApi = {
       ipcRenderer.invoke('settings:pickOutputDirectory'),
   },
   sync: {
-    start: (input) => ipcRenderer.invoke('sync:start', input),
+    startLikedSongsSync: () => ipcRenderer.invoke('sync:startLikedSongsSync'),
+    startLibraryReprocess: () =>
+      ipcRenderer.invoke('sync:startLibraryReprocess'),
     reprocessArtists: (artistIds) =>
       ipcRenderer.invoke('sync:reprocessArtists', artistIds),
     refreshFavoriteArtists: (artistIds) =>
       ipcRenderer.invoke('sync:refreshFavoriteArtists', artistIds),
-    cancel: (runId) => ipcRenderer.invoke('sync:cancel', runId),
+    approveChanges: (approvalIds) =>
+      ipcRenderer.invoke('sync:approveChanges', approvalIds),
+    denyChanges: (approvalIds) =>
+      ipcRenderer.invoke('sync:denyChanges', approvalIds),
+    cancel: (jobId) => ipcRenderer.invoke('sync:cancel', jobId),
     clearSyncData: () => ipcRenderer.invoke('sync:clearSyncData'),
     syncMissingToRemote: () => ipcRenderer.invoke('sync:syncMissingToRemote'),
     doctor: () => ipcRenderer.invoke('sync:doctor'),
-    listRuns: () => ipcRenderer.invoke('sync:listRuns'),
-    getRun: (runId) => ipcRenderer.invoke('sync:getRun', runId),
     getSnapshot: () => ipcRenderer.invoke('sync:getSnapshot'),
     subscribe: (listener) => {
       const wrapped = (_event: unknown, snapshot: unknown) => {

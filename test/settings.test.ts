@@ -37,7 +37,7 @@ describe('settings persistence', () => {
 
     await firstService.save({
       outputDirectory: '~/Music/liked',
-      dryRun: true,
+      autoApproveChanges: true,
       remoteCopyEnabled: true,
       ytDlpCookiesBrowser: 'chrome',
       rcloneRemote: 'seedbox',
@@ -66,7 +66,7 @@ describe('settings persistence', () => {
 
     await expect(secondService.getView()).resolves.toMatchObject({
       outputDirectory: path.join(os.homedir(), 'Music/liked'),
-      dryRun: true,
+      autoApproveChanges: true,
       remoteCopyEnabled: true,
       rcloneRemote: 'seedbox',
       remoteMusicRoot: '/music/liked',
@@ -80,7 +80,7 @@ describe('settings persistence', () => {
 
     await expect(secondService.getRuntimeSettings()).resolves.toMatchObject({
       outputDirectory: path.join(os.homedir(), 'Music/liked'),
-      dryRun: true,
+      autoApproveChanges: true,
       remoteCopyEnabled: true,
       rcloneRemote: 'seedbox',
       remoteMusicRoot: '/music/liked',

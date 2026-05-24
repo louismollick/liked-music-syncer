@@ -21,7 +21,8 @@ import {
   libraryTracksTable,
   likedArtistsTable,
   metaTable,
-  syncRunsTable,
+  syncJobsTable,
+  syncJobTracksTable,
 } from '../src/main/db/schema'
 import { LibraryService } from '../src/main/services/library-service'
 import { LikedArtistsService } from '../src/main/services/liked-artists-service'
@@ -600,16 +601,21 @@ describe('library service', () => {
   })
 })
 
-describe('sync run item contract', () => {
-  it('persists and exposes the widened run item fields', async () => {
+describe('sync job track contract', () => {
+  it('persists and exposes the widened job track fields', async () => {
     const { db, sqlite, dir } = makeTempDb()
-    await db.insert(syncRunsTable).values({
-      id: 'run_1',
-      triggerMode: 'manual',
+    await db.insert(syncJobsTable).values({
+      id: 'job_1',
+      kind: 'liked_songs_sync',
+      scope: null,
+      label: 'Liked Songs Sync',
       status: 'running',
+      queueBucket: 'queue',
       startedAt: '2026-05-18T00:00:00.000Z',
       endedAt: null,
       plannedCount: 0,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
     })
 
     const service = new SyncService(
@@ -623,12 +629,12 @@ describe('sync run item contract', () => {
 
     await (
       service as unknown as {
-        upsertRunItem: (
-          runId: string,
+        upsertJobTrack: (
+          jobId: string,
           item: Record<string, unknown>
         ) => Promise<void>
       }
-    ).upsertRunItem('run_1', {
+    ).upsertJobTrack('job_1', {
       id: 'item_1',
       youtube_music_track_id: 'liked123',
       spotify_track_id: null,
@@ -660,8 +666,8 @@ describe('sync run item contract', () => {
       lrc_path: '/tmp/track.lrc',
     })
 
-    const run = await service.getRun('run_1')
-    expect(run?.items[0]).toMatchObject({
+    const [track] = await db.select().from(syncJobTracksTable)
+    expect(track).toMatchObject({
       youtubeMusicTrackId: 'liked123',
       resolvedYoutubeMusicTrackId: 'catalog456',
       discNumber: 1,
@@ -995,8 +1001,9 @@ describe('favorite artist catalog sync', () => {
 
     expect(result.ok).toBe(true)
     expect(spawnNdjsonCommand).toHaveBeenCalledWith(
-      'sync-run',
+      'sync-job',
       expect.objectContaining({
+        job_id: expect.any(String),
         favorite_artist_catalogs: [
           {
             id: 'artist_1',
@@ -1008,8 +1015,8 @@ describe('favorite artist catalog sync', () => {
         force_reprocess: false,
       })
     )
-    const [run] = await db.select().from(syncRunsTable)
-    expect(run?.triggerMode).toBe('favorite_artist_catalog')
+    const [job] = await db.select().from(syncJobsTable)
+    expect(job?.kind).toBe('favorite_artist_catalog_refresh')
 
     stdout.destroy()
     stderr.destroy()
@@ -1200,7 +1207,7 @@ describe('favorite artist catalog sync', () => {
 
     const line = `${JSON.stringify({
       type: 'log',
-      run_id: 'run_test',
+      job_id: 'job_test',
       item_id: 'item_test',
       youtube_music_track_id: 'ytm_test',
       timestamp: '2026-05-23T23:45:00.000Z',
@@ -1215,13 +1222,13 @@ describe('favorite artist catalog sync', () => {
     mirror?.dispose()
 
     expect(stdoutWrite).toHaveBeenCalledWith(
-      '[2026-05-23T23:45:00.000Z] [info] [worker][run_test][item_test] [download] worker-progress downloaded chunk | bytes=1234\n'
+      '[2026-05-23T23:45:00.000Z] [info] [worker][job_test][item_test] [download] worker-progress downloaded chunk | bytes=1234\n'
     )
     expect(fs.readFileSync(mirror!.getLogFilePath(), 'utf8')).not.toContain(
       `[stdout] ${line}`
     )
     expect(fs.readFileSync(mirror!.getLogFilePath(), 'utf8')).toContain(
-      '[stdout] [2026-05-23T23:45:00.000Z] [info] [worker][run_test][item_test] [download] worker-progress downloaded chunk | bytes=1234\n'
+      '[stdout] [2026-05-23T23:45:00.000Z] [info] [worker][job_test][item_test] [download] worker-progress downloaded chunk | bytes=1234\n'
     )
 
     stdout.destroy()
@@ -1504,16 +1511,18 @@ describe('sync missing to remote', () => {
     expect(result.details).toContain('Copied 1')
     expect(
       snapshots.some(
-        (snapshot) => snapshot.activeRun?.triggerMode === 'remote_backfill'
+        (snapshot) =>
+          snapshot.queue.some((job) => job.kind === 'sync_missing_to_remote') ||
+          snapshot.completed.some(
+            (job) => job.kind === 'sync_missing_to_remote'
+          )
       )
     ).toBe(true)
-    const runs = await service.listRuns()
-    expect(runs[0]?.triggerMode).toBe('remote_backfill')
-    expect(runs[0]?.processedCount).toBe(1)
-    expect(runs[0]?.completedCount).toBe(1)
-    const run = runs[0] ? await service.getRun(runs[0].id) : null
-    expect(run?.items[0]?.stage).toBe('remote_copy')
-    expect(run?.items[0]?.status).toBe('completed')
+    const [job] = await db.select().from(syncJobsTable)
+    expect(job?.kind).toBe('sync_missing_to_remote')
+    const tracks = await db.select().from(syncJobTracksTable)
+    expect(tracks[0]?.stage).toBe('finalize')
+    expect(tracks[0]?.status).toBe('completed')
     expect(vi.mocked(execa)).toHaveBeenCalledTimes(4)
     expect(vi.mocked(execa).mock.calls[2]?.[1]).toEqual([
       'copyto',

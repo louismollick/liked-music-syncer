@@ -15,9 +15,8 @@ class AuthStatusResult:
 
 @dataclass(slots=True)
 class SyncConfig:
-    run_id: str
+    job_id: str
     output_directory: Path
-    dry_run: bool
     remote_copy_enabled: bool
     rclone_remote: str
     remote_music_root: str
@@ -46,9 +45,8 @@ class SyncConfig:
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "SyncConfig":
         return cls(
-            run_id=str(payload["run_id"]),
+            job_id=str(payload["job_id"]),
             output_directory=Path(str(payload["output_directory"])).expanduser(),
-            dry_run=bool(payload["dry_run"]),
             remote_copy_enabled=bool(payload["remote_copy_enabled"]),
             rclone_remote=str(payload.get("rclone_remote", "")),
             remote_music_root=str(payload.get("remote_music_root", "")),
