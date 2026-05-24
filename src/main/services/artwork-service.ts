@@ -68,6 +68,10 @@ interface ArtworkLookupStats {
   errors: number
 }
 
+interface AlbumArtworkOptions {
+  onEntry?: (entry: AlbumArtworkEntry) => void
+}
+
 export class ArtworkService {
   constructor(
     private readonly db: AppDatabase,
@@ -77,9 +81,16 @@ export class ArtworkService {
     fs.mkdirSync(this.cacheDirectory, { recursive: true })
   }
 
-  async getAlbumArtwork(albumKeys: string[]): Promise<AlbumArtworkEntry[]> {
+  async getAlbumArtwork(
+    albumKeys: string[],
+    options: AlbumArtworkOptions = {}
+  ): Promise<AlbumArtworkEntry[]> {
     const uniqueKeys = [...new Set(albumKeys.filter(Boolean))]
     if (uniqueKeys.length === 0) return []
+    const publishEntry = (entry: AlbumArtworkEntry) => {
+      options.onEntry?.(entry)
+      results.push(entry)
+    }
 
     const startedAt = Date.now()
     const stats: ArtworkLookupStats = {
@@ -121,7 +132,7 @@ export class ArtworkService {
       const source = index.get(albumKey) ?? null
       if (!source) {
         stats.noSource++
-        results.push({ albumKey, artworkUrl: null })
+        publishEntry({ albumKey, artworkUrl: null })
         continue
       }
 
@@ -136,7 +147,7 @@ export class ArtworkService {
 
       if (fs.existsSync(cachePath)) {
         stats.cacheHits++
-        results.push({
+        publishEntry({
           albumKey,
           artworkUrl: buildArtworkMediaUrl(cacheFileName),
         })
@@ -145,7 +156,7 @@ export class ArtworkService {
 
       if (!source.coverArtPresent) {
         stats.noCover++
-        results.push({ albumKey, artworkUrl: null })
+        publishEntry({ albumKey, artworkUrl: null })
         continue
       }
 
@@ -193,7 +204,7 @@ export class ArtworkService {
               },
             })
           }
-          results.push({
+          publishEntry({
             albumKey,
             artworkUrl:
               outcome === 'extracted'
@@ -222,7 +233,7 @@ export class ArtworkService {
               error: error instanceof Error ? error.message : String(error),
             },
           })
-          results.push({ albumKey, artworkUrl: null })
+          publishEntry({ albumKey, artworkUrl: null })
         }
       }
     )

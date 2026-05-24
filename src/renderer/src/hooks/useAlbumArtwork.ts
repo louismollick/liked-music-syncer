@@ -1,5 +1,11 @@
 import type { AlbumArtworkEntry } from '@shared/contracts'
 import { useEffect, useMemo, useState } from 'react'
+import {
+  filterArtworkState,
+  normalizeAlbumArtworkKeys,
+  readAlbumArtworkCache,
+  writeAlbumArtworkCache,
+} from './album-artwork-store'
 
 function logRendererArtwork(
   level: 'debug' | 'warn' | 'error',
@@ -21,17 +27,18 @@ function logRendererArtwork(
 
 export function useAlbumArtwork(albumKeys: string[]) {
   const stableKeys = useMemo(
-    () => [...new Set(albumKeys.filter(Boolean))].sort(),
+    () => normalizeAlbumArtworkKeys(albumKeys),
     [albumKeys]
   )
   const [artworkByKey, setArtworkByKey] = useState<
     Record<string, string | null>
-  >({})
+  >(() => readAlbumArtworkCache(stableKeys))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (stableKeys.length === 0) {
+    const requestKeys = stableKeys
+    if (requestKeys.length === 0) {
       setArtworkByKey({})
       setLoading(false)
       setError(null)
@@ -40,26 +47,62 @@ export function useAlbumArtwork(albumKeys: string[]) {
 
     let cancelled = false
     const startedAt = Date.now()
-    setLoading(true)
+    const cachedArtwork = readAlbumArtworkCache(requestKeys)
+    const missingKeys = requestKeys.filter(
+      (albumKey) => !(albumKey in cachedArtwork)
+    )
+
+    setArtworkByKey(cachedArtwork)
     setError(null)
 
+    if (missingKeys.length === 0) {
+      setLoading(false)
+      logRendererArtwork('debug', 'cache hit', {
+        albumCount: requestKeys.length,
+      })
+      return
+    }
+
+    setLoading(true)
+
     logRendererArtwork('debug', 'fetch started', {
-      albumCount: stableKeys.length,
+      albumCount: requestKeys.length,
+      missingCount: missingKeys.length,
+    })
+
+    const unsub = window.api.library.subscribeAlbumArtwork((entry) => {
+      if (cancelled || !requestKeys.includes(entry.albumKey)) return
+      writeAlbumArtworkCache([entry])
+      setArtworkByKey((current) =>
+        filterArtworkState(
+          {
+            ...current,
+            [entry.albumKey]: entry.artworkUrl,
+          },
+          requestKeys
+        )
+      )
     })
 
     void window.api.library
-      .getAlbumArtwork(stableKeys)
+      .getAlbumArtwork(missingKeys)
       .then((result) => {
         if (cancelled) return
-        const next: Record<string, string | null> = {}
-        for (const entry of result.entries) {
-          next[entry.albumKey] = entry.artworkUrl
-        }
+        writeAlbumArtworkCache(result.entries)
+        const next = filterArtworkState(
+          {
+            ...cachedArtwork,
+            ...Object.fromEntries(
+              result.entries.map((entry) => [entry.albumKey, entry.artworkUrl])
+            ),
+          },
+          requestKeys
+        )
         const resolved = result.entries.filter(
           (entry) => entry.artworkUrl != null
         ).length
         logRendererArtwork('debug', 'fetch completed', {
-          albumCount: stableKeys.length,
+          albumCount: requestKeys.length,
           resolvedCount: resolved,
           durationMs: Date.now() - startedAt,
         })
@@ -71,17 +114,17 @@ export function useAlbumArtwork(albumKeys: string[]) {
         const message =
           fetchError instanceof Error ? fetchError.message : String(fetchError)
         logRendererArtwork('error', 'fetch failed', {
-          albumCount: stableKeys.length,
+          albumCount: requestKeys.length,
           durationMs: Date.now() - startedAt,
           error: message,
         })
         setError(message)
-        setArtworkByKey({})
         setLoading(false)
       })
 
     return () => {
       cancelled = true
+      unsub()
     }
   }, [stableKeys])
 

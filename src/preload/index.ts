@@ -71,6 +71,15 @@ const api: ElectronApi = {
         ipcRenderer.removeListener('library:artistPhotoUpdated', wrapped)
       }
     },
+    subscribeAlbumArtwork: (listener) => {
+      const wrapped = (_event: unknown, update: unknown) => {
+        listener(update as Parameters<typeof listener>[0])
+      }
+      ipcRenderer.on('library:albumArtworkUpdated', wrapped)
+      return () => {
+        ipcRenderer.removeListener('library:albumArtworkUpdated', wrapped)
+      }
+    },
     subscribeIndexStatus: (listener) => {
       const wrapped = () => {
         listener()

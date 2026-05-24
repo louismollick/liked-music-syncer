@@ -5,6 +5,7 @@
 - The **Albums** library view loads cover art from embedded tags in local indexed audio files.
 - Artwork is extracted in the main process, normalized to a square JPEG thumbnail, and cached under `userData/artwork-cache`.
 - The renderer loads images through the `app-media://` custom protocol (`app-media://artwork/<cache-key>.jpg`).
+- The renderer keeps an in-memory album-art cache and applies per-album IPC updates as they resolve, so revisiting **Albums** does not blank already-known covers and cold loads can fill progressively.
 - Albums without a readable local file or embedded cover keep the existing placeholder card.
 
 ## Resolution rules
@@ -35,6 +36,7 @@ On startup, main process logs `Main process logging ready` with `tempLogFile` (m
 **Renderer DevTools console**
 
 - `[album-artwork]` — batch fetch start/complete/fail with timing
+- `[album-artwork]` — cache hit when all visible albums were already cached in renderer memory
 - `[artist-image] catalog loaded` — photo URL counts after `listArtists`
 - `[artist-image] photo updated` — incremental push when main process caches one artist (`subscribeArtistPhotos`)
 - `[artist-image] failed to load` — broken/expired remote thumbnail URL (artist id + URL)
@@ -56,3 +58,4 @@ Opening the **Artists** tab calls `library.refreshArtistImages()` when any artis
 ## API
 
 - `window.api.library.getAlbumArtwork(albumKeys: string[])` → `{ entries: { albumKey, artworkUrl }[] }`
+- `window.api.library.subscribeAlbumArtwork(listener)` → pushes `{ albumKey, artworkUrl }` as each album resolves inside a batch

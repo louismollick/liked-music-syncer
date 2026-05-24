@@ -194,7 +194,13 @@ export function registerIpcHandlers(
         context: { albumCount: keys.length },
       })
       try {
-        const entries = await artworkService.getAlbumArtwork(keys)
+        const entries = await artworkService.getAlbumArtwork(keys, {
+          onEntry: (entry) => {
+            if (!window.isDestroyed()) {
+              window.webContents.send('library:albumArtworkUpdated', entry)
+            }
+          },
+        })
         logMain({
           level: 'debug',
           source: 'ipc',

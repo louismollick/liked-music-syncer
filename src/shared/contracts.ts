@@ -268,6 +268,8 @@ export interface AlbumArtworkBatchResult {
   entries: AlbumArtworkEntry[]
 }
 
+export interface AlbumArtworkUpdate extends AlbumArtworkEntry {}
+
 export interface DriftSummary {
   totalManagedTracks: number
   inSyncTracks: number
@@ -358,6 +360,9 @@ export interface ElectronApi {
     subscribeArtists: (listener: () => void) => () => void
     subscribeArtistPhotos: (
       listener: (update: ArtistPhotoUpdate) => void
+    ) => () => void
+    subscribeAlbumArtwork: (
+      listener: (update: AlbumArtworkUpdate) => void
     ) => () => void
     subscribeIndexStatus: (listener: () => void) => () => void
     setArtistFavorite: (
