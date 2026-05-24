@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import sanitizeFilename from 'sanitize-filename'
+import { canonicalAlbumName } from '../../shared/album-key'
 
 export function nowIso() {
   return new Date().toISOString()
@@ -76,7 +77,10 @@ export function buildLibraryPath(
   extension: string
 ) {
   const safeArtist = sanitizePathSegment(artist, 'Unknown Artist')
-  const safeAlbum = sanitizePathSegment(album || '_Singles', '_Singles')
+  const safeAlbum = sanitizePathSegment(
+    canonicalAlbumName(album),
+    canonicalAlbumName(null)
+  )
   const safeTitle = sanitizePathSegment(title, 'Unknown Title')
   return path.join(
     outputDirectory,

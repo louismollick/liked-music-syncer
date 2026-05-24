@@ -238,9 +238,9 @@ Use this order:
    - `Not Matched to YT Music`
    - `Not in Music Category`
 4. watch terminal diagnostics while the job executes, or inspect the per-launch temp log file
-5. use `Reprocess Library` or `Reprocess Artist Songs` to preview modifications before approving them
+5. use `Reprocess Library` or `Reprocess Artist Songs` to preview modifications before approving them, or apply them directly when `Don't require approvals for modifications and deletions` is enabled
 
-This is the fastest way to debug matching and reprocess diffs before approving updates.
+This is the fastest way to debug matching and reprocess diffs before approving updates, or to apply them immediately when approvals are disabled.
 
 ## Commands
 

@@ -126,7 +126,7 @@ If the resolved YouTube video changes, the app should show one combined Proposed
 
 If the resolved YouTube video stays the same, the app should skip the audio download step and focus on metadata, lyrics, artwork, tags, sidecars, and other local updates. Those updates should still be previewed and approved first when approval is required.
 
-Reprocess should compute its proposed changes before writing anything. The app should not modify or delete local artifacts until approval is granted, unless auto-approve is enabled.
+Reprocess should compute its proposed changes before writing anything when approval is required. If `Don't require approvals for modifications and deletions` is enabled, Reprocess should skip Needs Approval entirely and apply changes directly as a normal worker job.
 
 ### 6. Reprocess the Whole Library
 

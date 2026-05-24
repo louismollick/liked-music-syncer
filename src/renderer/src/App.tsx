@@ -1,8 +1,6 @@
-import { buildAlbumKey } from '@shared/album-key'
 import type {
   CommandResult,
   LibraryIndexStatus,
-  LibraryTrackView,
   LikedArtistView,
 } from '@shared/contracts'
 import { type JSX, useEffect, useState } from 'react'
@@ -81,6 +79,14 @@ function App(): JSX.Element {
   const snapshot = useSyncSnapshot()
   const { settings, setSettings, authStatus, setAuthStatus, save } =
     useSettings()
+  const showNeedsApproval =
+    !settings.autoApproveChanges && snapshot.counts.needsApproval > 0
+
+  useEffect(() => {
+    if (screen === 'sync-approval' && !showNeedsApproval) {
+      setScreen('sync-queue')
+    }
+  }, [screen, showNeedsApproval])
 
   useEffect(() => {
     void window.api.library.getIndexStatus().then(setLibraryIndexStatus)
@@ -134,28 +140,6 @@ function App(): JSX.Element {
     setScreen('library-songs')
   }
 
-  const onSearchArtist = (artist: LikedArtistView) => {
-    setArtistFilter({ artistName: artist.name })
-    setAlbumFilter(null)
-    setScreen('library-albums')
-  }
-
-  const onSearchAlbum = (album: AlbumGroup) => {
-    setAlbumFilter({ albumKey: album.key, albumLabel: album.album })
-    setArtistFilter(null)
-    setScreen('library-songs')
-  }
-
-  const onSearchSong = (track: LibraryTrackView) => {
-    const key = buildAlbumKey(track.album, track.albumArtist)
-    setAlbumFilter({
-      albumKey: key,
-      albumLabel: track.album ?? 'Unknown Album',
-    })
-    setArtistFilter(null)
-    setScreen('library-songs')
-  }
-
   const syncLikedSongs = () => onAction(window.api.sync.startLikedSongsSync())
   const reprocessLibrary = () =>
     onAction(window.api.sync.startLibraryReprocess())
@@ -170,11 +154,7 @@ function App(): JSX.Element {
       screen={screen}
       onNavigate={navigateScreen}
       counts={snapshot.counts}
-      artists={artists}
-      tracks={tracks}
-      onSearchArtist={onSearchArtist}
-      onSearchAlbum={onSearchAlbum}
-      onSearchSong={onSearchSong}
+      showNeedsApproval={showNeedsApproval}
     >
       {screen === 'library-artists' ? (
         <ArtistsView

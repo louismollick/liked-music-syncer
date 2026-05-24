@@ -1,4 +1,8 @@
-import { buildAlbumKey } from '@shared/album-key'
+import {
+  buildAlbumKey,
+  canonicalAlbumName,
+  UNKNOWN_ALBUM_NAME,
+} from '@shared/album-key'
 import type { LibraryTrackView } from '@shared/contracts'
 
 export interface AlbumGroup {
@@ -12,33 +16,59 @@ export interface AlbumGroup {
 export function groupAlbums(tracks: LibraryTrackView[]): AlbumGroup[] {
   const grouped = new Map<
     string,
-    { album: string; albumArtist: string; year: number | null; count: number }
+    {
+      album: string
+      albumArtists: Set<string>
+      fallbackArtists: Set<string>
+      year: number | null
+      count: number
+    }
   >()
 
   for (const track of tracks) {
     const key = buildAlbumKey(track.album, track.albumArtist)
+    const album = canonicalAlbumName(track.album)
+    const albumArtist = (track.albumArtist ?? '').trim()
+    const fallbackArtist = (track.artist ?? 'Unknown Artist').trim()
     const existing = grouped.get(key)
     if (existing) {
       existing.count++
+      if (albumArtist) existing.albumArtists.add(albumArtist)
+      if (fallbackArtist) existing.fallbackArtists.add(fallbackArtist)
+      if (existing.year == null && track.year != null) {
+        existing.year = track.year
+      }
       continue
     }
 
     grouped.set(key, {
-      album: track.album ?? 'Unknown Album',
-      albumArtist: track.albumArtist ?? track.artist ?? 'Unknown Artist',
+      album,
+      albumArtists: new Set(albumArtist ? [albumArtist] : []),
+      fallbackArtists: new Set(fallbackArtist ? [fallbackArtist] : []),
       year: track.year,
       count: 1,
     })
   }
 
   return [...grouped.entries()]
-    .map(([key, album]) => ({
-      key,
-      album: album.album,
-      albumArtist: album.albumArtist,
-      year: album.year,
-      trackCount: album.count,
-    }))
+    .map(([key, album]) => {
+      const distinctArtists =
+        album.albumArtists.size > 0
+          ? [...album.albumArtists]
+          : [...album.fallbackArtists]
+      const albumArtist =
+        album.album === UNKNOWN_ALBUM_NAME && distinctArtists.length > 1
+          ? 'Various Artists'
+          : (distinctArtists[0] ?? 'Unknown Artist')
+
+      return {
+        key,
+        album: album.album,
+        albumArtist,
+        year: album.year,
+        trackCount: album.count,
+      }
+    })
     .sort((left, right) => left.album.localeCompare(right.album))
 }
 

@@ -16,6 +16,7 @@ type SectionKey = 'library' | 'sync'
 interface Props {
   screen: Screen
   onNavigate: (screen: Screen) => void
+  showNeedsApproval: boolean
   counts: {
     queue: number
     needsApproval: number
@@ -148,7 +149,12 @@ function NavItem({
   )
 }
 
-export function Sidebar({ screen, onNavigate, counts }: Props): JSX.Element {
+export function Sidebar({
+  screen,
+  onNavigate,
+  counts,
+  showNeedsApproval,
+}: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<SectionKey>>(loadExpanded)
 
   const toggle = (key: SectionKey, firstSubItem: Screen) => {
@@ -227,13 +233,15 @@ export function Sidebar({ screen, onNavigate, counts }: Props): JSX.Element {
             badge={counts.queue}
             onClick={() => onNavigate('sync-queue')}
           />
-          <NavSubItem
-            label="Needs Approval"
-            active={screen === 'sync-approval'}
-            badge={counts.needsApproval}
-            badgeVariant="warning"
-            onClick={() => onNavigate('sync-approval')}
-          />
+          {showNeedsApproval ? (
+            <NavSubItem
+              label="Needs Approval"
+              active={screen === 'sync-approval'}
+              badge={counts.needsApproval}
+              badgeVariant="warning"
+              onClick={() => onNavigate('sync-approval')}
+            />
+          ) : null}
           <NavSubItem
             label="Completed"
             active={screen === 'sync-completed'}

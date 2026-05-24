@@ -21,6 +21,7 @@ from yt_dlp.globals import all_plugins_loaded, plugin_dirs
 from yt_dlp.plugins import load_all_plugins
 from ytmusicapi import YTMusic
 
+from .album_identity import UNKNOWN_ALBUM_NAME, canonical_album_name, is_unknown_album_value
 from .auth import build_browser_auth_client
 from .cover_art import make_square_cover
 from .json_io import emit_event
@@ -190,7 +191,7 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
         album_info = album_value
     else:
         album_info = {}
-    album = str(album_info.get("name") or "_Singles")
+    album = canonical_album_name(str(album_info.get("name") or ""))
     item = SyncItemState(
         id=_slug("item"),
         source_video_id=video_id,
@@ -224,7 +225,7 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
         date=_signature_str(track.get("date")),
         isrc=_signature_str(track.get("isrc")),
     )
-    if item.catalog_release_title and item.album == "_Singles":
+    if item.catalog_release_title and is_unknown_album_value(item.album):
         item.album = item.catalog_release_title
     _refresh_normalized_fields(item)
     return item
@@ -775,7 +776,7 @@ def _album_tracks(
     if not isinstance(album, dict):
         return []
 
-    album_title = str(album.get("title") or album_result.get("title") or "_Singles")
+    album_title = canonical_album_name(str(album.get("title") or album_result.get("title") or ""))
     album_artists = album.get("artists") or album_result.get("artists")
     year = _parse_year(album.get("year"))
     album_tracks = _extract_tracks(album)
@@ -1047,7 +1048,7 @@ def _musicbrainz_enrich(item: SyncItemState) -> None:
         if item.year is None:
             item.year = _parse_year(date.split("-")[0])
     title = release.get("title")
-    if isinstance(title, str) and title and item.album in {"", "_Singles"}:
+    if isinstance(title, str) and title and is_unknown_album_value(item.album):
         item.album = title
     _refresh_normalized_fields(item)
 
@@ -1149,7 +1150,7 @@ def _sync_release_item_metadata(item: SyncItemState, track: dict[str, Any]) -> N
     item.source_origin = "favorite_artist_release"
     item.resolution_method = "favorite_artist_release_exact"
     item.metadata_matched = True
-    if item.catalog_release_title and item.album == "_Singles":
+    if item.catalog_release_title and is_unknown_album_value(item.album):
         item.album = item.catalog_release_title
     artists = _string_list_names(track.get("artists"))
     if artists:
@@ -1159,7 +1160,7 @@ def _sync_release_item_metadata(item: SyncItemState, track: dict[str, Any]) -> N
     album_name = album_info.get("name")
     if isinstance(album_name, str) and album_name:
         item.album = album_name
-    if item.catalog_release_title and item.album == "_Singles":
+    if item.catalog_release_title and is_unknown_album_value(item.album):
         item.album = item.catalog_release_title
     item.track_number = _signature_int(track.get("trackNumber")) or item.track_number
     item.track_total = _signature_int(track.get("trackTotal")) or item.track_total

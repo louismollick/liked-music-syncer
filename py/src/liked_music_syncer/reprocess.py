@@ -4,11 +4,13 @@ import json
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ytmusicapi import YTMusic
 
+from .album_identity import canonical_album_name
 from .auth import build_browser_auth_client
 from .cover_art import make_square_cover
 from .lyrics_language import detect_primary_lyrics_language
@@ -91,7 +93,7 @@ def _candidate_to_item(candidate: dict[str, Any]) -> SyncItemState:
         catalog_release_kind=_string_or_none(candidate.get("catalog_release_kind")),
         title=str(candidate.get("title") or "Unknown Title"),
         artist=str(candidate.get("artist") or "Unknown Artist"),
-        album=str(candidate.get("album") or "_Singles"),
+        album=canonical_album_name(str(candidate.get("album") or "")),
         album_artist=str(
             candidate.get("album_artist") or candidate.get("artist") or "Unknown Artist"
         ),
@@ -115,6 +117,44 @@ def _candidate_to_item(candidate: dict[str, Any]) -> SyncItemState:
         lyrics_status=str(candidate.get("lyrics_status") or "missing"),
         source_kind="reprocess",
     )
+    return item
+
+
+def _item_from_payload(item_payload: dict[str, Any]) -> SyncItemState:
+    item = _candidate_to_item(
+        {
+            "track_work_id": item_payload["id"],
+            "youtube_music_track_id": item_payload.get("youtube_music_track_id"),
+            "resolved_youtube_music_track_id": item_payload.get(
+                "resolved_youtube_music_track_id"
+            ),
+            "spotify_track_id": item_payload.get("spotify_track_id"),
+            "soundcloud_track_id": item_payload.get("soundcloud_track_id"),
+            "source_origin": item_payload.get("source_origin"),
+            "catalog_release_browse_id": item_payload.get("catalog_release_browse_id"),
+            "catalog_release_title": item_payload.get("catalog_release_title"),
+            "catalog_release_kind": item_payload.get("catalog_release_kind"),
+            "title": item_payload.get("title"),
+            "artist": item_payload.get("artist"),
+            "album": item_payload.get("album"),
+            "album_artist": item_payload.get("album_artist"),
+            "track_number": item_payload.get("track_number"),
+            "track_total": item_payload.get("track_total"),
+            "disc_number": item_payload.get("disc_number"),
+            "disc_total": item_payload.get("disc_total"),
+            "year": item_payload.get("year"),
+            "date": item_payload.get("date"),
+            "genre": item_payload.get("genre"),
+            "language": item_payload.get("language"),
+            "isrc": item_payload.get("isrc"),
+            "mb_track_id": item_payload.get("mb_track_id"),
+            "mb_album_id": item_payload.get("mb_album_id"),
+            "mb_releasegroup_id": item_payload.get("mb_releasegroup_id"),
+            "lyrics_status": item_payload.get("lyrics_status"),
+            "source_url": item_payload.get("source_url"),
+        }
+    )
+    item.cover_art_url = _string_or_none(item_payload.get("cover_art_url"))
     return item
 
 
@@ -410,7 +450,14 @@ def _copy_remote_file(config: SyncConfig, local_path: Path, remote_path: str) ->
 
 
 def _delete_remote_file(remote_path: str) -> None:
-    subprocess.run(["rclone", "deletefile", remote_path], check=True, capture_output=True)
+    try:
+        subprocess.run(["rclone", "deletefile", remote_path], check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        # rclone uses exit status 4 for "file/path not found" style conditions.
+        # Deleting stale artifacts should be best-effort and not fail reprocess.
+        if exc.returncode == 4:
+            return
+        raise
 
 
 def _remote_target(config: SyncConfig, local_path: Path) -> str:
@@ -436,48 +483,19 @@ def _sync_remote_artifacts(
         _delete_remote_file(_remote_target(config, old_lrc_path))
 
 
-def apply_reprocess(payload: dict[str, Any]) -> dict[str, Any]:
-    config = _config_from_payload(payload)
-    apply_payload = payload.get("payload")
-    if not isinstance(apply_payload, dict):
-        raise ValueError("Missing apply payload")
+def _parse_apply_payload(apply_payload: dict[str, Any]) -> tuple[
+    SyncItemState,
+    str | None,
+    str | None,
+    str | None,
+    Path,
+    Path | None,
+    bool,
+]:
     item_payload = apply_payload.get("item")
     if not isinstance(item_payload, dict):
         raise ValueError("Missing item payload")
-    item = _candidate_to_item(
-        {
-            "track_work_id": item_payload["id"],
-            "youtube_music_track_id": item_payload.get("youtube_music_track_id"),
-            "resolved_youtube_music_track_id": item_payload.get(
-                "resolved_youtube_music_track_id"
-            ),
-            "spotify_track_id": item_payload.get("spotify_track_id"),
-            "soundcloud_track_id": item_payload.get("soundcloud_track_id"),
-            "source_origin": item_payload.get("source_origin"),
-            "catalog_release_browse_id": item_payload.get("catalog_release_browse_id"),
-            "catalog_release_title": item_payload.get("catalog_release_title"),
-            "catalog_release_kind": item_payload.get("catalog_release_kind"),
-            "title": item_payload.get("title"),
-            "artist": item_payload.get("artist"),
-            "album": item_payload.get("album"),
-            "album_artist": item_payload.get("album_artist"),
-            "track_number": item_payload.get("track_number"),
-            "track_total": item_payload.get("track_total"),
-            "disc_number": item_payload.get("disc_number"),
-            "disc_total": item_payload.get("disc_total"),
-            "year": item_payload.get("year"),
-            "date": item_payload.get("date"),
-            "genre": item_payload.get("genre"),
-            "language": item_payload.get("language"),
-            "isrc": item_payload.get("isrc"),
-            "mb_track_id": item_payload.get("mb_track_id"),
-            "mb_album_id": item_payload.get("mb_album_id"),
-            "mb_releasegroup_id": item_payload.get("mb_releasegroup_id"),
-            "lyrics_status": item_payload.get("lyrics_status"),
-            "source_url": item_payload.get("source_url"),
-        }
-    )
-    item.cover_art_url = _string_or_none(item_payload.get("cover_art_url"))
+    item = _item_from_payload(item_payload)
     lyrics_text = _string_or_none(apply_payload.get("lyrics_text"))
     current_output_path = _string_or_none(apply_payload.get("current_output_path"))
     current_lrc_path = _string_or_none(apply_payload.get("current_lrc_path"))
@@ -488,7 +506,21 @@ def apply_reprocess(payload: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     same_video = bool(apply_payload.get("same_video"))
+    return (
+        item,
+        lyrics_text,
+        current_output_path,
+        current_lrc_path,
+        target_output_path,
+        target_lrc_path,
+        same_video,
+    )
 
+
+def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) -> dict[str, Any]:
+    item, lyrics_text, current_output_path, current_lrc_path, target_output_path, target_lrc_path, same_video = (
+        _parse_apply_payload(apply_payload)
+    )
     cover_bytes: bytes | None = None
     if item.cover_art_url:
         cover_bytes = make_square_cover(_download_bytes(item.cover_art_url))
@@ -550,3 +582,144 @@ def apply_reprocess(payload: dict[str, Any]) -> dict[str, Any]:
         "lrc_path": str(target_lrc_path) if target_lrc_path and target_lrc_path.exists() else None,
         "replaced": True,
     }
+
+
+def apply_reprocess(payload: dict[str, Any]) -> dict[str, Any]:
+    config = _config_from_payload(payload)
+    apply_payload = payload.get("payload")
+    if not isinstance(apply_payload, dict):
+        raise ValueError("Missing apply payload")
+    return _apply_reprocess_payload(config, apply_payload)
+
+
+def _emit_reprocess_job_event(
+    job_id: str,
+    event: str,
+    total_count: int,
+    message: str,
+) -> None:
+    emit_event(
+        {
+            "type": "job",
+            "event": event,
+            "job_id": job_id,
+            "stage": "finalize" if event == "completed" else "source_resolve",
+            "message": message,
+            "total_count": total_count,
+        }
+    )
+
+
+def _emit_reprocess_track(job_id: str, item: SyncItemState) -> None:
+    emit_event(
+        {
+            "type": "track",
+            "event": "upsert",
+            "job_id": job_id,
+            "item": item.as_event_payload(),
+        }
+    )
+
+
+def _emit_reprocess_log(
+    job_id: str,
+    item: SyncItemState,
+    level: str,
+    event: str,
+    message: str,
+) -> None:
+    emit_event(
+        {
+            "type": "log",
+            "job_id": job_id,
+            "item_id": item.id,
+            "youtube_music_track_id": item.youtube_music_track_id,
+            "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+            "level": level,
+            "stage": item.stage,
+            "event": event,
+            "message": message,
+            "context": {},
+        }
+    )
+
+
+def run_reprocess_stream(payload: dict[str, Any]) -> None:
+    config = _config_from_payload(payload)
+    ytmusic = _build_ytmusic_client(config.ytmusic_browser_auth)
+    raw_items = payload.get("items")
+    items = (
+        [candidate for candidate in raw_items if isinstance(candidate, dict)]
+        if isinstance(raw_items, list)
+        else []
+    )
+    total_count = len(items)
+    _emit_reprocess_job_event(config.job_id, "started", total_count, "Reprocess started.")
+
+    try:
+        for index, candidate in enumerate(items, start=1):
+            item = _candidate_to_item(candidate)
+            item.status = "processing"
+            item.stage = "source_resolve"
+            _emit_reprocess_track(config.job_id, item)
+
+            preview = _preview_one(config, ytmusic, candidate, index)
+            apply_payload = preview["payload"]
+            if not isinstance(apply_payload, dict):
+                raise ValueError("Missing preview apply payload")
+
+            item_payload = apply_payload.get("item")
+            if not isinstance(item_payload, dict):
+                raise ValueError("Missing preview item payload")
+
+            item = _item_from_payload(item_payload)
+
+            if preview["action_kind"] == "noop" or not preview["diff"]:
+                item.status = "completed"
+                item.stage = "finalize"
+                item.reason_code = "reprocess_no_changes"
+                item.reason_detail = "No changes found during reprocess."
+                item.output_path = _string_or_none(apply_payload.get("current_output_path")) or _string_or_none(
+                    apply_payload.get("target_output_path")
+                )
+                item.lrc_path = _string_or_none(apply_payload.get("current_lrc_path"))
+                _emit_reprocess_track(config.job_id, item)
+                continue
+
+            try:
+                result = _apply_reprocess_payload(config, apply_payload)
+                item.status = "completed"
+                item.stage = "finalize"
+                item.reason_code = (
+                    "reprocess_updated" if not result["replaced"] else "reprocess_replaced"
+                )
+                item.reason_detail = (
+                    "Reprocess applied without redownloading audio."
+                    if not result["replaced"]
+                    else "Reprocess replaced the local audio file."
+                )
+                item.output_path = str(result["output_path"])
+                item.lrc_path = _string_or_none(result.get("lrc_path"))
+                _emit_reprocess_track(config.job_id, item)
+            except Exception as exc:
+                item.status = "failed_terminal"
+                item.stage = "finalize"
+                item.reason_code = "reprocess_apply_failed"
+                item.reason_detail = str(exc)
+                _emit_reprocess_log(config.job_id, item, "error", "reprocess-apply-failed", str(exc))
+                _emit_reprocess_track(config.job_id, item)
+
+        _emit_reprocess_job_event(
+            config.job_id, "completed", total_count, "Reprocess complete."
+        )
+    except Exception as exc:
+        emit_event(
+            {
+                "type": "job",
+                "event": "failed",
+                "job_id": config.job_id,
+                "stage": "finalize",
+                "message": str(exc),
+                "total_count": total_count,
+            }
+        )

@@ -35,6 +35,7 @@ import {
   SyncService,
 } from '../src/main/services/sync-service'
 import { createTempLogMirror } from '../src/main/services/temp-log-file'
+import { groupAlbums } from '../src/renderer/src/components/library/library-utils'
 
 function makeTempDb() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-db-'))
@@ -629,6 +630,43 @@ describe('library service', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
+  it('normalizes legacy unknown albums on read', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const pythonWorker = {
+      runJsonCommand: vi.fn().mockResolvedValue({
+        scanned_at: '2026-05-18T00:00:00.000Z',
+        files: [
+          scannedFile({
+            album: '_Singles',
+            relative_path: 'Artist/_Singles/01 Track Title.m4a',
+          }),
+        ],
+      }),
+    }
+    const service = new LibraryService(db, {} as never, pythonWorker as never)
+    ;(service as { resolveRoots: () => Promise<unknown> }).resolveRoots =
+      async () =>
+        [
+          {
+            id: 'library-root',
+            kind: 'local',
+            transport: 'filesystem',
+            label: 'Library',
+            uri: '/library',
+            writable: true,
+            managedOutput: true,
+          },
+        ] as unknown as Promise<unknown>
+
+    await service.scanRoots()
+
+    const [track] = await service.listTracks()
+    expect(track?.album).toBe('Unknown Album')
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it('reports local index readiness from root scan state and meta', async () => {
     const { db, sqlite, dir } = makeTempDb()
     const service = new LibraryService(
@@ -842,6 +880,104 @@ describe('library service', () => {
 
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('album grouping', () => {
+  it('collapses unknown albums across artists into one Various Artists card', () => {
+    const albums = groupAlbums([
+      {
+        id: '1',
+        identityKind: 'lms_source',
+        identityValue: 'one',
+        managedByApp: true,
+        tagSchemaVersion: 2,
+        youtubeMusicTrackId: 'yt1',
+        spotifyTrackId: null,
+        soundcloudTrackId: null,
+        resolvedYoutubeMusicTrackId: 'yt1',
+        sourceOrigin: null,
+        catalogReleaseBrowseId: null,
+        catalogReleaseTitle: null,
+        catalogReleaseKind: null,
+        title: 'Track One',
+        artist: 'Artist One',
+        album: 'Unknown Album',
+        albumArtist: 'Artist One',
+        trackNumber: 1,
+        trackTotal: 1,
+        discNumber: 1,
+        discTotal: 1,
+        year: 2024,
+        date: null,
+        genre: null,
+        language: null,
+        isrc: null,
+        mbTrackId: null,
+        mbAlbumId: null,
+        mbReleaseGroupId: null,
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        hasLocalFile: true,
+        hasRemoteFile: false,
+        missingFields: [],
+        preferredFileId: null,
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        lastSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+      {
+        id: '2',
+        identityKind: 'lms_source',
+        identityValue: 'two',
+        managedByApp: true,
+        tagSchemaVersion: 2,
+        youtubeMusicTrackId: 'yt2',
+        spotifyTrackId: null,
+        soundcloudTrackId: null,
+        resolvedYoutubeMusicTrackId: 'yt2',
+        sourceOrigin: null,
+        catalogReleaseBrowseId: null,
+        catalogReleaseTitle: null,
+        catalogReleaseKind: null,
+        title: 'Track Two',
+        artist: 'Artist Two',
+        album: '_Singles',
+        albumArtist: 'Artist Two',
+        trackNumber: 1,
+        trackTotal: 1,
+        discNumber: 1,
+        discTotal: 1,
+        year: 2025,
+        date: null,
+        genre: null,
+        language: null,
+        isrc: null,
+        mbTrackId: null,
+        mbAlbumId: null,
+        mbReleaseGroupId: null,
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        hasLocalFile: true,
+        hasRemoteFile: false,
+        missingFields: [],
+        preferredFileId: null,
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        lastSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+    ])
+
+    expect(albums).toHaveLength(1)
+    expect(albums[0]).toMatchObject({
+      album: 'Unknown Album',
+      albumArtist: 'Various Artists',
+      trackCount: 2,
+    })
   })
 })
 
@@ -1199,147 +1335,6 @@ describe('liked artists service', () => {
         photoUrl: 'https://example.test/artist.jpg',
       },
     ])
-
-    sqlite.close()
-    fs.rmSync(dir, { recursive: true, force: true })
-  })
-
-  it('remembers artist-image misses and skips retrying them later', async () => {
-    const { db, sqlite, dir } = makeTempDb()
-    await db.insert(likedArtistsTable).values({
-      id: 'local_artist_artist',
-      channelId: null,
-      name: 'Artist',
-      normalizedName: 'artist',
-      photoUrl: null,
-      likedTrackCount: 1,
-      lastRefreshedAt: '2026-05-18T00:00:00.000Z',
-      isFavorite: false,
-      favoritedAt: null,
-      lastCatalogRefreshedAt: null,
-      catalogTrackCount: null,
-      createdAt: '2026-05-18T00:00:00.000Z',
-      updatedAt: '2026-05-18T00:00:00.000Z',
-    })
-    const runJsonCommand = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        is_authenticated: true,
-        message: 'ok',
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        artist: null,
-        message: 'No matching artist image found.',
-      })
-    const service = new LikedArtistsService(
-      db,
-      {
-        getRuntimeSettings: vi.fn().mockResolvedValue({
-          ytmusicBrowserAuth: 'auth',
-        }),
-        saveYtMusicBrowserAuth: vi.fn(),
-      } as never,
-      { runJsonCommand } as never
-    )
-
-    const first = await service.refreshArtistImages()
-    const second = await service.refreshArtistImages()
-    const [artist] = await service.listArtists()
-    const [stored] = await db.select().from(likedArtistsTable)
-
-    expect(first.ok).toBe(true)
-    expect(first.message).toContain('1 not found')
-    expect(second).toEqual({
-      ok: true,
-      message: 'Artist images already cached.',
-    })
-    expect(artist?.photoUrl).toBeNull()
-    expect(stored?.photoUrl).toBeTruthy()
-    expect(runJsonCommand).toHaveBeenCalledTimes(2)
-
-    sqlite.close()
-    fs.rmSync(dir, { recursive: true, force: true })
-  })
-
-  it('preserves remembered artist-image misses across artist refreshes', async () => {
-    const { db, sqlite, dir } = makeTempDb()
-    await db.insert(libraryTracksTable).values({
-      id: 'track_1',
-      identityKind: 'file',
-      identityValue: '/music/artist-song.mp3',
-      managedByApp: false,
-      tagSchemaVersion: null,
-      youtubeMusicTrackId: null,
-      spotifyTrackId: null,
-      soundcloudTrackId: null,
-      resolvedYoutubeMusicTrackId: null,
-      sourceOrigin: null,
-      catalogReleaseBrowseId: null,
-      catalogReleaseTitle: null,
-      catalogReleaseKind: null,
-      title: 'Song',
-      artist: 'Artist',
-      album: 'Album',
-      albumArtist: 'Artist',
-      trackNumber: 1,
-      trackTotal: 1,
-      discNumber: 1,
-      discTotal: 1,
-      year: null,
-      date: null,
-      genre: null,
-      language: null,
-      isrc: null,
-      mbTrackId: null,
-      mbAlbumId: null,
-      mbReleaseGroupId: null,
-      lyricsStatus: 'missing',
-      hasEmbeddedLyrics: false,
-      hasSidecarLyrics: false,
-      coverArtPresent: false,
-      missingFieldsJson: '[]',
-      preferredFileId: null,
-      firstSeenAt: '2026-05-18T00:00:00.000Z',
-      lastSeenAt: '2026-05-18T00:00:00.000Z',
-      updatedAt: '2026-05-18T00:00:00.000Z',
-    })
-    const runJsonCommand = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        is_authenticated: true,
-        message: 'ok',
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        artist: null,
-        message: 'No matching artist image found.',
-      })
-    const service = new LikedArtistsService(
-      db,
-      {
-        getRuntimeSettings: vi.fn().mockResolvedValue({
-          ytmusicBrowserAuth: 'auth',
-        }),
-        saveYtMusicBrowserAuth: vi.fn(),
-      } as never,
-      { runJsonCommand } as never
-    )
-
-    await service.refreshArtists()
-    await service.refreshArtistImages()
-    await service.refreshArtists()
-    const result = await service.refreshArtistImages()
-    const [artist] = await service.listArtists()
-
-    expect(result).toEqual({
-      ok: true,
-      message: 'Artist images already cached.',
-    })
-    expect(artist?.photoUrl).toBeNull()
-    expect(runJsonCommand).toHaveBeenCalledTimes(2)
 
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
@@ -2211,6 +2206,293 @@ describe('library reprocess candidates', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
+  it('runs no-approval reprocess as a direct worker job without approval rows', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const child = createMockChildProcess()
+    const spawnNdjsonCommand = vi.fn().mockReturnValue(child)
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          lyricsApiBaseUrl: '',
+          ytmusicBrowserAuth: 'auth',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+          autoApproveChanges: true,
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockResolvedValue({
+          ok: true,
+          is_authenticated: true,
+          message: 'ok',
+        }),
+        spawnNdjsonCommand,
+      } as never,
+      {
+        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
+        getIndexNotReadyResult: vi.fn(),
+        upsertLocalOutputs: vi.fn().mockResolvedValue(undefined),
+        upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      {
+        refreshArtists: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      {
+        ensureReady: vi.fn().mockResolvedValue(undefined),
+        getBundleStatus: vi.fn().mockReturnValue({
+          pluginDirectory: '/tmp/plugins',
+          baseUrl: 'http://127.0.0.1:4416',
+        }),
+      } as never,
+      () => 'ffmpeg'
+    )
+
+    ;(
+      service as unknown as {
+        buildReprocessCandidates: () => Promise<Array<Record<string, unknown>>>
+      }
+    ).buildReprocessCandidates = vi.fn().mockResolvedValue([
+      {
+        track_work_id: 'track_work_1',
+        library_track_id: 'library_track_1',
+        youtube_music_track_id: 'liked123',
+        spotify_track_id: null,
+        soundcloud_track_id: null,
+        resolved_youtube_music_track_id: 'resolved123',
+        source_origin: null,
+        catalog_release_browse_id: null,
+        catalog_release_title: null,
+        catalog_release_kind: null,
+        title: 'Song',
+        artist: 'Artist',
+        album: 'Album',
+        album_artist: 'Artist',
+        track_number: 1,
+        track_total: 1,
+        disc_number: 1,
+        disc_total: 1,
+        year: 2026,
+        date: null,
+        genre: null,
+        language: null,
+        isrc: null,
+        mb_track_id: null,
+        mb_album_id: null,
+        mb_releasegroup_id: null,
+        lyrics_status: 'missing',
+        current_output_path: '/tmp/out/Artist/Album/01 Song.m4a',
+        current_lrc_path: null,
+        cover_art_present: false,
+      } as never,
+    ])
+
+    await expect(service.startLibraryReprocess()).resolves.toMatchObject({
+      ok: true,
+      message: 'Reprocess started.',
+    })
+
+    expect(spawnNdjsonCommand).toHaveBeenCalledWith(
+      'reprocess-job',
+      expect.objectContaining({
+        items: expect.any(Array),
+      })
+    )
+
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'track',
+        event: 'upsert',
+        job_id: 'ignored',
+        item: {
+          id: 'track_work_1',
+          youtube_music_track_id: 'liked123',
+          resolved_youtube_music_track_id: 'resolved123',
+          title: 'Song',
+          artist: 'Artist',
+          album: 'Album',
+          album_artist: 'Artist',
+          source_url: 'https://music.youtube.com/watch?v=liked123',
+          status: 'completed',
+          stage: 'finalize',
+          reason_code: 'reprocess_updated',
+          reason_detail: 'Reprocess applied without redownloading audio.',
+          source_kind: 'reprocess',
+          resolution_method: 'exact',
+          lyrics_status: 'missing',
+          output_path: '/tmp/out/Artist/Album/01 Song.m4a',
+          lrc_path: null,
+        },
+      })}\n`
+    )
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'job',
+        event: 'completed',
+        job_id: 'ignored',
+        stage: 'finalize',
+        total_count: 1,
+        message: 'Reprocess complete.',
+      })}\n`
+    )
+    child.emitExit(0, null)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(await db.select().from(syncApprovalItemsTable)).toHaveLength(0)
+    const [job] = await db.select().from(syncJobsTable)
+    const [track] = await db.select().from(syncJobTracksTable)
+    expect(job?.status).toBe('completed')
+    expect(job?.queueBucket).toBe('completed')
+    expect(track?.terminalOutcome).toBe('updated')
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('queues no-approval reprocess behind an active worker job', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const child = createMockChildProcess()
+    const spawnNdjsonCommand = vi.fn().mockReturnValue(child)
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          lyricsApiBaseUrl: '',
+          ytmusicBrowserAuth: 'auth',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+          autoApproveChanges: true,
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockResolvedValue({
+          ok: true,
+          is_authenticated: true,
+          message: 'ok',
+        }),
+        spawnNdjsonCommand,
+      } as never,
+      {
+        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
+        getIndexNotReadyResult: vi.fn(),
+        upsertLocalOutputs: vi.fn().mockResolvedValue(undefined),
+        upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      {
+        refreshArtists: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      {
+        ensureReady: vi.fn().mockResolvedValue(undefined),
+        getBundleStatus: vi.fn().mockReturnValue({
+          pluginDirectory: '/tmp/plugins',
+          baseUrl: 'http://127.0.0.1:4416',
+        }),
+      } as never,
+      () => 'ffmpeg'
+    )
+
+    ;(
+      service as unknown as {
+        buildReprocessCandidates: () => Promise<Array<Record<string, unknown>>>
+        activeJobId: string | null
+        runScheduler: () => Promise<void>
+      }
+    ).buildReprocessCandidates = vi.fn().mockResolvedValue([
+      {
+        track_work_id: 'track_work_1',
+        library_track_id: 'library_track_1',
+        youtube_music_track_id: 'liked123',
+        resolved_youtube_music_track_id: 'resolved123',
+        title: 'Song',
+        artist: 'Artist',
+        album: 'Album',
+        album_artist: 'Artist',
+        lyrics_status: 'missing',
+        current_output_path: '/tmp/out/Artist/Album/01 Song.m4a',
+        current_lrc_path: null,
+        cover_art_present: false,
+      } as never,
+    ])
+
+    ;(service as unknown as { activeJobId: string | null }).activeJobId = 'busy'
+    await expect(service.startLibraryReprocess()).resolves.toMatchObject({
+      ok: true,
+      message: 'Reprocess queued.',
+    })
+    expect(spawnNdjsonCommand).not.toHaveBeenCalled()
+
+    ;(service as unknown as { activeJobId: string | null }).activeJobId = null
+    await (
+      service as unknown as { runScheduler: () => Promise<void> }
+    ).runScheduler()
+    expect(spawnNdjsonCommand).toHaveBeenCalledWith(
+      'reprocess-job',
+      expect.any(Object)
+    )
+
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'track',
+        event: 'upsert',
+        job_id: 'ignored',
+        item: {
+          id: 'track_work_1',
+          youtube_music_track_id: 'liked123',
+          resolved_youtube_music_track_id: 'resolved123',
+          title: 'Song',
+          artist: 'Artist',
+          album: 'Album',
+          album_artist: 'Artist',
+          source_url: 'https://music.youtube.com/watch?v=liked123',
+          status: 'completed',
+          stage: 'finalize',
+          reason_code: 'reprocess_no_changes',
+          reason_detail: 'No changes found during reprocess.',
+          source_kind: 'reprocess',
+          resolution_method: 'exact',
+          lyrics_status: 'missing',
+          output_path: '/tmp/out/Artist/Album/01 Song.m4a',
+          lrc_path: null,
+        },
+      })}\n`
+    )
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'job',
+        event: 'completed',
+        job_id: 'ignored',
+        stage: 'finalize',
+        total_count: 1,
+        message: 'Reprocess complete.',
+      })}\n`
+    )
+    child.emitExit(0, null)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const [job] = await db.select().from(syncJobsTable)
+    expect(job?.status).toBe('completed')
+    expect(job?.queueBucket).toBe('completed')
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it('includes managed liked-song tracks without source_origin tags', async () => {
     const { db, sqlite, dir } = makeTempDb()
     const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-reprocess-'))
@@ -2439,6 +2721,150 @@ describe('library reprocess candidates', () => {
 
     expect(candidates).toHaveLength(1)
     expect(candidates[0]?.library_track_id).toBe('legacy-liked-track')
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('falls back to existing indexed file when preferred snapshot is stale', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lms-reprocess-stale-')
+    )
+    const stalePath = path.join(localDir, 'Artist', 'Album', '01 Missing.m4a')
+    const validPath = path.join(localDir, 'Artist', 'Album', '01 Song.m4a')
+    fs.mkdirSync(path.dirname(validPath), { recursive: true })
+    fs.writeFileSync(validPath, 'audio')
+
+    await db.insert(libraryRootsTable).values({
+      id: `root_local_${localDir}`,
+      kind: 'local',
+      transport: 'filesystem',
+      label: 'Local output',
+      uri: localDir,
+      writable: true,
+      managedOutput: true,
+      createdAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+      lastScannedAt: null,
+      lastScanStatus: null,
+    })
+
+    await db.insert(libraryTracksTable).values({
+      id: 'stale-track',
+      identityKind: 'lms_source',
+      identityValue: 'youtube_music:stale123',
+      managedByApp: true,
+      tagSchemaVersion: 1,
+      youtubeMusicTrackId: 'stale123',
+      spotifyTrackId: null,
+      soundcloudTrackId: null,
+      resolvedYoutubeMusicTrackId: 'resolved123',
+      sourceOrigin: null,
+      catalogReleaseBrowseId: null,
+      catalogReleaseTitle: null,
+      catalogReleaseKind: null,
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      albumArtist: 'Artist',
+      trackNumber: 1,
+      trackTotal: 1,
+      discNumber: 1,
+      discTotal: 1,
+      year: 2026,
+      date: null,
+      genre: null,
+      language: null,
+      isrc: null,
+      mbTrackId: null,
+      mbAlbumId: null,
+      mbReleaseGroupId: null,
+      lyricsStatus: 'synced',
+      hasEmbeddedLyrics: true,
+      hasSidecarLyrics: false,
+      coverArtPresent: true,
+      missingFieldsJson: '[]',
+      preferredFileId: 'file_stale',
+      firstSeenAt: '2026-05-20T00:00:00.000Z',
+      lastSeenAt: '2026-05-20T00:00:00.000Z',
+      updatedAt: '2026-05-20T00:00:00.000Z',
+    })
+
+    const [localRoot] = await db.select().from(libraryRootsTable)
+    await db.insert(libraryFilesTable).values([
+      {
+        id: 'file_stale',
+        trackId: 'stale-track',
+        rootId: localRoot.id,
+        relativePath: 'Artist/Album/01 Missing.m4a',
+        absolutePathSnapshot: stalePath,
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 0,
+        durationSeconds: null,
+        bitrate: null,
+        modifiedAt: null,
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: null,
+        embeddedLyricsStatus: 'missing',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: '2026-05-20T00:00:00.000Z',
+        firstSeenAt: '2026-05-20T00:00:00.000Z',
+        updatedAt: '2026-05-20T00:00:00.000Z',
+      },
+      {
+        id: 'file_valid',
+        trackId: 'stale-track',
+        rootId: localRoot.id,
+        relativePath: 'Artist/Album/01 Song.m4a',
+        absolutePathSnapshot: validPath,
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 5,
+        durationSeconds: 200,
+        bitrate: 256000,
+        modifiedAt: null,
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: null,
+        embeddedLyricsStatus: 'synced',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: '2026-05-20T00:00:00.000Z',
+        firstSeenAt: '2026-05-20T00:00:00.000Z',
+        updatedAt: '2026-05-20T00:00:00.000Z',
+      },
+    ])
+
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: localDir,
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    const candidates = await (
+      service as unknown as {
+        buildReprocessCandidates: (
+          selectedArtists: []
+        ) => Promise<Array<{ current_output_path: string }>>
+      }
+    ).buildReprocessCandidates([])
+
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0]?.current_output_path).toBe(validPath)
 
     sqlite.close()
     fs.rmSync(localDir, { recursive: true, force: true })

@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from liked_music_syncer.album_identity import UNKNOWN_ALBUM_NAME
 from liked_music_syncer.models import SyncConfig, SyncItemState
 from liked_music_syncer.sync_engine import (
     _canonicalize_track_title,
@@ -57,7 +58,7 @@ def _item(
         source_video_id=source_video_id,
         title=title,
         artist=artist,
-        album="_Singles",
+        album=UNKNOWN_ALBUM_NAME,
         album_artist=artist,
         source_url=f"https://music.youtube.com/watch?v={source_video_id}",
         cover_art_url=None,
@@ -873,7 +874,7 @@ def test_resolve_exact_catalog_rejects_loose_duration_match() -> None:
     assert lyrics_browse_id is None
     assert item.resolution_method == "watch_playlist"
     assert item.selected_source_url is None
-    assert item.album == "_Singles"
+    assert item.album == UNKNOWN_ALBUM_NAME
 
 
 def test_canonicalize_track_title_handles_unwrapped_mv_cases() -> None:
@@ -1004,6 +1005,46 @@ def test_musicbrainz_enrich_fills_album_when_still_fallback(monkeypatch: pytest.
     assert item.mb_album_id == "release123"
     assert item.mb_releasegroup_id == "group123"
     assert item.date == "2025-09-10"
+
+
+def test_musicbrainz_enrich_treats_unknown_album_name_as_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "recordings": [
+                    {
+                        "id": "recording123",
+                        "title": "evergreen",
+                        "score": 100,
+                        "releases": [
+                            {
+                                "id": "release123",
+                                "title": "MusicBrainz Album",
+                                "date": "2025-09-10",
+                                "release-group": {"id": "group123"},
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine.httpx.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    item = _item(title="evergreen", artist="kurayamisaka")
+    item.album = UNKNOWN_ALBUM_NAME
+    item.resolution_method = "watch_playlist"
+
+    _musicbrainz_enrich(item)
+
+    assert item.album == "MusicBrainz Album"
 
 
 def test_musicbrainz_enrich_uses_title_variants_and_stable_release_selection(

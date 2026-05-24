@@ -10,6 +10,7 @@ import type {
   LyricsStatus,
 } from '@shared/contracts'
 import { and, asc, eq, inArray } from 'drizzle-orm'
+import { canonicalAlbumName } from '../../shared/album-key'
 import type { AppDatabase } from '../db/database'
 import {
   libraryFilesTable,
@@ -1848,7 +1849,7 @@ export class LibraryService {
       catalogReleaseKind: track.catalogReleaseKind,
       title: track.title,
       artist: track.artist,
-      album: track.album,
+      album: canonicalAlbumName(track.album),
       albumArtist: track.albumArtist,
       trackNumber: track.trackNumber,
       trackTotal: track.trackTotal,

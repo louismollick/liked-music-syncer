@@ -162,7 +162,7 @@ export function SettingsView({
 
       <SettingsSection title="Preferences">
         <Checkbox
-          label="Auto-approve modifications and deletions"
+          label="Don't require approvals for modifications and deletions"
           checked={settings.autoApproveChanges}
           onChange={(e) => onChange({ autoApproveChanges: e.target.checked })}
         />

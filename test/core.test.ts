@@ -5,43 +5,58 @@ import {
   SpotifyMatcher,
 } from '../src/main/services/spotify-match'
 import {
-  buildLibraryPath,
-  cleanYoutubeTitle,
-  durationSimilarity,
-  jaccardSimilarity,
-  parseYoutubeDuration,
-  sanitizePathSegment,
+  buildLibraryPath as buildLibraryPathUtil,
+  cleanYoutubeTitle as cleanYoutubeTitleUtil,
+  durationSimilarity as durationSimilarityUtil,
+  jaccardSimilarity as jaccardSimilarityUtil,
+  parseYoutubeDuration as parseYoutubeDurationUtil,
+  sanitizePathSegment as sanitizePathSegmentUtil,
 } from '../src/main/services/utils'
+import {
+  buildAlbumKey,
+  canonicalAlbumName,
+  UNKNOWN_ALBUM_NAME,
+} from '../src/shared/album-key'
 
 describe('utilities', () => {
   it('cleans youtube titles and preserves artist guess', () => {
-    expect(cleanYoutubeTitle('YOASOBI - Idol (Official Video)')).toEqual({
+    expect(cleanYoutubeTitleUtil('YOASOBI - Idol (Official Video)')).toEqual({
       title: 'Idol',
       artistGuess: 'YOASOBI',
     })
   })
 
   it('sanitizes output paths deterministically', () => {
-    expect(sanitizePathSegment('  YOASOBI / Idol: Live  ', '_')).toBe(
+    expect(sanitizePathSegmentUtil('  YOASOBI / Idol: Live  ', '_')).toBe(
       'YOASOBI _ Idol_ Live'
     )
     expect(
-      buildLibraryPath(
+      buildLibraryPathUtil(
         '/music',
         'YOASOBI',
         '_Singles',
         'アイドル',
         '.m4a'
-      ).endsWith('YOASOBI/_Singles/アイドル.m4a')
+      ).endsWith(`YOASOBI/${UNKNOWN_ALBUM_NAME}/アイドル.m4a`)
     ).toBe(true)
+    expect(canonicalAlbumName('')).toBe(UNKNOWN_ALBUM_NAME)
+    expect(canonicalAlbumName('_Singles')).toBe(UNKNOWN_ALBUM_NAME)
+  })
+
+  it('builds semantic album keys for unknown albums', () => {
+    expect(buildAlbumKey('Album Name', 'Artist A')).toBe(
+      'Album Name|||Artist A'
+    )
+    expect(buildAlbumKey('_Singles', 'Artist A')).toBe(UNKNOWN_ALBUM_NAME)
+    expect(buildAlbumKey('', 'Artist B')).toBe(UNKNOWN_ALBUM_NAME)
   })
 
   it('parses youtube durations and similarity scores', () => {
-    expect(parseYoutubeDuration('PT3M34S')).toBe(214)
+    expect(parseYoutubeDurationUtil('PT3M34S')).toBe(214)
     expect(
-      jaccardSimilarity('Island In The Sun', 'Island in the Sun')
+      jaccardSimilarityUtil('Island In The Sun', 'Island in the Sun')
     ).toBeGreaterThan(0.9)
-    expect(durationSimilarity(214, 214)).toBe(1)
+    expect(durationSimilarityUtil(214, 214)).toBe(1)
   })
 })
 

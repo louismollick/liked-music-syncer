@@ -18,8 +18,14 @@ from .liked_artists import (
     fetch_liked_artists,
 )
 from .library_scan import inspect_local_files, reconcile_local_root, scan_root
+from .migrate_unknown_album import migrate_unknown_album
 from .models import SyncConfig
-from .reprocess import apply_reprocess, preview_reprocess, preview_reprocess_stream
+from .reprocess import (
+    apply_reprocess,
+    preview_reprocess,
+    preview_reprocess_stream,
+    run_reprocess_stream,
+)
 from .sync_engine import run_sync
 
 
@@ -128,6 +134,14 @@ def main() -> int:
 
     if command == "reprocess-apply":
         write_json(apply_reprocess(payload))
+        return 0
+
+    if command == "reprocess-job":
+        run_reprocess_stream(payload)
+        return 0
+
+    if command == "migrate-unknown-album":
+        write_json(migrate_unknown_album(payload))
         return 0
 
     raise SystemExit(f"unknown command: {command}")

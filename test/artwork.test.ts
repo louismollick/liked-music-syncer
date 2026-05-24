@@ -32,7 +32,11 @@ import {
   artworkCacheFileName,
   buildArtworkCacheKey,
 } from '../src/main/services/artwork-service'
-import { buildAlbumKey, parseAlbumKey } from '../src/shared/album-key'
+import {
+  buildAlbumKey,
+  parseAlbumKey,
+  UNKNOWN_ALBUM_NAME,
+} from '../src/shared/album-key'
 
 function makeTempDb() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-artwork-db-'))
@@ -51,6 +55,13 @@ describe('album key helpers', () => {
       album: 'In Rainbows',
       albumArtist: 'Radiohead',
     })
+  })
+
+  it('collapses unknown albums across artists to one key', () => {
+    expect(buildAlbumKey('_Singles', 'Artist One')).toBe(UNKNOWN_ALBUM_NAME)
+    expect(buildAlbumKey('Unknown Album', 'Artist Two')).toBe(
+      UNKNOWN_ALBUM_NAME
+    )
   })
 })
 

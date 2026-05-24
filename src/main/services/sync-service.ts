@@ -180,6 +180,11 @@ interface ReprocessApplyResult {
   replaced: boolean
 }
 
+interface WorkerLaunchOptions {
+  onCompleted?: () => Promise<void>
+  onFinally?: () => void
+}
+
 interface ReprocessPreviewStreamEvent {
   type: 'reprocess_preview'
   event: 'started' | 'progress' | 'batch' | 'completed'
@@ -1074,31 +1079,49 @@ export class SyncService {
       favoriteArtistCatalogs: FavoriteArtistCatalogPayload[]
     }
   ) {
-    const child = this.pythonWorker.spawnNdjsonCommand('sync-job', {
-      job_id: jobId,
-      output_directory: runtime.outputDirectory,
-      remote_copy_enabled: runtime.remoteCopyEnabled,
-      rclone_remote: runtime.rcloneRemote,
-      remote_music_root: runtime.remoteMusicRoot,
-      ytmusic_browser_auth: browserAuthInput,
-      yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
-      folder_template: runtime.folderTemplate,
-      file_template: runtime.fileTemplate,
-      embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
-      write_lrc_sidecar: runtime.writeLrcSidecar,
-      lyrics_api_base_url: runtime.lyricsApiBaseUrl,
-      spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
-      existing_local_youtube_music_track_ids: existingLocalIds.sourceIds,
-      existing_local_resolved_youtube_music_track_ids:
-        existingLocalIds.resolvedIds,
-      existing_local_track_signatures: existingLocalIds.trackSignatures,
-      existing_local_release_signatures: existingLocalIds.releaseSignatures,
-      favorite_artist_catalogs: existingLocalIds.favoriteArtistCatalogs,
-      force_reprocess: false,
-      ffmpeg_path: this.getBundledFfmpegPath(),
-      yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
-      yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
-    })
+    await this.launchNdjsonWorkerJob(
+      jobId,
+      'sync-job',
+      {
+        job_id: jobId,
+        output_directory: runtime.outputDirectory,
+        remote_copy_enabled: runtime.remoteCopyEnabled,
+        rclone_remote: runtime.rcloneRemote,
+        remote_music_root: runtime.remoteMusicRoot,
+        ytmusic_browser_auth: browserAuthInput,
+        yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
+        folder_template: runtime.folderTemplate,
+        file_template: runtime.fileTemplate,
+        embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
+        write_lrc_sidecar: runtime.writeLrcSidecar,
+        lyrics_api_base_url: runtime.lyricsApiBaseUrl,
+        spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
+        existing_local_youtube_music_track_ids: existingLocalIds.sourceIds,
+        existing_local_resolved_youtube_music_track_ids:
+          existingLocalIds.resolvedIds,
+        existing_local_track_signatures: existingLocalIds.trackSignatures,
+        existing_local_release_signatures: existingLocalIds.releaseSignatures,
+        favorite_artist_catalogs: existingLocalIds.favoriteArtistCatalogs,
+        force_reprocess: false,
+        ffmpeg_path: this.getBundledFfmpegPath(),
+        yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
+        yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
+      },
+      {
+        onCompleted: async () => {
+          await this.refreshIndexedOutputsForJob(jobId)
+        },
+      }
+    )
+  }
+
+  private async launchNdjsonWorkerJob(
+    jobId: string,
+    command: 'sync-job' | 'reprocess-job',
+    payload: Record<string, unknown>,
+    options: WorkerLaunchOptions = {}
+  ) {
+    const child = this.pythonWorker.spawnNdjsonCommand(command, payload)
 
     this.pendingWorkerLaunches.delete(jobId)
     await this.db
@@ -1143,7 +1166,7 @@ export class SyncService {
         where: eq(syncJobsTable.id, jobId),
       })
       if (status === 'completed' && job?.status === 'completed') {
-        await this.refreshIndexedOutputsForJob(jobId)
+        await options.onCompleted?.()
       }
       if (status !== 'completed') {
         this.logSync({
@@ -1161,6 +1184,7 @@ export class SyncService {
           },
         })
       }
+      options.onFinally?.()
       await this.emitSnapshot()
       void this.runScheduler()
     }
@@ -1201,6 +1225,78 @@ export class SyncService {
     })
 
     await this.emitSnapshot()
+  }
+
+  private buildReprocessWorkerPayload(
+    jobId: string,
+    runtime: RuntimeSettingsLike,
+    browserAuthInput: string,
+    poTokenBundle: PoTokenBundle,
+    candidates: ReprocessCandidatePayload[]
+  ) {
+    return {
+      job_id: jobId,
+      output_directory: runtime.outputDirectory,
+      remote_copy_enabled: runtime.remoteCopyEnabled,
+      rclone_remote: runtime.rcloneRemote,
+      remote_music_root: runtime.remoteMusicRoot,
+      ytmusic_browser_auth: browserAuthInput,
+      yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
+      folder_template: runtime.folderTemplate,
+      file_template: runtime.fileTemplate,
+      embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
+      write_lrc_sidecar: runtime.writeLrcSidecar,
+      lyrics_api_base_url: runtime.lyricsApiBaseUrl,
+      spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
+      ffmpeg_path: this.getBundledFfmpegPath(),
+      yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
+      yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
+      items: candidates,
+    }
+  }
+
+  private async startDirectReprocessJob(
+    jobId: string,
+    scope: 'library' | 'artist',
+    runtime: RuntimeSettingsLike,
+    browserAuthInput: string,
+    poTokenBundle: PoTokenBundle,
+    candidates: ReprocessCandidatePayload[]
+  ) {
+    const launch = async () => {
+      await this.launchNdjsonWorkerJob(
+        jobId,
+        'reprocess-job',
+        this.buildReprocessWorkerPayload(
+          jobId,
+          runtime,
+          browserAuthInput,
+          poTokenBundle,
+          candidates
+        ),
+        {
+          onCompleted: async () => {
+            if (scope === 'artist') {
+              await this.cleanupArtistReprocessFiles(jobId)
+            }
+            await this.refreshIndexedOutputsForJob(jobId)
+          },
+          onFinally: () => {
+            if (scope !== 'artist') return
+            this.reprocessPreexistingManagedFiles.delete(jobId)
+          },
+        }
+      )
+    }
+
+    await this.emitSnapshot()
+    if (this.activeJobId || this.activePreviewJobId) {
+      this.pendingWorkerLaunches.set(jobId, launch)
+      return { ok: true, message: 'Reprocess queued.' }
+    }
+
+    await launch()
+    return { ok: true, message: 'Reprocess started.' }
   }
 
   private async failPreparingJob(jobId: string) {
@@ -1313,35 +1409,38 @@ export class SyncService {
         )
       }
 
-      const previewPayload = {
-        job_id: jobId,
-        output_directory: runtime.outputDirectory,
-        remote_copy_enabled: runtime.remoteCopyEnabled,
-        rclone_remote: runtime.rcloneRemote,
-        remote_music_root: runtime.remoteMusicRoot,
-        ytmusic_browser_auth: browserAuthInput,
-        yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
-        folder_template: runtime.folderTemplate,
-        file_template: runtime.fileTemplate,
-        embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
-        write_lrc_sidecar: runtime.writeLrcSidecar,
-        lyrics_api_base_url: runtime.lyricsApiBaseUrl,
-        spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
-        ffmpeg_path: this.getBundledFfmpegPath(),
-        yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
-        yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
-        items: candidates,
+      const reprocessPayload = this.buildReprocessWorkerPayload(
+        jobId,
+        runtime,
+        browserAuthInput,
+        poTokenBundle,
+        candidates
+      )
+      const autoApprove = Boolean(runtime.autoApproveChanges)
+      if (autoApprove) {
+        await this.db
+          .update(syncJobsTable)
+          .set({
+            status: 'queued',
+            queueBucket: 'queue',
+            updatedAt: nowIso(),
+          })
+          .where(eq(syncJobsTable.id, jobId))
+        return await this.startDirectReprocessJob(
+          jobId,
+          scope,
+          runtime,
+          browserAuthInput,
+          poTokenBundle,
+          candidates
+        )
+      }
+
+      const visibleCount = await this.runReprocessPreview(jobId, {
+        ...reprocessPayload,
         batch_size: 25,
         progress_every: 25,
-      }
-      const autoApprove = Boolean(runtime.autoApproveChanges)
-      const visibleCount = await this.runReprocessPreview(
-        jobId,
-        previewPayload,
-        {
-          autoApprove,
-        }
-      )
+      })
 
       if (visibleCount === 0) {
         await this.db
@@ -1362,12 +1461,10 @@ export class SyncService {
 
       await this.recomputeJob(jobId)
       await this.emitSnapshot()
-      if (autoApprove) void this.runScheduler()
       return {
         ok: true,
-        message: autoApprove
-          ? 'Reprocess queued.'
-          : 'Reprocess preview complete. Review changes in Needs Approval.',
+        message:
+          'Reprocess preview complete. Review changes in Needs Approval.',
       }
     } catch (error) {
       await this.failPreparingJob(jobId)
@@ -1377,8 +1474,7 @@ export class SyncService {
 
   private async runReprocessPreview(
     jobId: string,
-    payload: Record<string, unknown>,
-    options: { autoApprove: boolean }
+    payload: Record<string, unknown>
   ): Promise<number> {
     const child = this.pythonWorker.spawnNdjsonCommand(
       'reprocess-preview-stream',
@@ -1447,7 +1543,6 @@ export class SyncService {
             pending = pending
               .then(() =>
                 this.handleReprocessPreviewEvent(jobId, line, {
-                  autoApprove: options.autoApprove,
                   nextSortIndex,
                 })
               )
@@ -1501,7 +1596,7 @@ export class SyncService {
   private async handleReprocessPreviewEvent(
     jobId: string,
     line: string,
-    options: { autoApprove: boolean; nextSortIndex: number }
+    options: { nextSortIndex: number }
   ) {
     let event: ReprocessPreviewStreamEvent
     try {
@@ -1553,7 +1648,6 @@ export class SyncService {
     const persisted = await this.persistReprocessPreviewBatch(
       jobId,
       event.items ?? [],
-      options.autoApprove,
       options.nextSortIndex
     )
     await this.recomputeJob(jobId)
@@ -1564,7 +1658,6 @@ export class SyncService {
   private async persistReprocessPreviewBatch(
     jobId: string,
     rows: ReprocessPreviewRow[],
-    autoApprove: boolean,
     startSortIndex: number
   ) {
     let visibleCountDelta = 0
@@ -1595,8 +1688,8 @@ export class SyncService {
         sortIndex: nextSortIndex,
         status: 'pending',
         stage: 'idle',
-        reasonCode: autoApprove ? '' : 'awaiting_approval',
-        reasonDetail: autoApprove ? '' : 'Waiting for approval.',
+        reasonCode: 'awaiting_approval',
+        reasonDetail: 'Waiting for approval.',
         jobPhase: 'reprocess_preview',
       })
       await this.db.insert(syncApprovalItemsTable).values({
@@ -1604,7 +1697,7 @@ export class SyncService {
         jobId,
         trackWorkId: row.track_work_id,
         libraryTrackId: row.library_track_id,
-        status: autoApprove ? 'approved' : 'pending',
+        status: 'pending',
         actionKind: row.action_kind,
         diffJson: JSON.stringify(row.diff),
         beforeJson: JSON.stringify(row.before),
@@ -1653,6 +1746,7 @@ export class SyncService {
       .where(eq(syncJobsTable.status, 'queued'))
       .orderBy(desc(syncJobsTable.createdAt))
     for (const job of jobs.reverse()) {
+      if (this.pendingWorkerLaunches.has(job.id)) return job
       if (job.kind !== 'reprocess') return job
       const approved = await this.db
         .select()
@@ -2124,11 +2218,17 @@ export class SyncService {
     const terminalOutcome =
       overrides.terminalOutcome ??
       (status === 'completed'
-        ? 'completed'
+        ? reasonCode === 'reprocess_updated'
+          ? 'updated'
+          : reasonCode === 'reprocess_replaced'
+            ? 'replaced'
+            : 'completed'
         : status === 'completed_local_only'
           ? 'completed_local_only'
           : status.startsWith('failed')
-            ? status
+            ? reasonCode === 'reprocess_apply_failed'
+              ? 'failed_reprocess_apply'
+              : status
             : status === 'skipped_existing'
               ? 'skipped_existing'
               : null)
@@ -2371,10 +2471,28 @@ export class SyncService {
         continue
       }
       const localFiles = filesByTrackId.get(track.id) ?? []
-      const selectedFile =
-        localFiles.find((file) => file.id === track.preferredFileId) ??
-        localFiles.find((file) => Boolean(file.absolutePathSnapshot)) ??
-        null
+      const sortedFiles = [...localFiles].sort((left, right) => {
+        const leftPreferred = left.id === track.preferredFileId ? 1 : 0
+        const rightPreferred = right.id === track.preferredFileId ? 1 : 0
+        if (leftPreferred !== rightPreferred)
+          return rightPreferred - leftPreferred
+        const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
+        const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
+        if (leftAbsolute !== rightAbsolute) return rightAbsolute - leftAbsolute
+        return left.relativePath.localeCompare(right.relativePath)
+      })
+      let selectedFile: (typeof localFiles)[number] | null = null
+      for (const file of sortedFiles) {
+        const snapshot = file.absolutePathSnapshot
+        if (!snapshot) continue
+        try {
+          await access(snapshot)
+          selectedFile = file
+          break
+        } catch {
+          // Stale indexed path; try next file variant for this track.
+        }
+      }
       if (!selectedFile?.absolutePathSnapshot) continue
       candidates.push({
         track_work_id: createId('track'),
