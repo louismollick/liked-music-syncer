@@ -3,9 +3,9 @@ import type {
   AuthStatus,
   BinaryStatus,
   CommandResult,
+  LibraryIndexStatus,
   LikedArtistView,
   SettingsSaveResult,
-  SongLogEntry,
   SyncRunDetail,
   SyncRunItemView,
   SyncRunSummary,
@@ -36,6 +36,7 @@ const EMPTY_SETTINGS: AppSettingsView = {
   outputFormat: 'm4a',
   rcloneRemote: '',
   remoteMusicRoot: '',
+  lyricsApiBaseUrl: '',
   hasYtMusicBrowserAuth: false,
   ytDlpCookiesBrowser: 'firefox',
   folderTemplate: '{albumartist}/{album}',
@@ -49,6 +50,16 @@ const EMPTY_AUTH: AuthStatus = {
   isAuthenticated: false,
   hasBrowserAuth: false,
   lastError: null,
+}
+
+const EMPTY_LIBRARY_INDEX_STATUS: LibraryIndexStatus = {
+  currentLocalRootUri: null,
+  ready: false,
+  inProgress: false,
+  reason: 'missing_root',
+  lastScannedAt: null,
+  lastScanStatus: null,
+  indexVersion: null,
 }
 
 const panelClass =
@@ -65,6 +76,13 @@ function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ')
 }
 
+function commandResultFromError(error: unknown): CommandResult {
+  return {
+    ok: false,
+    message: error instanceof Error ? error.message : String(error),
+  }
+}
+
 function App(): JSX.Element {
   const [screen, setScreen] = useState<Screen>('overview')
   const [settings, setSettings] = useState<AppSettingsView>(EMPTY_SETTINGS)
@@ -76,14 +94,15 @@ function App(): JSX.Element {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [loadedRun, setLoadedRun] = useState<SyncRunDetail | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
-  const [runLogs, setRunLogs] = useState<SongLogEntry[]>([])
-  const [selectedLogs, setSelectedLogs] = useState<SongLogEntry[]>([])
   const [message, setMessage] = useState('')
   const [binaryStatus, setBinaryStatus] = useState<BinaryStatus | null>(null)
   const [doctorMessage, setDoctorMessage] = useState('')
   const [captureInFlight, setCaptureInFlight] = useState(false)
   const [artists, setArtists] = useState<LikedArtistView[]>([])
+  const [libraryIndexStatus, setLibraryIndexStatus] =
+    useState<LibraryIndexStatus>(EMPTY_LIBRARY_INDEX_STATUS)
   const [selectedArtistIds, setSelectedArtistIds] = useState<string[]>([])
+  const [artistFilter, setArtistFilter] = useState<'all' | 'favorites'>('all')
   const [refreshArtistsInFlight, setRefreshArtistsInFlight] = useState(false)
   const [syncMissingRemoteInFlight, setSyncMissingRemoteInFlight] =
     useState(false)
@@ -136,18 +155,20 @@ function App(): JSX.Element {
     : { completed: 0, failed: 0, skipped: 0, total: 0 }
 
   const refreshAll = useEffectEvent(async () => {
-    const [nextSettings, nextAuth, nextSnapshot, nextArtists] =
+    const [nextSettings, nextAuth, nextSnapshot, nextArtists, nextIndexStatus] =
       await Promise.all([
         window.api.settings.get(),
         window.api.auth.getStatus(),
         window.api.sync.getSnapshot(),
         window.api.library.listArtists(),
+        window.api.library.getIndexStatus(),
       ])
 
     setSettings(nextSettings)
     setAuthStatus(nextAuth)
     setSnapshot(nextSnapshot)
     setArtists(nextArtists)
+    setLibraryIndexStatus(nextIndexStatus)
     setSelectedArtistIds((current) =>
       current.filter((id) => nextArtists.some((artist) => artist.id === id))
     )
@@ -191,6 +212,23 @@ function App(): JSX.Element {
   }, [selectedRunId])
 
   useEffect(() => {
+    return window.api.library.subscribeArtists(() => {
+      void window.api.library.listArtists().then((nextArtists) => {
+        setArtists(nextArtists)
+        setSelectedArtistIds((current) =>
+          current.filter((id) => nextArtists.some((artist) => artist.id === id))
+        )
+      })
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.api.library.subscribeIndexStatus(() => {
+      void refreshAll()
+    })
+  }, [])
+
+  useEffect(() => {
     if (!selectedRunId || snapshot.activeRun?.id === selectedRunId) {
       return
     }
@@ -223,13 +261,15 @@ function App(): JSX.Element {
   }, [loadedRun, selectedRunId, selectedRunSummary, snapshot.activeRun])
 
   const refreshSettingsAndSnapshot = useEffectEvent(async () => {
-    const [nextSettings, nextSnapshot] = await Promise.all([
+    const [nextSettings, nextSnapshot, nextIndexStatus] = await Promise.all([
       window.api.settings.get(),
       window.api.sync.getSnapshot(),
+      window.api.library.getIndexStatus(),
     ])
 
     setSettings(nextSettings)
     setSnapshot(nextSnapshot)
+    setLibraryIndexStatus(nextIndexStatus)
 
     if (!selectedRunId) {
       setSelectedRunId(
@@ -237,32 +277,6 @@ function App(): JSX.Element {
       )
     }
   })
-
-  useEffect(() => {
-    const run = visibleRun
-    if (!run) {
-      setRunLogs([])
-      return
-    }
-
-    void window.api.sync.getRunLogs(run.id).then(setRunLogs)
-  }, [visibleRun])
-
-  useEffect(() => {
-    const run = visibleRun
-    const item = selectedItem
-    if (!run || !item) {
-      setSelectedLogs([])
-      return
-    }
-
-    void window.api.sync
-      .getSongLogs({
-        runId: run.id,
-        youtubeMusicTrackId: item.youtubeMusicTrackId,
-      })
-      .then(setSelectedLogs)
-  }, [selectedItem, visibleRun])
 
   useEffect(() => {
     if (!visibleRun?.items.length) {
@@ -279,7 +293,7 @@ function App(): JSX.Element {
   }, [selectedItemId, visibleRun])
 
   async function runAction(action: Promise<CommandResult>) {
-    const result = await action
+    const result = await action.catch(commandResultFromError)
     setMessage(
       result.details ? `${result.message} ${result.details}` : result.message
     )
@@ -298,6 +312,7 @@ function App(): JSX.Element {
       ytDlpCookiesBrowser: settings.ytDlpCookiesBrowser,
       rcloneRemote: settings.rcloneRemote,
       remoteMusicRoot: settings.remoteMusicRoot,
+      lyricsApiBaseUrl: settings.lyricsApiBaseUrl,
       folderTemplate: settings.folderTemplate,
       fileTemplate: settings.fileTemplate,
       embedUnsyncedLyrics: settings.embedUnsyncedLyrics,
@@ -369,8 +384,6 @@ function App(): JSX.Element {
     setLoadedRun(null)
     setSelectedRunId(null)
     setSelectedItemId(null)
-    setRunLogs([])
-    setSelectedLogs([])
     await runAction(window.api.sync.clearSyncData())
   }
 
@@ -406,7 +419,7 @@ function App(): JSX.Element {
   async function handleRefreshArtists() {
     setRefreshArtistsInFlight(true)
     try {
-      const result = await window.api.library.refreshArtists()
+      const result = await window.api.library.refreshIndex()
       setMessage(
         result.details ? `${result.message} ${result.details}` : result.message
       )
@@ -422,7 +435,60 @@ function App(): JSX.Element {
 
   async function handleReprocessArtists() {
     if (selectedArtistIds.length === 0) return
-    const result = await window.api.sync.reprocessArtists(selectedArtistIds)
+    const result = await window.api.sync
+      .reprocessArtists(selectedArtistIds)
+      .catch(commandResultFromError)
+    setMessage(
+      result.details ? `${result.message} ${result.details}` : result.message
+    )
+    await refreshAll()
+    if (result.ok) {
+      setScreen('current-run')
+    }
+  }
+
+  async function handleToggleArtistFavorite(artist: LikedArtistView) {
+    const nextFavorite = !artist.isFavorite
+    const result = await window.api.library
+      .setArtistFavorite(artist.id, nextFavorite)
+      .catch(commandResultFromError)
+    setMessage(
+      result.details ? `${result.message} ${result.details}` : result.message
+    )
+    if (!result.ok) {
+      return
+    }
+    const nextArtists = await window.api.library
+      .listArtists()
+      .catch(() => null as LikedArtistView[] | null)
+    if (nextArtists) {
+      setArtists(nextArtists)
+    }
+
+    if (result.details?.includes('firstFavorite=true')) {
+      const syncResult = await window.api.sync
+        .refreshFavoriteArtists([artist.id])
+        .catch(commandResultFromError)
+      setMessage(
+        syncResult.details
+          ? `${result.message} ${syncResult.message} ${syncResult.details}`
+          : `${result.message} ${syncResult.message}`
+      )
+      await refreshAll()
+      if (syncResult.ok) {
+        setScreen('current-run')
+      }
+    }
+  }
+
+  async function handleRefreshFavoriteCatalog() {
+    const favoriteIds = selectedArtistIds.filter((artistId) =>
+      artists.some((artist) => artist.id === artistId && artist.isFavorite)
+    )
+    if (favoriteIds.length === 0) return
+    const result = await window.api.sync
+      .refreshFavoriteArtists(favoriteIds)
+      .catch(commandResultFromError)
     setMessage(
       result.details ? `${result.message} ${result.details}` : result.message
     )
@@ -437,8 +503,6 @@ function App(): JSX.Element {
     setSelectedRunId(null)
     setLoadedRun(null)
     setSelectedItemId(null)
-    setRunLogs([])
-    setSelectedLogs([])
     setScreen('current-run')
     try {
       await runAction(window.api.sync.syncMissingToRemote())
@@ -450,6 +514,13 @@ function App(): JSX.Element {
   const authActionLabel = authStatus.isAuthenticated
     ? 'Disconnect account'
     : 'Pull from browser'
+  const libraryIndexLabel = libraryIndexStatus.inProgress
+    ? 'Indexing library...'
+    : libraryIndexStatus.ready
+      ? 'Library ready'
+      : 'Refresh library required before sync'
+  const syncActionsDisabled =
+    !libraryIndexStatus.ready || libraryIndexStatus.inProgress
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#07090d] font-['IBM_Plex_Sans'] text-slate-100 antialiased">
@@ -506,7 +577,7 @@ function App(): JSX.Element {
               <RailButton
                 active={screen === 'library-artists'}
                 label="Artists"
-                meta={`${artists.length} cached`}
+                meta={`${artists.length} local`}
                 onClick={() => setScreen('library-artists')}
               />
             </nav>
@@ -535,6 +606,7 @@ function App(): JSX.Element {
                   <button
                     className={buttonPrimaryClass}
                     type="button"
+                    disabled={syncActionsDisabled}
                     onClick={() => runAction(window.api.sync.start())}
                   >
                     Start sync
@@ -542,7 +614,7 @@ function App(): JSX.Element {
                   <button
                     className={buttonClass}
                     type="button"
-                    disabled={syncMissingRemoteInFlight}
+                    disabled={syncMissingRemoteInFlight || syncActionsDisabled}
                     onClick={() => void handleSyncMissingToRemote()}
                     title="Copies only missing local tracks to remote. No delete/retag."
                   >
@@ -628,6 +700,9 @@ function App(): JSX.Element {
               {message}
             </div>
           ) : null}
+          <div className={cn(panelClass, 'rounded-[18px] px-4 py-3 text-sm')}>
+            {libraryIndexLabel}
+          </div>
 
           {screen === 'overview' ? (
             <OverviewScreen
@@ -642,6 +717,8 @@ function App(): JSX.Element {
               onStartSync={() => runAction(window.api.sync.start())}
               onSyncMissingToRemote={() => void handleSyncMissingToRemote()}
               syncMissingRemoteInFlight={syncMissingRemoteInFlight}
+              syncActionsDisabled={syncActionsDisabled}
+              libraryIndexLabel={libraryIndexLabel}
               runActive={Boolean(snapshot.activeRun)}
               onOpenSettings={() => setScreen('settings')}
             />
@@ -651,9 +728,7 @@ function App(): JSX.Element {
             <CurrentRunScreen
               activeRun={snapshot.activeRun}
               visibleRun={visibleRun}
-              runLogs={runLogs}
               selectedItem={selectedItem}
-              selectedLogs={selectedLogs}
               onPickItem={setSelectedItemId}
             />
           ) : null}
@@ -663,7 +738,6 @@ function App(): JSX.Element {
               runs={snapshot.runs}
               selectedRunId={selectedRunId}
               visibleRun={visibleRun}
-              runLogs={runLogs}
               onSelectRun={(runId) => void selectRun(runId)}
             />
           ) : null}
@@ -694,6 +768,7 @@ function App(): JSX.Element {
             <LibraryArtistsScreen
               artists={artists}
               selectedArtistIds={selectedArtistIds}
+              artistFilter={artistFilter}
               onToggleArtist={(artistId) =>
                 setSelectedArtistIds((current) =>
                   current.includes(artistId)
@@ -701,9 +776,18 @@ function App(): JSX.Element {
                     : [...current, artistId]
                 )
               }
+              onArtistFilterChange={setArtistFilter}
+              onToggleFavorite={(artist) =>
+                void handleToggleArtistFavorite(artist)
+              }
               onRefreshArtists={() => void handleRefreshArtists()}
               onReprocessArtists={() => void handleReprocessArtists()}
+              onRefreshFavoriteCatalog={() =>
+                void handleRefreshFavoriteCatalog()
+              }
               refreshInFlight={refreshArtistsInFlight}
+              syncActionsDisabled={syncActionsDisabled}
+              libraryIndexLabel={libraryIndexLabel}
               authReady={authStatus.isAuthenticated}
               runActive={Boolean(snapshot.activeRun)}
             />
@@ -717,22 +801,35 @@ function App(): JSX.Element {
 function LibraryArtistsScreen({
   artists,
   selectedArtistIds,
+  artistFilter,
   onToggleArtist,
+  onArtistFilterChange,
+  onToggleFavorite,
   onRefreshArtists,
   onReprocessArtists,
+  onRefreshFavoriteCatalog,
   refreshInFlight,
+  syncActionsDisabled,
+  libraryIndexLabel,
   authReady,
   runActive,
 }: {
   artists: LikedArtistView[]
   selectedArtistIds: string[]
+  artistFilter: 'all' | 'favorites'
   onToggleArtist: (artistId: string) => void
+  onArtistFilterChange: (filter: 'all' | 'favorites') => void
+  onToggleFavorite: (artist: LikedArtistView) => void
   onRefreshArtists: () => void
   onReprocessArtists: () => void
+  onRefreshFavoriteCatalog: () => void
   refreshInFlight: boolean
+  syncActionsDisabled: boolean
+  libraryIndexLabel: string
   authReady: boolean
   runActive: boolean
 }) {
+  const [artistSearch, setArtistSearch] = useState('')
   const selectedArtists = artists.filter((artist) =>
     selectedArtistIds.includes(artist.id)
   )
@@ -740,10 +837,24 @@ function LibraryArtistsScreen({
     (sum, artist) => sum + artist.likedTrackCount,
     0
   )
-  const sortedArtists = [...artists].sort(
-    (a, b) =>
-      b.likedTrackCount - a.likedTrackCount || a.name.localeCompare(b.name)
-  )
+  const selectedFavoriteCount = selectedArtists.filter(
+    (artist) => artist.isFavorite
+  ).length
+  const normalizedArtistSearch = artistSearch.trim().toLowerCase()
+  const sortedArtists = [...artists]
+    .filter((artist) => artistFilter === 'all' || artist.isFavorite)
+    .filter(
+      (artist) =>
+        !normalizedArtistSearch ||
+        artist.name.toLowerCase().includes(normalizedArtistSearch) ||
+        artist.normalizedName.includes(normalizedArtistSearch)
+    )
+    .sort(
+      (a, b) =>
+        Number(b.isFavorite) - Number(a.isFavorite) ||
+        b.likedTrackCount - a.likedTrackCount ||
+        a.name.localeCompare(b.name)
+    )
   return (
     <section className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
       <article className={cn(panelClass, 'grid gap-5 p-6')}>
@@ -751,48 +862,123 @@ function LibraryArtistsScreen({
           <h3 className="font-['Syne'] text-2xl tracking-[-0.04em] text-slate-50">
             Liked artists
           </h3>
-          <button
-            className={buttonClass}
-            type="button"
-            disabled={refreshInFlight}
-            onClick={onRefreshArtists}
-          >
-            {refreshInFlight ? 'Refreshing...' : 'Refresh liked artists'}
-          </button>
-        </div>
-        <div className="grid max-h-[620px] gap-2 overflow-auto pr-1">
-          {sortedArtists.map((artist) => (
+          <span className="text-sm text-slate-400">{libraryIndexLabel}</span>
+          <div className="flex flex-wrap gap-2">
             <button
+              className={cn(
+                buttonGhostClass,
+                artistFilter === 'all' && 'border-cyan-300/35 bg-cyan-300/10'
+              )}
+              type="button"
+              onClick={() => onArtistFilterChange('all')}
+            >
+              All
+            </button>
+            <button
+              className={cn(
+                buttonGhostClass,
+                artistFilter === 'favorites' &&
+                  'border-cyan-300/35 bg-cyan-300/10'
+              )}
+              type="button"
+              onClick={() => onArtistFilterChange('favorites')}
+            >
+              Favorites
+            </button>
+            <button
+              className={buttonClass}
+              type="button"
+              disabled={refreshInFlight}
+              onClick={onRefreshArtists}
+            >
+              {refreshInFlight ? 'Refreshing library...' : 'Refresh library'}
+            </button>
+          </div>
+        </div>
+        <label className="grid gap-2">
+          <span className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
+            Search
+          </span>
+          <input
+            className={inputClass}
+            type="search"
+            value={artistSearch}
+            placeholder="Filter artists"
+            onChange={(event) => setArtistSearch(event.target.value)}
+          />
+        </label>
+        <div className="grid max-h-[620px] gap-2 overflow-auto pr-1">
+          {sortedArtists.length === 0 ? (
+            <p className="rounded-2xl border border-white/6 bg-white/[0.03] px-4 py-5 text-sm text-slate-400">
+              No artists match this search.
+            </p>
+          ) : null}
+          {sortedArtists.map((artist) => (
+            <div
               key={artist.id}
               className={cn(
-                'flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition duration-200',
+                'flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition duration-200',
                 selectedArtistIds.includes(artist.id)
                   ? 'border-cyan-300/35 bg-[#10171d]'
                   : 'border-white/6 bg-white/[0.03] hover:border-white/14'
               )}
-              type="button"
-              onClick={() => onToggleArtist(artist.id)}
             >
-              <span className="min-w-0">
-                <strong className="block truncate text-sm text-slate-50">
-                  {artist.name}
-                </strong>
-                <small className="mt-1 block text-xs text-slate-400">
-                  {artist.likedTrackCount} liked
-                </small>
-              </span>
-              {artist.photoUrl ? (
-                <img
-                  src={artist.photoUrl}
-                  alt={artist.name}
-                  className="h-11 w-11 rounded-full object-cover"
-                />
-              ) : (
-                <div className="grid h-11 w-11 place-content-center rounded-full border border-white/10 bg-white/[0.03] text-xs text-slate-300">
-                  {artist.name.slice(0, 2).toUpperCase()}
-                </div>
-              )}
-            </button>
+              <button
+                className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3 text-left"
+                type="button"
+                onClick={() => onToggleArtist(artist.id)}
+              >
+                <span className="min-w-0">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <strong className="block truncate text-sm text-slate-50">
+                      {artist.name}
+                    </strong>
+                    {artist.isFavorite ? (
+                      <StatusChip tone="accent" label="favorite" compact />
+                    ) : null}
+                  </span>
+                  <small className="mt-1 block text-xs text-slate-400">
+                    {artist.likedTrackCount} liked
+                    {artist.isFavorite
+                      ? ` · last catalog ${artist.lastCatalogRefreshedAt ? formatDateTime(artist.lastCatalogRefreshedAt) : 'never'}`
+                      : ''}
+                  </small>
+                </span>
+                {artist.photoUrl ? (
+                  <img
+                    src={artist.photoUrl}
+                    alt={artist.name}
+                    className="h-11 w-11 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="grid h-11 w-11 place-content-center rounded-full border border-white/10 bg-white/[0.03] text-xs text-slate-300">
+                    {artist.name.slice(0, 2).toUpperCase()}
+                  </span>
+                )}
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className={cn(
+                    'grid h-10 w-10 place-content-center rounded-full border text-lg transition',
+                    artist.isFavorite
+                      ? 'border-cyan-300/35 bg-cyan-300/10 text-cyan-100'
+                      : 'border-white/8 bg-white/[0.03] text-slate-400'
+                  )}
+                  type="button"
+                  title={
+                    artist.isFavorite
+                      ? 'Remove favorite'
+                      : 'Mark favorite and download catalog'
+                  }
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onToggleFavorite(artist)
+                  }}
+                >
+                  {artist.isFavorite ? '★' : '☆'}
+                </button>
+              </div>
+            </div>
           ))}
         </div>
       </article>
@@ -805,10 +991,28 @@ function LibraryArtistsScreen({
           <button
             className={buttonPrimaryClass}
             type="button"
-            disabled={selectedArtistIds.length === 0 || !authReady || runActive}
+            disabled={
+              selectedArtistIds.length === 0 ||
+              !authReady ||
+              runActive ||
+              syncActionsDisabled
+            }
             onClick={onReprocessArtists}
           >
             Reprocess Artist Songs
+          </button>
+          <button
+            className={buttonClass}
+            type="button"
+            disabled={
+              selectedFavoriteCount === 0 ||
+              !authReady ||
+              runActive ||
+              syncActionsDisabled
+            }
+            onClick={onRefreshFavoriteCatalog}
+          >
+            Refresh Favorite Catalog
           </button>
         </div>
         <MetaRow
@@ -816,6 +1020,10 @@ function LibraryArtistsScreen({
           value={String(selectedArtists.length)}
         />
         <MetaRow label="Combined liked tracks" value={String(totalLiked)} />
+        <MetaRow
+          label="Selected favorites"
+          value={String(selectedFavoriteCount)}
+        />
         <div className="grid gap-2">
           {selectedArtists.length === 0 ? (
             <p className="text-sm leading-6 text-slate-400">
@@ -828,6 +1036,9 @@ function LibraryArtistsScreen({
                 className="rounded-2xl border border-white/6 bg-white/[0.03] px-3 py-2 text-sm text-slate-200"
               >
                 {artist.name}
+                {artist.isFavorite && artist.catalogTrackCount != null
+                  ? ` · ${artist.catalogTrackCount} catalog tracks`
+                  : ''}
               </div>
             ))
           )}
@@ -844,6 +1055,8 @@ function OverviewScreen({
   onStartSync,
   onSyncMissingToRemote,
   syncMissingRemoteInFlight,
+  syncActionsDisabled,
+  libraryIndexLabel,
   runActive,
   onOpenSettings,
 }: {
@@ -853,6 +1066,8 @@ function OverviewScreen({
   onStartSync: () => void
   onSyncMissingToRemote: () => void
   syncMissingRemoteInFlight: boolean
+  syncActionsDisabled: boolean
+  libraryIndexLabel: string
   runActive: boolean
   onOpenSettings: () => void
 }) {
@@ -885,10 +1100,12 @@ function OverviewScreen({
             ? 'Worker can fetch liked songs and start exact catalog resolution.'
             : 'Use the selected browser as the default source for YT Music auth. Manual headers stay available in settings as an override.'}
         </p>
+        <p className="text-sm text-slate-400">{libraryIndexLabel}</p>
         <div className="flex flex-wrap gap-3">
           <button
             className={buttonPrimaryClass}
             type="button"
+            disabled={runActive || syncActionsDisabled}
             onClick={onStartSync}
           >
             Start sync
@@ -903,7 +1120,9 @@ function OverviewScreen({
           <button
             className={buttonClass}
             type="button"
-            disabled={runActive || syncMissingRemoteInFlight}
+            disabled={
+              runActive || syncMissingRemoteInFlight || syncActionsDisabled
+            }
             onClick={onSyncMissingToRemote}
             title="Copies only missing local tracks to remote. No delete/retag."
           >
@@ -962,16 +1181,12 @@ function OverviewScreen({
 function CurrentRunScreen({
   activeRun,
   visibleRun,
-  runLogs,
   selectedItem,
-  selectedLogs,
   onPickItem,
 }: {
   activeRun: SyncRunDetail | null
   visibleRun: SyncRunDetail | null
-  runLogs: SongLogEntry[]
   selectedItem: SyncRunItemView | null
-  selectedLogs: SongLogEntry[]
   onPickItem: (itemId: string) => void
 }) {
   if (!visibleRun) {
@@ -1106,18 +1321,6 @@ function CurrentRunScreen({
                 mono
               />
             </div>
-
-            <div className="grid gap-3">
-              <div>
-                <p className="text-[0.68rem] uppercase tracking-[0.16em] text-slate-500">
-                  Item log
-                </p>
-              </div>
-              <LogStream
-                entries={selectedLogs}
-                emptyMessage="No item-level logs yet."
-              />
-            </div>
           </>
         ) : (
           <div className="grid gap-5">
@@ -1126,29 +1329,11 @@ function CurrentRunScreen({
                 No item selected
               </h3>
               <p className="text-sm leading-6 text-slate-400">
-                Pick a run item to inspect metadata and logs.
+                Pick a run item to inspect metadata and status.
               </p>
             </div>
-            <MetaRow
-              label="Log directory"
-              value={visibleRun.logDirectory}
-              mono
-            />
           </div>
         )}
-
-        <div className="grid gap-3">
-          <div>
-            <p className="text-[0.68rem] uppercase tracking-[0.16em] text-slate-500">
-              Run log
-            </p>
-          </div>
-          <LogStream
-            entries={runLogs}
-            emptyMessage="No run-level logs yet."
-            maxHeightClass="max-h-[340px]"
-          />
-        </div>
       </article>
     </section>
   )
@@ -1158,13 +1343,11 @@ function HistoryScreen({
   runs,
   selectedRunId,
   visibleRun,
-  runLogs,
   onSelectRun,
 }: {
   runs: SyncRunSummary[]
   selectedRunId: string | null
   visibleRun: SyncRunDetail | null
-  runLogs: SongLogEntry[]
   onSelectRun: (runId: string) => void
 }) {
   return (
@@ -1249,23 +1432,6 @@ function HistoryScreen({
               <MetaRow
                 label="Skipped"
                 value={String(visibleRun.skippedCount)}
-              />
-              <MetaRow
-                label="Log directory"
-                value={visibleRun.logDirectory}
-                mono
-              />
-            </div>
-            <div className="grid gap-3">
-              <div>
-                <p className="text-[0.68rem] uppercase tracking-[0.16em] text-slate-500">
-                  Run log
-                </p>
-              </div>
-              <LogStream
-                entries={runLogs}
-                emptyMessage="No run-level logs yet."
-                maxHeightClass="max-h-[340px]"
               />
             </div>
           </>
@@ -1530,6 +1696,17 @@ function SettingsScreen({
 
         <div className="grid gap-4">
           <Field
+            label="Lyrics API base URL"
+            value={settings.lyricsApiBaseUrl}
+            onChange={(value) =>
+              onSettingsChange((current) => ({
+                ...current,
+                lyricsApiBaseUrl: value,
+              }))
+            }
+            mono
+          />
+          <Field
             label="rclone remote"
             value={settings.rcloneRemote}
             onChange={(value) =>
@@ -1624,8 +1801,8 @@ function SettingsScreen({
               Danger
             </p>
             <p className="mt-2 text-sm leading-6 text-slate-300">
-              Clears run history, item logs, and processed-song memory. Settings
-              and saved auth stay intact.
+              Clears run history, item metadata/status snapshots, and
+              processed-song memory. Settings and saved auth stay intact.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -1814,65 +1991,6 @@ function ToggleField({
   )
 }
 
-function LogStream({
-  entries,
-  emptyMessage,
-  maxHeightClass = 'max-h-[280px]',
-}: {
-  entries: SongLogEntry[]
-  emptyMessage: string
-  maxHeightClass?: string
-}) {
-  return (
-    <div className={cn('grid gap-2 overflow-auto', maxHeightClass)}>
-      {entries.length ? (
-        entries.map((entry) => {
-          const context = parseLogContext(entry.contextJson)
-          return (
-            <div
-              key={entry.id}
-              className="grid gap-2 rounded-2xl border border-white/6 bg-white/[0.03] px-3.5 py-3 text-sm text-slate-400"
-            >
-              <div className="grid grid-cols-1 gap-2 md:grid-cols-[74px_132px_1fr]">
-                <span
-                  className={cn(
-                    'text-[0.68rem] uppercase tracking-[0.14em]',
-                    entry.level === 'error'
-                      ? 'text-rose-300'
-                      : entry.level === 'warn'
-                        ? 'text-amber-300'
-                        : entry.level === 'info'
-                          ? 'text-cyan-300'
-                          : 'text-slate-500'
-                  )}
-                >
-                  {entry.level}
-                </span>
-                <span className="font-['IBM_Plex_Mono'] text-xs text-slate-300">
-                  {entry.stage}
-                </span>
-                <div className="grid gap-1">
-                  <span className="text-slate-200">{entry.message}</span>
-                  <span className="font-['IBM_Plex_Mono'] text-[11px] text-slate-500">
-                    {entry.event} · {formatDateTime(entry.timestamp)}
-                  </span>
-                </div>
-              </div>
-              {context ? (
-                <pre className="overflow-auto rounded-xl border border-white/6 bg-[#0b0f14] px-3 py-2 font-['IBM_Plex_Mono'] text-[11px] leading-5 text-slate-300 whitespace-pre-wrap break-words">
-                  {context}
-                </pre>
-              ) : null}
-            </div>
-          )
-        })
-      ) : (
-        <p className="text-sm leading-6 text-slate-400">{emptyMessage}</p>
-      )}
-    </div>
-  )
-}
-
 function StatusChip({
   tone,
   label,
@@ -1969,7 +2087,7 @@ function screenCopy(
     case 'settings':
       return 'Browser auth, output, templates, remote copy, and worker doctor checks.'
     case 'library-artists':
-      return 'Cached artist list from liked songs with multi-select reprocess.'
+      return 'Refresh library, manage favorites, and run multi-select reprocess.'
   }
 }
 
@@ -2026,26 +2144,6 @@ function formatTrack(item: SyncRunItemView) {
     return String(item.trackNumber)
   }
   return '—'
-}
-
-function parseLogContext(value: string) {
-  if (!value) return null
-
-  try {
-    const parsed = JSON.parse(value)
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      Object.keys(parsed).length > 0
-    ) {
-      return JSON.stringify(parsed, null, 2)
-    }
-  } catch {
-    return value
-  }
-
-  return null
 }
 
 export default App

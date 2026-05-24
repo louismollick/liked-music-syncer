@@ -27,7 +27,7 @@ The user should be able to:
 - review planned changes before download
 - watch active sync progress
 - let background sync happen on a schedule
-- inspect failures and logs without making debug output the main experience
+- inspect failures and diagnostics without making debug output the main experience
 - copy completed songs to a remote music server
 - check setup and authentication state
 
@@ -40,7 +40,7 @@ Current visible workflows include:
 - YouTube Music authentication
 - fetching liked songs
 - starting and stopping sync work
-- viewing progress, item statuses, item details, and logs
+- viewing progress, item statuses, and item details
 - viewing previous sync runs
 - downloading and tagging songs locally
 - dry-run checks
@@ -91,7 +91,6 @@ Likely views:
 - Albums
 - Artists
 - Playlists, later
-- Recently added
 
 The Library view should not include playback controls.
 
@@ -101,27 +100,9 @@ Source-contribution badges should not appear on Library grid or list cards by de
 
 Remote state belongs in Library as a filter and item detail, because it describes whether inventory exists on the remote music server. It should not be a separate Library subview.
 
-Likely remote-state filters:
+Remote-state filters: All / Remote only / Local only / In both Remote and Local
 
-- Remote only
-- Local only
-- Remote present
-- Remote missing
-- Copy pending
-- Copy failed
-- Already in library
-
-Likely concrete inventory and matching filters:
-
-- Missing from local library
-- Missing from remote library
-- No YouTube Music match
-- Already in library
-- No longer liked
-- Download failed
-- Lyrics missing
-- Album art missing
-- Favorite artists only
+Lyrics filters: All / Synced / Unsynced / None
 
 Albums should be the default Library view once setup is complete.
 
@@ -186,51 +167,119 @@ Likely content:
 - remote library state
 - processing result
 - reprocess action
-- logs behind an expandable debug area
+- diagnostics surfaced in terminal stdout/stderr and mirrored to per-launch temp log files; parsed worker log events also show as pretty terminal lines
 
 Song detail should show source contributions in the most detail. A compact badge row is acceptable on the detail page, with expandable rows for original liked item details such as platform, liked title, liked artist, URL or id, liked date if known, and match reason when available.
 
 ### Sync
 
-Review newly discovered songs and manage download work.
+Review newly discovered songs and manage all async download-related work.
+
+Sync should be the funnel for async downloading operations across the app. Whether work comes from a Liked Songs Sync, a Favorite Artist catalog refresh, or a Copy Missing to Remote action, it should land in the same Sync area.
 
 Sync should show current and pending work, not a history organized around internal runs. If run history remains available, it should be a debug-only surface.
 
 Sync should remain visible in primary navigation even when scheduled background sync exists.
 
-Likely stages:
+For now, live progress should stay inside Sync rather than a persistent shell panel. Primary navigation should stay Library and Sync.
+
+Likely subnavigation:
+
+- Queue
+- Needs approval
+- Completed
+- Failures
+
+Likely job phases:
 
 - setup check
-- fetch liked songs
+- fetch liked songs or liked sources
+- expand favorite-artist catalogs
 - match and compare
 - review preview
-- confirm download
-- active progress
+- confirm changes
+- download audio
+- tag files and write lyrics
+- copy to remote
 - completion summary
 
 Likely content:
 
+- manual sync jobs
+- Liked Songs Sync jobs, whether triggered manually or on a schedule
+- favorite-artist catalog refresh jobs
+- copy-missing-to-remote jobs
 - newly discovered liked songs
 - newly discovered favorite-artist songs
-- songs ready to download
+- tracks ready to download
 - proposed changes awaiting confirmation
 - proposed cleanup awaiting confirmation
-- downloads currently in progress
-- finished downloads
-- failed downloads
+- active tracks and their current step
+- finished job summaries
+- failed jobs and failed tracks
 - timestamp of the last liked-song check
 - manual check-now action
-- download history
-- failure history
-
-Sync content should be organized by state sections rather than a timeline:
-
-- Pending changes
-- Downloading
-- Downloaded
-- Failed
 
 The Sync header should show last checked time and a manual check-now action.
+
+Queue model:
+
+- The underlying async work model is track-first, but the Queue UI should be job-first with expandable nested track rows.
+- Parent job kinds should include Liked Songs Sync jobs, Favorite Artist catalog refresh jobs, and Copy Missing to Remote jobs.
+- Each queued job should appear as a parent row with nested track rows under it.
+- Track rows should be expanded by default when available.
+- If a job has not decomposed into tracks yet, the parent row should still be visible in Queue.
+- Favorite Artist refresh rows should include the artist name directly in the main parent row label.
+
+Child track rows should stay lightweight by default:
+
+- title
+- primary artist
+- Queue State
+- Track Step when active
+- failure reason when failed
+
+Resolved-source badges are not required in the default child row UI for now.
+
+Queue state sections:
+
+- Currently running
+- Queued
+
+Within each Queue state section, rows should still preserve the parent job and nested track structure.
+
+Currently running tracks should sort before queued siblings inside a running job group.
+
+Queue should be the live operational view for running and waiting work. A separate Active view is not needed if Queue already shows Job Phase and Track Step inline. More than one job can be active at the same time.
+
+Needs Approval should be its own Sync view because approval work may need richer diff-style detail than the main Queue.
+
+After approval is granted, tracks should return to Queue to finish remaining work and may then appear in Currently running.
+
+Needs Approval can diverge from the other Sync views:
+
+- Needs Approval should be track-first because approval decisions apply to concrete track-level diffs.
+- Small parent-job context can still be shown, but job grouping is not the primary unit there.
+- Needs Approval is still less finalized than Queue, Completed, and Failures and should not block implementation of those views.
+
+Terminology inside Sync should stay explicit:
+
+- Queue State = Needs approval, Currently running, Queued, Completed, or Failed
+- Job Phase = parent job progress such as fetching liked songs, expanding catalog, or remote copy
+- Track Step = child track progress such as matching, downloading, tagging, writing lyrics, or copying to remote
+
+Completed should use a very similar visual structure to Queue:
+
+- Completed should be job-first, with expandable nested track rows.
+- Completed and Queue should look closely related rather than feeling like separate products.
+- Completed should preserve the parent job context so users can see what trigger produced the finished tracks.
+
+Failures should also use that same grouped structure:
+
+- Failures should be job-first, with expandable nested failed track rows.
+- Failures should preserve parent job context so users can see which trigger produced the failure.
+- Queue, Completed, and Failures should feel like variations of one Sync list system rather than separate layouts.
+- If a parent job finishes with a mix of completed and failed tracks, the whole job should move to Failures rather than being split across Completed and Failures.
 
 ### Settings
 
@@ -251,13 +300,14 @@ Likely content:
 
 - What should the first screen be before setup is complete?
 - What should the first screen be after setup is complete?
-- Should active sync progress be a dedicated screen, a persistent bottom panel, or both?
-- Should logs be hidden inside item details, grouped under a Debug section, or both?
+- Should any in-app diagnostic surface return later, or should terminal diagnostics remain the only debug path?
 - What does the review preview need to show before download?
 - What proposed changes require confirmation before applying to existing library items?
 - Which concrete inventory and matching filters belong in Library versus Sync?
 - Should artist reprocessing live on artist pages, sync review, or both?
-- How much of the current run-history UI remains visible in the main layout?
+- Should completed track rows disappear from Queue immediately, or remain briefly marked done inside a running job group?
+- How much of the current run-history UI remains visible in the debug surface?
+- What exact diff detail and actions should Needs Approval show?
 
 ## Working Assumptions
 
@@ -277,12 +327,24 @@ Likely content:
 - Reprocess actions belong on selected Library items such as artist, album, or song.
 - Sync remains a primary navigation item.
 - Sync shows last liked-song check time and allows a manual check for new songs.
-- Sync includes item-oriented history for downloads and failures.
-- Sync history should be grouped by song state, not internal run.
-- Sync screen should use state sections instead of a timeline.
+- Sync should use subnavigation for Queue, Needs approval, Completed, and Failures.
+- Sync should funnel Liked Songs Sync jobs, Favorite Artist catalog refreshes, and Copy Missing to Remote work into one place.
+- The underlying async work model should be track-first, while Queue, Completed, and Failures remain job-first in the UI.
+- Queue should use state sections instead of a timeline.
+- Queue sections should be Currently running and Queued.
+- Queue should preserve parent jobs with nested track rows, expanded by default when tracks are known.
+- Running work should appear inline in Queue with Job Phase and Track Step visible there.
+- No persistent live sync UI should appear outside Sync for now.
+- More than one active job can exist at the same time.
+- Completed should use the same job-first grouped shape as Queue, with expandable nested tracks.
+- Completed and Queue should look very similar visually.
+- Failures should use the same job-first grouped shape as Queue and Completed.
+- Mixed-result jobs should leave Queue as one group and land in Failures.
+- Needs Approval should be a separate Sync view rather than a section inside Queue.
+- Needs Approval should be track-first, even though Queue, Completed, and Failures stay job-first.
 - Skipped is not a primary Sync bucket; already-known or already-present songs belong in Library inventory state.
 - Favorite Artists extend desired library contents beyond individually liked songs.
-- Favorite Artist MVP can mark artists already known from the library or liked-song discovery.
+- Favorite Artist MVP can mark artists already known from the scanned local library.
 - Favorite Artist target behavior should allow searching for and adding any artist.
 - Favorite Artist discovery should default to official main catalog: albums, singles, and EPs.
 - Favorite Artist discovery should dedupe against liked-song discovery.
@@ -308,9 +370,27 @@ Likely content:
 - Avoid generic review categories such as "Needs attention" or "Low confidence"; use concrete states such as missing local file, missing remote file, no YouTube Music match, failed download, missing lyrics, or missing album art.
 - The app should never play music. It should show metadata, inventory, provenance, local state, remote state, and sync controls.
 - The app should avoid exposing "runs" in primary UI. Users care about discovered songs, pending confirmation, active work, finished work, and concrete failures, not which internal run produced them.
-- Sync should stay visible in primary navigation as the place to inspect discovered songs, pending confirmation, active downloads, download history, failures, and last checked time.
+- Sync should stay visible in primary navigation as the place to inspect discovered songs, pending confirmation, active downloads, completed work, failures, and last checked time.
 - Sync should include songs discovered from Favorite Artists alongside songs discovered from liked music libraries.
 - Sync should merge duplicate desired songs across liked music libraries and Favorite Artist discovery so a song is not downloaded twice.
+- Sync should remain a `Library | Sync` primary-navigation model for now, without a persistent shell progress surface.
+- Sync should use subnavigation for Queue, Needs approval, Completed, and Failures.
+- Queue should be the unified async inbox for Liked Songs Sync jobs, Favorite Artist refreshes, and Copy Missing to Remote jobs.
+- Queue should be organized first by state sections: Currently running and Queued.
+- The underlying async work model should be track-first, while Queue, Completed, and Failures remain job-first in the UI.
+- Parent jobs in Queue should expand into nested track rows, and those nested rows should be expanded by default.
+- Liked Songs Sync jobs, Favorite Artist catalog jobs, and Copy Missing to Remote jobs should all appear as parent rows in the same Queue.
+- Favorite Artist refresh parent rows should include the artist name in the main label.
+- Child track rows should stay lightweight by default and should not show resolved-source badges for now.
+- Needs Approval should be a separate Sync view with richer diff-style detail.
+- Needs Approval should be track-first and may remain less finalized than the other Sync views for now.
+- Once approval is granted, affected tracks should return to Queue for the rest of their lifecycle.
+- Running work should appear inline in Queue with Job Phase and Track Step visible there.
+- More than one active job can run at the same time.
+- Completed should be job-first with expandable track rows, and should visually mirror Queue.
+- Failures should be job-first with expandable track rows, and should visually mirror Queue and Completed.
+- If one job finishes with both completed and failed tracks, that whole job group should land in Failures.
+- Sync should use explicit terminology that separates Queue State, Job Phase, and Track Step.
 - Scheduled background sync should focus on liked-song checks. Favorite Artist catalog refresh can be triggered manually to avoid heavy repeated catalog scans.
 - Favorite Artist catalog refresh should not be a default Sync action; Sync can still show resulting discovered songs, downloads, and failures.
 - Sync should not present "Skipped" as a main state. If a song already exists or needs no action, that should be visible through Library state instead.
@@ -321,4 +401,4 @@ Likely content:
 - Album detail should summarize source contributions; song detail should show full source-contribution rows.
 - Album identity should come from final library metadata. Liked source contributions explain provenance, not album grouping.
 - Artist pages should use track artist by default. Album artist remains visible for album grouping and album detail.
-- Debug and log viewing should be available, but not a main focus.
+- Debug diagnostics should be available via terminal output, but not a main focus.

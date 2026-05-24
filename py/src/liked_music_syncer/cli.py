@@ -11,8 +11,8 @@ from .auth import (
     capture_browser_auth_from_browser,
 )
 from .json_io import read_stdin_json, write_json
-from .liked_artists import fetch_liked_artists
-from .library_scan import scan_root
+from .liked_artists import fetch_artist_images, fetch_liked_artists
+from .library_scan import inspect_local_files, reconcile_local_root, scan_root
 from .models import SyncConfig
 from .sync_engine import run_sync
 
@@ -74,10 +74,28 @@ def main() -> int:
         write_json(scan_root(payload))
         return 0
 
+    if command == "library-reconcile-local-root":
+        write_json(reconcile_local_root(payload))
+        return 0
+
+    if command == "library-inspect-local-files":
+        write_json(inspect_local_files(payload))
+        return 0
+
     if command == "liked-artists":
         write_json(
             fetch_liked_artists(
                 browser_auth_input=str(payload.get("ytmusic_browser_auth", "")),
+            )
+        )
+        return 0
+
+    if command == "artist-images":
+        artists = payload.get("artists")
+        write_json(
+            fetch_artist_images(
+                browser_auth_input=str(payload.get("ytmusic_browser_auth", "")),
+                artists=artists if isinstance(artists, list) else [],
             )
         )
         return 0

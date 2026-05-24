@@ -144,6 +144,10 @@ def _tag_fingerprint(metadata: dict[str, Any]) -> str:
             "spotify_track_id",
             "soundcloud_track_id",
             "resolved_youtube_music_track_id",
+            "source_origin",
+            "catalog_release_browse_id",
+            "catalog_release_title",
+            "catalog_release_kind",
             "title",
             "artist",
             "album",
@@ -200,6 +204,10 @@ def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]
     resolved_youtube_music_track_id = getattr(media, "lms_resolved_youtube_music_track_id", None) or None
     spotify_track_id = getattr(media, "lms_spotify_track_id", None) or None
     soundcloud_track_id = getattr(media, "lms_soundcloud_track_id", None) or None
+    source_origin = getattr(media, "lms_source_origin", None) or None
+    catalog_release_browse_id = getattr(media, "lms_catalog_release_browse_id", None) or None
+    catalog_release_title = getattr(media, "lms_catalog_release_title", None) or None
+    catalog_release_kind = getattr(media, "lms_catalog_release_kind", None) or None
 
     if not youtube_music_track_id:
         youtube_music_track_id = read_legacy_youtube_track_id(path)
@@ -213,6 +221,10 @@ def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]
         "spotify_track_id": spotify_track_id,
         "soundcloud_track_id": soundcloud_track_id,
         "resolved_youtube_music_track_id": resolved_youtube_music_track_id,
+        "source_origin": source_origin,
+        "catalog_release_browse_id": catalog_release_browse_id,
+        "catalog_release_title": catalog_release_title,
+        "catalog_release_kind": catalog_release_kind,
         "title": media.title or None,
         "artist": media.artist or None,
         "album": media.album or None,
@@ -250,6 +262,12 @@ def _read_sidecar_text(path: Path | None) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
+def _sidecar_modified_at(path: Path | None) -> str | None:
+    if not path or not path.is_file():
+        return None
+    return _to_iso_timestamp(path.stat().st_mtime)
+
+
 def _scan_local_file(root_path: Path, file_path: Path, scanned_at: str) -> dict[str, Any]:
     relative_path = file_path.relative_to(root_path).as_posix()
     lrc_path = file_path.with_suffix(".lrc")
@@ -265,6 +283,7 @@ def _scan_local_file(root_path: Path, file_path: Path, scanned_at: str) -> dict[
         "lrc_path": str(lrc_path) if lrc_path.is_file() else None,
         "size_bytes": stat.st_size,
         "modified_at": _to_iso_timestamp(stat.st_mtime),
+        "sidecar_modified_at": _sidecar_modified_at(lrc_path if lrc_path.is_file() else None),
         "audio_sha256": None,
         "last_scanned_at": scanned_at,
         "identity_kind": identity_kind,
@@ -326,6 +345,7 @@ def _scan_remote_file(
         else None,
         "size_bytes": int(listing["Size"]) if isinstance(listing.get("Size"), int | float) else None,
         "modified_at": str(modified) if isinstance(modified, str) and modified else None,
+        "sidecar_modified_at": None,
         "audio_sha256": None,
         "last_scanned_at": scanned_at,
         "identity_kind": identity_kind,
@@ -374,3 +394,80 @@ def scan_root(payload: dict[str, Any]) -> dict[str, Any]:
         return {"scanned_at": scanned_at, "files": remote_files}
 
     raise ValueError(f"Unsupported root transport: {config.transport}")
+
+
+def reconcile_local_root(payload: dict[str, Any]) -> dict[str, Any]:
+    root_path = Path(str(payload.get("uri", ""))).expanduser()
+    if not root_path.is_dir():
+        raise FileNotFoundError(f"Library root not found: {root_path}")
+
+    snapshot_rows = payload.get("known_files")
+    snapshot_by_path: dict[str, dict[str, Any]] = {}
+    if isinstance(snapshot_rows, list):
+        for row in snapshot_rows:
+            if not isinstance(row, dict):
+                continue
+            relative_path = row.get("relative_path")
+            if isinstance(relative_path, str) and relative_path:
+                snapshot_by_path[relative_path] = row
+
+    scanned_at = _now_iso()
+    changed_files: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+
+    for file_path in sorted(root_path.rglob("*.m4a")):
+        if not file_path.is_file():
+            continue
+        relative_path = file_path.relative_to(root_path).as_posix()
+        seen_paths.add(relative_path)
+        stat = file_path.stat()
+        lrc_path = file_path.with_suffix(".lrc")
+        sidecar_modified_at = _sidecar_modified_at(lrc_path if lrc_path.is_file() else None)
+        snapshot = snapshot_by_path.get(relative_path)
+        if (
+            snapshot
+            and snapshot.get("size_bytes") == stat.st_size
+            and snapshot.get("modified_at") == _to_iso_timestamp(stat.st_mtime)
+            and snapshot.get("sidecar_modified_at") == sidecar_modified_at
+        ):
+            continue
+        changed_files.append(_scan_local_file(root_path, file_path, scanned_at))
+
+    deleted_relative_paths = sorted(set(snapshot_by_path) - seen_paths)
+    return {
+        "scanned_at": scanned_at,
+        "files": changed_files,
+        "deleted_relative_paths": deleted_relative_paths,
+    }
+
+
+def inspect_local_files(payload: dict[str, Any]) -> dict[str, Any]:
+    root_path = Path(str(payload.get("uri", ""))).expanduser()
+    if not root_path.is_dir():
+        raise FileNotFoundError(f"Library root not found: {root_path}")
+
+    requested_paths = payload.get("absolute_paths")
+    absolute_paths: list[str] = []
+    if isinstance(requested_paths, list):
+        absolute_paths = [str(value) for value in requested_paths if isinstance(value, str) and value]
+
+    scanned_at = _now_iso()
+    files: list[dict[str, Any]] = []
+    seen_relative_paths: set[str] = set()
+    for raw_path in absolute_paths:
+        file_path = Path(raw_path).expanduser()
+        if not file_path.is_file():
+            continue
+        try:
+            relative_path = file_path.relative_to(root_path).as_posix()
+        except ValueError:
+            continue
+        if relative_path in seen_relative_paths:
+            continue
+        seen_relative_paths.add(relative_path)
+        files.append(_scan_local_file(root_path, file_path, scanned_at))
+
+    return {
+        "scanned_at": scanned_at,
+        "files": files,
+    }

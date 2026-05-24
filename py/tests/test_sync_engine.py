@@ -7,14 +7,19 @@ import pytest
 
 from liked_music_syncer.models import SyncConfig, SyncItemState
 from liked_music_syncer.sync_engine import (
+    _canonicalize_track_title,
     _build_yt_dlp_options,
     _build_ytmusic_client,
     _configure_yt_dlp_plugins,
+    _dedupe_tracks,
+    _discover_artist_catalog_tracks,
     _download_audio,
     _musicbrainz_enrich,
+    _resolve_best_lyrics,
     run_sync,
     _resolve_exact_catalog,
     _resolve_lyrics,
+    _skip_reason_for_existing_signature,
 )
 
 
@@ -34,6 +39,8 @@ def _config(tmp_path: Path) -> SyncConfig:
         file_template="{track:02d} {title}",
         embed_unsynced_lyrics=True,
         write_lrc_sidecar=True,
+        lyrics_api_base_url="",
+        spotify_match_enabled=False,
         ffmpeg_path="ffmpeg",
         yt_dlp_plugin_dir=str(plugin_dir),
         yt_dlp_po_token_base_url="http://127.0.0.1:4416",
@@ -252,6 +259,287 @@ def test_run_sync_sets_language_for_unsynced_lyrics_even_when_embed_disabled(
     assert final_item["language"] == "en"
     assert final_item["lyrics_status"] == "plain"
     assert tag_calls == [("en", None)]
+
+
+def test_dedupe_tracks_prefers_album_over_songs_duplicate() -> None:
+    tracks = _dedupe_tracks(
+        [
+            {
+                "videoId": "same",
+                "title": "Song",
+                "artists": [{"name": "Artist"}],
+                "catalogSource": "songs",
+            },
+            {
+                "videoId": "same",
+                "title": "Song",
+                "artists": [{"name": "Artist"}],
+                "catalogSource": "album",
+            },
+        ]
+    )
+
+    assert len(tracks) == 1
+    assert tracks[0]["catalogSource"] == "album"
+
+
+def test_discover_artist_catalog_uses_albums_and_singles_only() -> None:
+    class FakeYTMusic:
+        def get_artist(self, channel_id: str) -> dict[str, object]:
+            assert channel_id == "channel_1"
+            return {
+                "albums": {
+                    "browseId": "albums",
+                    "params": "album_params",
+                    "results": [],
+                },
+                "singles": {
+                    "browseId": "singles",
+                    "params": "single_params",
+                    "results": [],
+                },
+            }
+
+        def get_artist_albums(
+            self, browseId: str, params: str, limit: int | None = None
+        ) -> list[dict[str, object]]:
+            assert limit is None
+            if browseId == "albums":
+                assert params == "album_params"
+                return [{"browseId": "album_1", "title": "Album One"}]
+            if browseId == "singles":
+                assert params == "single_params"
+                return [{"browseId": "single_1", "title": "Single One"}]
+            raise AssertionError(browseId)
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            if browseId == "album_1":
+                return {
+                    "title": "Album One",
+                    "artists": [{"name": "Artist"}],
+                    "tracks": [{"videoId": "album_track", "title": "Album Track"}],
+                }
+            if browseId == "single_1":
+                return {
+                    "title": "Single One",
+                    "artists": [{"name": "Artist"}],
+                    "tracks": [{"videoId": "single_track", "title": "Single Track"}],
+                }
+            raise AssertionError(browseId)
+
+    tracks = _discover_artist_catalog_tracks(
+        FakeYTMusic(),
+        {
+            "id": "artist_1",
+            "channel_id": "channel_1",
+            "name": "Artist",
+            "normalized_name": "artist",
+        },
+    )
+
+    assert [track["videoId"] for track in tracks] == [
+        "album_track",
+        "single_track",
+    ]
+    assert {track["sourceKind"] for track in tracks} == {"favorite_artist_catalog"}
+    assert {track["sourceOrigin"] for track in tracks} == {"favorite_artist_release"}
+
+
+def test_run_sync_favorite_catalog_items_use_favorite_source_kind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[dict[str, Any]] = []
+    config = _config(tmp_path)
+    config.dry_run = True
+    config.favorite_artist_catalogs = [
+        {
+            "id": "artist_1",
+            "channel_id": "channel_1",
+            "name": "Artist",
+            "normalized_name": "artist",
+        }
+    ]
+
+    class FakeYTMusic:
+        pass
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.emit_event", events.append)
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._build_ytmusic_client",
+        lambda *args, **kwargs: FakeYTMusic(),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._discover_artist_catalog_tracks",
+        lambda *args, **kwargs: [
+            {
+                "videoId": "catalog123",
+                "title": "Catalog Song",
+                "artists": [{"name": "Artist"}],
+                "sourceKind": "favorite_artist_catalog",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._resolve_exact_catalog",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._musicbrainz_enrich",
+        lambda item: None,
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._resolve_lyrics",
+        lambda *args, **kwargs: (None, None),
+    )
+
+    run_sync(config)
+
+    item_events = [event["item"] for event in events if event.get("type") == "item"]
+    assert item_events[-1]["source_kind"] == "favorite_artist_catalog"
+    completed = [event for event in events if event.get("event") == "completed"]
+    assert completed[-1]["context"]["favorite_artist_catalog_counts"] == {
+        "artist_1": 1
+    }
+
+
+def test_run_sync_favorite_catalog_items_skip_generic_resolution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _config(tmp_path)
+    config.dry_run = True
+    config.favorite_artist_catalogs = [
+        {
+            "id": "artist_1",
+            "channel_id": "channel_1",
+            "name": "Artist",
+            "normalized_name": "artist",
+        }
+    ]
+
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            assert videoId == "catalog123"
+            assert limit == 1
+            return {"lyrics": None}
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.emit_event", lambda event: None)
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._build_ytmusic_client",
+        lambda *args, **kwargs: FakeYTMusic(),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._discover_artist_catalog_tracks",
+        lambda *args, **kwargs: [
+            {
+                "videoId": "catalog123",
+                "title": "Catalog Song",
+                "artists": [{"name": "Artist"}],
+                "sourceKind": "favorite_artist_catalog",
+                "sourceOrigin": "favorite_artist_release",
+                "catalogReleaseBrowseId": "release123",
+                "catalogReleaseTitle": "Release One",
+                "catalogReleaseKind": "single",
+                "trackNumber": 1,
+                "trackTotal": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._resolve_exact_catalog",
+        lambda *args, **kwargs: pytest.fail("generic resolution should be skipped"),
+    )
+
+    run_sync(config)
+
+
+def test_skip_existing_prevents_duplicate_favorite_catalog_download(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[dict[str, Any]] = []
+    config = _config(tmp_path)
+    config.favorite_artist_catalogs = [
+        {
+            "id": "artist_1",
+            "channel_id": "channel_1",
+            "name": "Artist",
+            "normalized_name": "artist",
+        }
+    ]
+    config.existing_local_youtube_music_track_ids = ["catalog123"]
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.emit_event", events.append)
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._build_ytmusic_client",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._discover_artist_catalog_tracks",
+        lambda *args, **kwargs: [
+            {
+                "videoId": "catalog123",
+                "title": "Catalog Song",
+                "artists": [{"name": "Artist"}],
+                "sourceKind": "favorite_artist_catalog",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._download_audio",
+        lambda *args, **kwargs: pytest.fail("download should be skipped"),
+    )
+
+    run_sync(config)
+
+    item_events = [event["item"] for event in events if event.get("type") == "item"]
+    assert item_events[-1]["status"] == "skipped_existing"
+    assert item_events[-1]["reason_code"] == "existing_library_identity"
+
+
+def test_release_dedupe_skips_same_release_but_keeps_other_release() -> None:
+    config = SyncConfig.from_payload(
+        {
+            "run_id": "run_1",
+            "output_directory": "/tmp/out",
+            "dry_run": True,
+            "remote_copy_enabled": False,
+            "rclone_remote": "",
+            "remote_music_root": "",
+            "ytmusic_browser_auth": "cookie: a=b",
+            "yt_dlp_cookies_browser": "firefox",
+            "folder_template": "{albumartist}/{album}",
+            "file_template": "{track:02d} {title}",
+            "embed_unsynced_lyrics": True,
+            "write_lrc_sidecar": True,
+            "lyrics_api_base_url": "",
+            "spotify_match_enabled": False,
+            "ffmpeg_path": "ffmpeg",
+            "yt_dlp_plugin_dir": "",
+            "yt_dlp_po_token_base_url": "",
+            "existing_local_release_signatures": [
+                {
+                    "artist": "Artist",
+                    "title": "Song",
+                    "catalogReleaseBrowseId": "release123",
+                    "trackNumber": 1,
+                }
+            ],
+            "existing_local_track_signatures": [],
+        }
+    )
+    item = _item(title="Song", artist="Artist")
+    item.source_origin = "favorite_artist_release"
+    item.catalog_release_browse_id = "release123"
+    item.track_number = 1
+    item.normalized_primary_artist = "artist"
+    item.normalized_title = "song"
+
+    assert _skip_reason_for_existing_signature(config, item) == (
+        "existing_release",
+        "Matching managed local release identity already scanned.",
+    )
+
+    item.catalog_release_browse_id = "release999"
+    assert _skip_reason_for_existing_signature(config, item) is None
 
 
 def test_resolve_exact_catalog_keeps_direct_album_match() -> None:
@@ -568,6 +856,12 @@ def test_resolve_exact_catalog_rejects_loose_duration_match() -> None:
     assert item.album == "_Singles"
 
 
+def test_canonicalize_track_title_handles_unwrapped_mv_cases() -> None:
+    assert _canonicalize_track_title("tricot『POOL』MV", ["tricot"]) == "POOL"
+    assert _canonicalize_track_title('tricot "potage" MV', ["tricot"]) == "potage"
+    assert _canonicalize_track_title("tricot『E』MV", ["tricot"]) == "E"
+
+
 def test_download_audio_uses_selected_source_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
@@ -767,3 +1061,31 @@ def test_musicbrainz_enrich_uses_title_variants_and_stable_release_selection(
     assert item.mb_releasegroup_id == "group123"
     assert item.date == "2025-09-10"
     assert item.isrc == "JPL542500741"
+
+
+def test_resolve_best_lyrics_prefers_spotify_synced_over_yt_plain(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = _config(tmp_path)
+    config.lyrics_api_base_url = "https://lyrics.example.test/api"
+    config.spotify_match_enabled = True
+    item = _item(title="Song", artist="Artist")
+
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._resolve_lyrics",
+        lambda *args, **kwargs: ("plain line\n", "ytmusic"),
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._spotify_match_track",
+        lambda current_item: "spotify123",
+    )
+    monkeypatch.setattr(
+        "liked_music_syncer.sync_engine._spotify_fetch_lyrics",
+        lambda spotify_track_id, lyrics_api_base_url: ("[00:01.00]line\n", "synced"),
+    )
+
+    lyrics_text, lyrics_source = _resolve_best_lyrics(config, object(), item, "lyrics123")
+
+    assert lyrics_text == "[00:01.00]line\n"
+    assert lyrics_source == "spotify"
+    assert item.spotify_track_id == "spotify123"

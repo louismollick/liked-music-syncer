@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS: AppSettingsView = {
   outputFormat: 'm4a',
   rcloneRemote: '',
   remoteMusicRoot: '',
+  lyricsApiBaseUrl: '',
   hasYtMusicBrowserAuth: false,
   ytDlpCookiesBrowser: 'firefox',
   folderTemplate: '{albumartist}/{album}',
@@ -39,6 +40,7 @@ interface PersistedSettingsFile {
   remoteCopyEnabled: boolean
   rcloneRemote: string
   remoteMusicRoot: string
+  lyricsApiBaseUrl: string
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
   folderTemplate: string
   fileTemplate: string
@@ -52,6 +54,7 @@ export interface RuntimeSettings {
   remoteCopyEnabled: boolean
   rcloneRemote: string
   remoteMusicRoot: string
+  lyricsApiBaseUrl: string
   ytmusicBrowserAuth: string
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
   folderTemplate: string
@@ -85,6 +88,9 @@ export class SettingsService {
       remoteMusicRoot:
         persisted?.remoteMusicRoot ??
         this.getPlainValue(rowMap, 'remoteMusicRoot'),
+      lyricsApiBaseUrl:
+        persisted?.lyricsApiBaseUrl ??
+        this.getPlainValue(rowMap, 'lyricsApiBaseUrl'),
       hasYtMusicBrowserAuth: this.hasStoredSecret(rowMap, 'ytmusicBrowserAuth'),
       ytDlpCookiesBrowser:
         persisted?.ytDlpCookiesBrowser ?? this.getCookiesBrowserValue(rowMap),
@@ -119,6 +125,7 @@ export class SettingsService {
     await this.writeValue(COOKIES_BROWSER_EXPLICIT_KEY, 'true')
     await this.writeValue('rcloneRemote', persisted.rcloneRemote)
     await this.writeValue('remoteMusicRoot', persisted.remoteMusicRoot)
+    await this.writeValue('lyricsApiBaseUrl', persisted.lyricsApiBaseUrl)
     await this.writeValue('folderTemplate', persisted.folderTemplate)
     await this.writeValue('fileTemplate', persisted.fileTemplate)
     await this.writeValue(
@@ -168,6 +175,10 @@ export class SettingsService {
       remoteMusicRoot:
         persisted?.remoteMusicRoot ??
         (await this.getSecretOrPlain('remoteMusicRoot')) ??
+        '',
+      lyricsApiBaseUrl:
+        persisted?.lyricsApiBaseUrl ??
+        (await this.getSecretOrPlain('lyricsApiBaseUrl')) ??
         '',
       ytmusicBrowserAuth:
         (await this.getSecretOrPlain('ytmusicBrowserAuth')) ?? '',
@@ -343,6 +354,10 @@ export class SettingsService {
       remoteCopyEnabled: input.remoteCopyEnabled,
       rcloneRemote: input.rcloneRemote.trim(),
       remoteMusicRoot: input.remoteMusicRoot.trim(),
+      lyricsApiBaseUrl:
+        typeof input.lyricsApiBaseUrl === 'string'
+          ? input.lyricsApiBaseUrl.trim()
+          : '',
       ytDlpCookiesBrowser: input.ytDlpCookiesBrowser,
       folderTemplate:
         input.folderTemplate.trim() || DEFAULT_SETTINGS.folderTemplate,
@@ -373,6 +388,10 @@ export class SettingsService {
         remoteMusicRoot:
           typeof parsed.remoteMusicRoot === 'string'
             ? parsed.remoteMusicRoot
+            : '',
+        lyricsApiBaseUrl:
+          typeof parsed.lyricsApiBaseUrl === 'string'
+            ? parsed.lyricsApiBaseUrl
             : '',
         ytDlpCookiesBrowser: this.normalizeCookiesBrowserValue(
           typeof parsed.ytDlpCookiesBrowser === 'string'

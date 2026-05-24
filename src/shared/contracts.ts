@@ -1,4 +1,8 @@
-export type SyncTriggerMode = 'manual' | 'artist_reprocess' | 'remote_backfill'
+export type SyncTriggerMode =
+  | 'manual'
+  | 'artist_reprocess'
+  | 'remote_backfill'
+  | 'favorite_artist_catalog'
 
 export type SyncStage =
   | 'idle'
@@ -64,6 +68,7 @@ export interface AppSettingsView {
   outputFormat: 'm4a'
   rcloneRemote: string
   remoteMusicRoot: string
+  lyricsApiBaseUrl: string
   hasYtMusicBrowserAuth: boolean
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
   folderTemplate: string
@@ -80,6 +85,7 @@ export interface SaveSettingsInput {
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
   rcloneRemote: string
   remoteMusicRoot: string
+  lyricsApiBaseUrl: string
   folderTemplate: string
   fileTemplate: string
   embedUnsyncedLyrics: boolean
@@ -100,19 +106,6 @@ export interface BrowserAuthCaptureResult extends CommandResult {
   authStatus: AuthStatus
 }
 
-export interface SongLogEntry {
-  id: number
-  runId: string
-  youtubeMusicTrackId: string
-  itemId: string
-  timestamp: string
-  level: LogLevel
-  stage: SyncStage
-  event: string
-  message: string
-  contextJson: string
-}
-
 export interface SyncRunItemView {
   id: string
   runId: string
@@ -131,6 +124,10 @@ export interface SyncRunItemView {
   reasonCode: string
   reasonDetail: string
   sourceKind: string
+  sourceOrigin: string | null
+  catalogReleaseBrowseId: string | null
+  catalogReleaseTitle: string | null
+  catalogReleaseKind: string | null
   videoType: string | null
   resolutionMethod: string
   trackNumber: number | null
@@ -162,7 +159,6 @@ export interface SyncRunSummary {
   status: RunStatus
   startedAt: string
   endedAt: string | null
-  logDirectory: string
   totalCount: number
   processedCount: number
   completedCount: number
@@ -205,6 +201,7 @@ export interface LibraryFileView {
   durationSeconds: number | null
   bitrate: number | null
   modifiedAt: string | null
+  sidecarModifiedAt: string | null
   audioSha256: string | null
   tagFingerprint: string | null
   embeddedLyricsStatus: LyricsStatus
@@ -226,6 +223,10 @@ export interface LibraryTrackView {
   spotifyTrackId: string | null
   soundcloudTrackId: string | null
   resolvedYoutubeMusicTrackId: string | null
+  sourceOrigin: string | null
+  catalogReleaseBrowseId: string | null
+  catalogReleaseTitle: string | null
+  catalogReleaseKind: string | null
   title: string | null
   artist: string | null
   album: string | null
@@ -270,6 +271,22 @@ export interface DriftSummary {
   missingEverywhereTracks: number
 }
 
+export interface LibraryIndexStatus {
+  currentLocalRootUri: string | null
+  ready: boolean
+  inProgress: boolean
+  reason:
+    | 'ready'
+    | 'missing_root'
+    | 'never_scanned'
+    | 'stale_version'
+    | 'scan_failed'
+    | 'bootstrapping'
+  lastScannedAt: string | null
+  lastScanStatus: string | null
+  indexVersion: number | null
+}
+
 export interface BinaryStatus {
   uv: string | null
   ffmpeg: string | null
@@ -284,6 +301,10 @@ export interface LikedArtistView {
   photoUrl: string | null
   likedTrackCount: number
   lastRefreshedAt: string
+  isFavorite: boolean
+  favoritedAt: string | null
+  lastCatalogRefreshedAt: string | null
+  catalogTrackCount: number | null
 }
 
 export interface ElectronApi {
@@ -304,6 +325,7 @@ export interface ElectronApi {
   sync: {
     start: (input?: { mode?: SyncTriggerMode }) => Promise<CommandResult>
     reprocessArtists: (artistIds: string[]) => Promise<CommandResult>
+    refreshFavoriteArtists: (artistIds?: string[]) => Promise<CommandResult>
     cancel: (runId: string) => Promise<CommandResult>
     clearSyncData: () => Promise<CommandResult>
     syncMissingToRemote: () => Promise<CommandResult>
@@ -311,17 +333,20 @@ export interface ElectronApi {
     listRuns: () => Promise<SyncRunSummary[]>
     getRun: (runId: string) => Promise<SyncRunDetail | null>
     getSnapshot: () => Promise<SyncSnapshot>
-    getRunLogs: (runId: string) => Promise<SongLogEntry[]>
-    getSongLogs: (input: {
-      runId: string
-      youtubeMusicTrackId: string
-    }) => Promise<SongLogEntry[]>
     subscribe: (listener: (snapshot: SyncSnapshot) => void) => () => void
   }
   library: {
     scanRoots: () => Promise<CommandResult>
+    getIndexStatus: () => Promise<LibraryIndexStatus>
+    refreshIndex: () => Promise<CommandResult>
     refreshArtists: () => Promise<CommandResult>
     listArtists: () => Promise<LikedArtistView[]>
+    subscribeArtists: (listener: () => void) => () => void
+    subscribeIndexStatus: (listener: () => void) => () => void
+    setArtistFavorite: (
+      artistId: string,
+      isFavorite: boolean
+    ) => Promise<CommandResult>
     listTracks: (filter?: LibraryTrackFilter) => Promise<LibraryTrackView[]>
     getTrack: (trackId: string) => Promise<LibraryTrackView | null>
     getDriftSummary: () => Promise<DriftSummary>

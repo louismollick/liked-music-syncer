@@ -70,11 +70,35 @@ The user can also check which local songs are missing from the remote library an
 
 The user can watch current sync progress in the desktop app when they care to.
 
-They can see which songs are discovered, waiting for confirmation, downloading, complete, or failed. They can inspect a song to see its source, metadata, lyrics status, output path, local state, remote state, and logs.
+Sync should be the single funnel for async download-related work across the app. Whether work was triggered by a Liked Songs Sync, a Favorite Artist catalog refresh, or a Copy Missing to Remote action, it should appear in the same Sync area.
+
+Sync should use subnavigation for Queue, Needs approval, Completed, and Failures.
+
+The underlying async work model should be track-first, but the Queue UI should stay job-first with expandable nested track rows. For example, a Liked Songs Sync job or Favorite Artist catalog job can appear first as a parent row, then expand into nested track rows once songs are discovered.
+
+Favorite Artist refresh jobs should include the artist name directly in the main parent row label.
+
+Default child track rows should stay lightweight and focus on title, artist, Queue State, active Track Step, and failure reason when needed. Resolved-source badges are not required in the default row UI for now.
+
+Queue should be organized by concrete state sections such as Currently running and Queued. Each parent job should keep its nested track rows visible in that same queue, with currently running tracks sorted before queued siblings.
+
+Completed should use the same job-first grouped structure as Queue, with expandable nested track rows, so users can review finished work without falling back to run history.
+
+Failures should use that same job-first grouped structure as Queue and Completed so users can inspect failures without losing parent-job context.
+
+If one Sync Job finishes with both completed and failed tracks, the whole job should appear in Failures rather than being split across multiple Sync views.
+
+Sync terminology should distinguish Queue State, Job Phase, and Track Step so parent progress and child progress are not conflated.
+
+The user should be able to inspect an active song to see its current Track Step, such as matching, downloading, tagging, writing lyrics, or copying to remote. Multiple jobs can be active at the same time.
+
+Needs approval should be its own Sync view because proposed changes and cleanup may need richer diff-style detail than the main Queue. Once approval is granted, affected tracks should return to Queue to finish remaining work.
+
+Needs Approval should be track-first because approval decisions apply to concrete track-level diffs. It can remain less finalized than Queue, Completed, and Failures without blocking implementation of those other Sync views.
 
 The user should not need to understand internal sync runs. Over time, sync should be able to run automatically on a schedule in the background, with the app surfacing the current library state and concrete problems that need action.
 
-The user should still be able to open Sync to see when likes were last checked, manually check now for new songs, review what was downloaded, inspect failures, and confirm proposed changes before they modify existing library content.
+The user should still be able to open Sync to see when likes were last checked, manually check now for new songs, confirm proposed changes before they modify existing library content, watch running jobs, review completed work, and inspect failures.
 
 ### 5. Reprocess a Specific Artist
 
@@ -88,11 +112,11 @@ Reprocessing should also be available from selected library items such as an art
 
 The user can mark artists as favorites.
 
-The app treats favorite artists as another source of desired songs. It can discover the artist's official main catalog, match clean versions, and download them using the same pipeline as liked songs.
+The app treats favorite artists as another source of desired songs. It imports exact YouTube Music release tracklists from the artist `albums` and `singles` shelves, preserves release variants such as album vs single when YouTube Music exposes them separately, and downloads those release tracks without trying to "upgrade" them through music-video resolution.
 
 The MVP can limit favorite selection to artists already known from the library or liked-song discovery. The target behavior should let the user search for and add any artist.
 
-Favorite Artist discovery should deduplicate against liked songs and other source contributions so the same song is not downloaded twice.
+Favorite Artist discovery should skip exact release duplicates already managed locally, but keep separate releases of the same song when they are different album/single variants. Liked-video imports should still skip when an equivalent managed song already exists.
 
 Favorite Artist catalog refresh should be manual for now, because full catalog discovery can be request-heavy and artists release new songs less often than users add new liked songs.
 
@@ -116,7 +140,7 @@ It can:
 - save and clear auth
 - fetch liked songs from YouTube Music
 - start, stop, and inspect sync runs
-- show run progress, item status, item details, and logs
+- show run progress, item status, and item details
 - keep a history of previous runs
 - download songs locally
 - enrich songs with metadata
@@ -127,8 +151,20 @@ It can:
 - use custom folder and file naming templates
 - skip work for songs already processed
 - run in dry-run mode for metadata-only checks
-- refresh liked-song artists
+- refresh library by reconciling the persisted local index
+- search local library artists
+- cache artist images after local artists are shown
 - reprocess selected artists
+- mark local library artists as favorites
+- auto-start a favorite artist catalog sync the first time an artist is favorited
+- block sync actions until local library indexing/bootstrap is ready
+- if that auto-start fails, show the failure reason immediately in the app status message
+- manually refresh selected favorite artist catalogs later
+- discover favorite catalogs from YouTube Music albums and singles shelves only
+- preserve separate album/single release variants instead of collapsing them into one managed item
+- skip liked-video imports when the managed library already has the same song title + primary artist, even if durations differ
+- treat MusicBrainz as fallback-only metadata fill, never as an override for successful YouTube Music matches
+- prefer synced lyrics in this order: YT Music synced, Spotify synced, YT Music plain, Spotify plain
 - copy finished songs to a remote music folder
 - find local songs missing from the remote folder
 - copy missing remote songs after review
@@ -136,7 +172,7 @@ It can:
 - compare missing remote songs by LMS source/resolved tags, not file paths
 - scan remote backfill tags over SSH for SFTP rclone remotes
 - check local tools and app setup with doctor checks
-- clear sync history, item logs, and processed-song memory while keeping settings and auth
+- clear sync history, item metadata/status snapshots, and processed-song memory while keeping settings and auth
 
 Remote backfill requires an SFTP rclone remote with SSH shell access. The VPS must have `exiftool` installed, for example with `sudo apt-get install -y libimage-exiftool-perl` on Ubuntu. Non-SFTP rclone remotes are unsupported for remote backfill.
 
@@ -150,15 +186,24 @@ It should add:
 
 - global library search across songs, albums, and artists, with grouped results
 - artist pages based on track artist metadata, with photos, metadata, and discography
-- favorite artist selection, full-catalog discovery, and an Artists filter for favorites
-- manual Favorite Artist catalog refresh, separate from scheduled liked-song checks
+- arbitrary favorite artist search beyond local library artists
 - album pages with album art, release metadata, and track lists based on final library metadata
 - song pages with tags, lyrics state, file paths, detailed liked source contributions, resolved download source, and processing result
 - album pages that summarize which liked music libraries contributed songs on the album
 - image-heavy browsing, closer to a music player than a log viewer
-- debug views for logs and processing history, kept out of the main path
+- debug diagnostics via terminal stdout/stderr and processing history, kept out of the main path
 - scheduled background sync, with internal runs hidden from the primary user experience
-- a visible Sync area for last checked time, manual check-now, pending work, download history, and failures
+- a visible Sync area with subnavigation for Queue, Needs approval, Completed, and Failures
+- one unified async queue for Liked Songs Sync jobs, Favorite Artist catalog refreshes, and Copy Missing to Remote work
+- an underlying track-first async work model with a job-first Queue, Completed, and Failures UI
+- nested track rows under each queued parent job, expanded by default when track lists are available
+- Queue sections for currently running work and queued work
+- a separate Needs Approval view for proposed changes and cleanup that require richer diff-style review
+- a track-first Needs Approval view for concrete per-track diffs and confirmation actions
+- a Completed view that mirrors Queue with job-first groups and expandable track rows
+- a Failures view that mirrors Queue and Completed with job-first groups and expandable track rows
+- mixed-result jobs grouped into Failures rather than split between Completed and Failures
+- explicit Sync terminology separating Queue State, Job Phase, and Track Step
 - automatic download for clean new matches by default
 - confirmation before destructive actions or modifications to existing library content, such as deleting songs no longer liked or updating metadata on existing files
 - proposed cleanup for songs no longer found in liked music libraries, with deletion requiring confirmation
@@ -166,4 +211,5 @@ It should add:
   - pull liked songs, compare them with disk, and match metadata
   - auto-download clean new matches, while showing proposed changes for destructive or modifying actions
 - clear progress indicators for fetching, matching, metadata lookup, download, tagging, lyrics, and remote copy
+- the ability for more than one job to be active at once, while still showing per-track steps for running songs
 - visible errors, missing matches, already-present songs, and other concrete states before download

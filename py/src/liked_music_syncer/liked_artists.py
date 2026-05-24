@@ -110,3 +110,73 @@ def fetch_liked_artists(browser_auth_input: str) -> dict[str, list[dict[str, Any
         key=lambda item: (-int(item["liked_track_count"]), str(item["name"]).lower()),
     )
     return {"artists": artists}
+
+
+def fetch_artist_images(
+    browser_auth_input: str, artists: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    ytmusic = build_browser_auth_client(browser_auth_input)
+    rows: list[dict[str, Any]] = []
+
+    for artist in artists:
+        artist_id = artist.get("id")
+        name = artist.get("name")
+        normalized_name = artist.get("normalized_name")
+        if not isinstance(artist_id, str) or not isinstance(name, str) or not name.strip():
+            continue
+
+        try:
+            results = ytmusic.search(name, filter="artists", limit=5)
+        except Exception:
+            results = []
+
+        if not isinstance(results, list):
+            results = []
+
+        best: dict[str, Any] | None = None
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            result_name = result.get("artist") or result.get("name") or result.get("title")
+            if (
+                isinstance(normalized_name, str)
+                and isinstance(result_name, str)
+                and _normalize_name(result_name) == normalized_name
+            ):
+                best = result
+                break
+            if best is None:
+                best = result
+
+        if best is None:
+            continue
+
+        channel_id_raw = best.get("browseId") or best.get("id")
+        channel_id = (
+            channel_id_raw if isinstance(channel_id_raw, str) and channel_id_raw else None
+        )
+        photo_url = _best_thumbnail_url(best.get("thumbnails"))
+
+        if channel_id and not photo_url:
+            try:
+                artist_payload = ytmusic.get_artist(channel_id)
+                photo_url = _best_thumbnail_url(
+                    artist_payload.get("thumbnails")
+                    if isinstance(artist_payload, dict)
+                    else None
+                )
+            except Exception:
+                photo_url = None
+
+        if not photo_url:
+            continue
+
+        rows.append(
+            {
+                "id": artist_id,
+                "channel_id": channel_id,
+                "photo_url": photo_url,
+            }
+        )
+
+    return {"artists": rows}

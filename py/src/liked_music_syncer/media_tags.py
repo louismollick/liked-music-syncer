@@ -9,7 +9,7 @@ from mediafile import Image, MP4StorageStyle, MediaField, MediaFile
 
 from .models import SyncItemState
 
-LMS_TAG_SCHEMA_VERSION = 1
+LMS_TAG_SCHEMA_VERSION = 2
 LMS_CUSTOM_FIELDS: dict[str, MediaField] = {
     "lms_tag_schema_version": MediaField(
         MP4StorageStyle("----:com.apple.iTunes:LMS_TAG_SCHEMA_VERSION")
@@ -25,6 +25,18 @@ LMS_CUSTOM_FIELDS: dict[str, MediaField] = {
     ),
     "lms_resolved_youtube_music_track_id": MediaField(
         MP4StorageStyle("----:com.apple.iTunes:LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID")
+    ),
+    "lms_source_origin": MediaField(
+        MP4StorageStyle("----:com.apple.iTunes:LMS_SOURCE_ORIGIN")
+    ),
+    "lms_catalog_release_browse_id": MediaField(
+        MP4StorageStyle("----:com.apple.iTunes:LMS_CATALOG_RELEASE_BROWSE_ID")
+    ),
+    "lms_catalog_release_title": MediaField(
+        MP4StorageStyle("----:com.apple.iTunes:LMS_CATALOG_RELEASE_TITLE")
+    ),
+    "lms_catalog_release_kind": MediaField(
+        MP4StorageStyle("----:com.apple.iTunes:LMS_CATALOG_RELEASE_KIND")
     ),
 }
 
@@ -111,6 +123,10 @@ def write_media_tags(
     media.lms_spotify_track_id = item.spotify_track_id or ""
     media.lms_soundcloud_track_id = item.soundcloud_track_id or ""
     media.lms_resolved_youtube_music_track_id = resolved_id or ""
+    media.lms_source_origin = item.source_origin or ""
+    media.lms_catalog_release_browse_id = item.catalog_release_browse_id or ""
+    media.lms_catalog_release_title = item.catalog_release_title or ""
+    media.lms_catalog_release_kind = item.catalog_release_kind or ""
     media.comments = None
     media.save()
 

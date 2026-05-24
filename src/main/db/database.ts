@@ -4,10 +4,9 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
 
-const SCHEMA_VERSION = '4'
+const SCHEMA_VERSION = '8'
 
 const ALL_TABLES = [
-  'song_logs',
   'artifacts',
   'library_files',
   'library_tracks',
@@ -46,6 +45,10 @@ function resetSchema(sqlite: Database.Database) {
       photo_url TEXT,
       liked_track_count INTEGER NOT NULL,
       last_refreshed_at TEXT NOT NULL,
+      is_favorite INTEGER NOT NULL DEFAULT 0,
+      favorited_at TEXT,
+      last_catalog_refreshed_at TEXT,
+      catalog_track_count INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -56,7 +59,6 @@ function resetSchema(sqlite: Database.Database) {
       status TEXT NOT NULL,
       started_at TEXT NOT NULL,
       ended_at TEXT,
-      log_directory TEXT NOT NULL,
       planned_count INTEGER NOT NULL DEFAULT 0
     );
 
@@ -78,6 +80,10 @@ function resetSchema(sqlite: Database.Database) {
       reason_code TEXT NOT NULL,
       reason_detail TEXT NOT NULL,
       source_kind TEXT NOT NULL,
+      source_origin TEXT,
+      catalog_release_browse_id TEXT,
+      catalog_release_title TEXT,
+      catalog_release_kind TEXT,
       video_type TEXT,
       resolution_method TEXT NOT NULL,
       track_number INTEGER,
@@ -129,6 +135,10 @@ function resetSchema(sqlite: Database.Database) {
       spotify_track_id TEXT,
       soundcloud_track_id TEXT,
       resolved_youtube_music_track_id TEXT,
+      source_origin TEXT,
+      catalog_release_browse_id TEXT,
+      catalog_release_title TEXT,
+      catalog_release_kind TEXT,
       title TEXT,
       artist TEXT,
       album TEXT,
@@ -171,6 +181,7 @@ function resetSchema(sqlite: Database.Database) {
       duration_seconds REAL,
       bitrate INTEGER,
       modified_at TEXT,
+      sidecar_modified_at TEXT,
       audio_sha256 TEXT,
       tag_fingerprint TEXT,
       embedded_lyrics_status TEXT NOT NULL,
@@ -194,18 +205,6 @@ function resetSchema(sqlite: Database.Database) {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE song_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      youtube_music_track_id TEXT NOT NULL,
-      item_id TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      level TEXT NOT NULL,
-      stage TEXT NOT NULL,
-      event TEXT NOT NULL,
-      message TEXT NOT NULL,
-      context_json TEXT NOT NULL
-    );
   `)
 
   sqlite
@@ -231,14 +230,92 @@ function readSchemaVersion(sqlite: Database.Database) {
   return row?.value ?? null
 }
 
+function addColumnIfMissing(
+  sqlite: Database.Database,
+  tableName: string,
+  columnName: string,
+  definition: string
+) {
+  const columns = sqlite
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all() as Array<{ name?: string }>
+  if (columns.some((column) => column.name === columnName)) {
+    return
+  }
+  sqlite.exec(
+    `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`
+  )
+}
+
+function migrateSchema(sqlite: Database.Database, version: string | null) {
+  if (version === SCHEMA_VERSION) {
+    return
+  }
+
+  if (version === '6' || version === '7') {
+    addColumnIfMissing(sqlite, 'library_files', 'sidecar_modified_at', 'TEXT')
+  }
+
+  if (version === '6') {
+    addColumnIfMissing(sqlite, 'sync_run_items', 'source_origin', 'TEXT')
+    addColumnIfMissing(
+      sqlite,
+      'sync_run_items',
+      'catalog_release_browse_id',
+      'TEXT'
+    )
+    addColumnIfMissing(
+      sqlite,
+      'sync_run_items',
+      'catalog_release_title',
+      'TEXT'
+    )
+    addColumnIfMissing(sqlite, 'sync_run_items', 'catalog_release_kind', 'TEXT')
+    addColumnIfMissing(sqlite, 'library_tracks', 'source_origin', 'TEXT')
+    addColumnIfMissing(
+      sqlite,
+      'library_tracks',
+      'catalog_release_browse_id',
+      'TEXT'
+    )
+    addColumnIfMissing(
+      sqlite,
+      'library_tracks',
+      'catalog_release_title',
+      'TEXT'
+    )
+    addColumnIfMissing(sqlite, 'library_tracks', 'catalog_release_kind', 'TEXT')
+    sqlite
+      .prepare(
+        'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      )
+      .run('schemaVersion', SCHEMA_VERSION)
+    return
+  }
+
+  if (version === '7') {
+    sqlite
+      .prepare(
+        'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      )
+      .run('schemaVersion', SCHEMA_VERSION)
+    return
+  }
+
+  resetSchema(sqlite)
+}
+
 export function createDatabase(databaseFile: string) {
   mkdirSync(path.dirname(databaseFile), { recursive: true })
   const sqlite = new Database(databaseFile)
   sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')
 
-  if (readSchemaVersion(sqlite) !== SCHEMA_VERSION) {
+  const schemaVersion = readSchemaVersion(sqlite)
+  if (schemaVersion === null) {
     resetSchema(sqlite)
+  } else if (schemaVersion !== SCHEMA_VERSION) {
+    migrateSchema(sqlite, schemaVersion)
   }
 
   return {

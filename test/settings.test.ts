@@ -42,6 +42,7 @@ describe('settings persistence', () => {
       ytDlpCookiesBrowser: 'chrome',
       rcloneRemote: 'seedbox',
       remoteMusicRoot: '/music/liked',
+      lyricsApiBaseUrl: 'https://lyrics.example.test/api',
       folderTemplate: '{artist}/{album}',
       fileTemplate: '{title}',
       embedUnsyncedLyrics: false,
@@ -53,6 +54,7 @@ describe('settings persistence', () => {
       remoteCopyEnabled: true,
       rcloneRemote: 'seedbox',
       remoteMusicRoot: '/music/liked',
+      lyricsApiBaseUrl: 'https://lyrics.example.test/api',
       ytDlpCookiesBrowser: 'chrome',
     })
 
@@ -68,6 +70,7 @@ describe('settings persistence', () => {
       remoteCopyEnabled: true,
       rcloneRemote: 'seedbox',
       remoteMusicRoot: '/music/liked',
+      lyricsApiBaseUrl: 'https://lyrics.example.test/api',
       ytDlpCookiesBrowser: 'chrome',
       folderTemplate: '{artist}/{album}',
       fileTemplate: '{title}',
@@ -81,6 +84,7 @@ describe('settings persistence', () => {
       remoteCopyEnabled: true,
       rcloneRemote: 'seedbox',
       remoteMusicRoot: '/music/liked',
+      lyricsApiBaseUrl: 'https://lyrics.example.test/api',
       ytDlpCookiesBrowser: 'chrome',
       folderTemplate: '{artist}/{album}',
       fileTemplate: '{title}',

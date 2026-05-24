@@ -14,7 +14,23 @@ It can:
 - convert/tag output with `ffmpeg`
 - write `.m4a` + optional `.lrc`
 - optionally copy output to a VPS via `rclone`
-- write per-run logs and per-song debug logs
+- print sync diagnostics to process `stdout`/`stderr`
+- mirror those same terminal diagnostics into per-launch temp log files
+- import favorite artists from exact YT Music `albums` + `singles` release tracklists
+- preserve separate album/single release variants instead of collapsing them
+- skip liked-video duplicates against existing managed songs by normalized title + primary artist
+- use MusicBrainz only as fallback metadata fill when YT Music resolution failed
+
+## Library index behavior
+
+- the app keeps a persisted local library index for the configured output root
+- sync, favorite-artist refresh, artist reprocess, and `Sync Missing to Remote` now use that persisted index instead of rescanning the full local library on every start
+- on app launch, if the current output root has no ready index, the app starts a background local bootstrap automatically
+- while bootstrap/manual refresh is running, sync actions stay disabled
+- `Refresh library` is now the explicit manual reconcile action:
+  - full local scan when the index is missing/stale
+  - incremental local reconcile when the index is already current
+- out-of-band filesystem changes are picked up on manual `Refresh library`
 
 ## Current setup model
 
@@ -105,6 +121,7 @@ Expected behavior:
 
 - app calls `GET <LYRICS_API_BASE_URL>?trackid=<spotifyTrackId>&format=lrc`
 - endpoint returns synced line data
+- worker prefers lyrics in this order: YT Music synced, Spotify synced, YT Music plain, Spotify plain
 
 Put it in:
 
@@ -220,7 +237,7 @@ Use this order:
    - `Matched to YT Music`
    - `Not Matched to YT Music`
    - `Not in Music Category`
-4. use `Copy Song Logs` on a few rows
+4. watch terminal diagnostics while run executes, or inspect the per-launch temp log file
 5. turn off dry run
 6. run again
 
@@ -278,17 +295,27 @@ pnpm build:linux
 pnpm build:unpack
 ```
 
-## Logs and local data
+## Diagnostics and local data
 
 App data lives under Electron `userData`.
 
 Important files:
 
 - SQLite DB: `liked-music-syncer.db`
-- run logs: `logs/<runId>/run.log`
-- structured logs: `logs/<runId>/run.ndjson`
+- temp launch logs: `<temp>/liked-music-syncer/logs/launch-<ISO-safe-timestamp>-pid-<pid>.log`
 
-The UI `Copy Song Logs` button copies only that song's log lines for the selected run.
+Logging format:
+
+- `[timestamp] [level] [source] [runId?] [itemId?] message | key=value ...`
+- `error` lines go to `stderr`
+- `warn`/`info`/`debug` lines go to `stdout`
+- parsed worker `log` events are mirrored into terminal as pretty `[worker]` lines
+- same terminal lines are mirrored into one combined temp log file per app launch
+- persisted lines are prefixed with `[stdout] ` or `[stderr] `
+- temp launch logs are not auto-cleaned up
+- in TTY terminals, only `[warn]` and `[error]` tokens are colored
+- color is disabled when output is redirected or `NO_COLOR` is set
+- worker `run`/`item` NDJSON still stays internal and is not mirrored raw to terminal
 
 ## What each diagnostic tab means
 

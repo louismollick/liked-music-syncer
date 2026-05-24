@@ -8,12 +8,18 @@ import { registerIpcHandlers } from './ipc'
 import { AuthService } from './services/auth-service'
 import { LibraryService } from './services/library-service'
 import { LikedArtistsService } from './services/liked-artists-service'
+import { setTempLogMirror } from './services/logger'
 import { PoTokenService } from './services/po-token-service'
 import { PythonWorkerService } from './services/python-worker'
 import { SettingsService } from './services/settings-service'
 import { SyncService } from './services/sync-service'
+import {
+  createTempLogMirror,
+  type TempLogMirror,
+} from './services/temp-log-file'
 
 let mainWindow: BrowserWindow | null = null
+let tempLogMirror: TempLogMirror | null = null
 
 function getBundledFfmpegPath() {
   const candidate = is.dev
@@ -56,6 +62,8 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.electron')
+  tempLogMirror = createTempLogMirror(app.getPath('temp'))
+  setTempLogMirror(tempLogMirror)
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -80,7 +88,7 @@ app.whenReady().then(() => {
     pythonWorkerService
   )
   const poTokenService = new PoTokenService()
-  const authService = new AuthService(db, settingsService, pythonWorkerService)
+  const authService = new AuthService(settingsService, pythonWorkerService)
   const syncService = new SyncService(
     db,
     settingsService,
@@ -101,12 +109,30 @@ app.whenReady().then(() => {
     likedArtistsService,
     getBundledFfmpegPath
   )
+  void libraryService.bootstrapLocalIndexIfNeeded().then(async (result) => {
+    if (!result?.ok) return
+    await likedArtistsService.refreshArtists()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('library:artistsUpdated')
+    }
+    void likedArtistsService
+      .refreshArtistImages()
+      .then(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('library:artistsUpdated')
+        }
+      })
+      .catch(() => undefined)
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
   app.on('before-quit', () => {
+    tempLogMirror?.dispose()
+    tempLogMirror = null
+    setTempLogMirror(null)
     poTokenService.dispose()
   })
 })

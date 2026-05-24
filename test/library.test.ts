@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { execa } from 'execa'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -18,15 +19,20 @@ import {
   libraryFilesTable,
   libraryRootsTable,
   libraryTracksTable,
+  likedArtistsTable,
+  metaTable,
   syncRunsTable,
 } from '../src/main/db/schema'
 import { LibraryService } from '../src/main/services/library-service'
+import { LikedArtistsService } from '../src/main/services/liked-artists-service'
+import { setTempLogMirror } from '../src/main/services/logger'
 import {
   buildRemoteScannerSshArgs,
   normalizeExiftoolJson,
   parseRcloneSftpConfig,
   SyncService,
 } from '../src/main/services/sync-service'
+import { createTempLogMirror } from '../src/main/services/temp-log-file'
 
 function makeTempDb() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-db-'))
@@ -78,6 +84,7 @@ function scannedFile(
     lrc_path: null,
     size_bytes: 12345,
     modified_at: '2026-05-18T00:00:00.000Z',
+    sidecar_modified_at: null,
     audio_sha256: null,
     tag_fingerprint: 'fingerprint',
     last_scanned_at: '2026-05-18T00:00:00.000Z',
@@ -88,7 +95,20 @@ function scannedFile(
   }
 }
 
+function readyIndexStatus() {
+  return {
+    currentLocalRootUri: '/tmp/out',
+    ready: true,
+    inProgress: false,
+    reason: 'ready' as const,
+    lastScannedAt: '2026-05-18T00:00:00.000Z',
+    lastScanStatus: 'ok',
+    indexVersion: 1,
+  }
+}
+
 afterEach(() => {
+  setTempLogMirror(null)
   vi.restoreAllMocks()
 })
 
@@ -363,6 +383,221 @@ describe('library service', () => {
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
+
+  it('reports local index readiness from root scan state and meta', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const service = new LibraryService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/library',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+        }),
+      } as never,
+      {} as never
+    )
+
+    expect((await service.getIndexStatus()).reason).toBe('never_scanned')
+
+    await db.insert(libraryRootsTable).values({
+      id: 'root_local_/library',
+      kind: 'local',
+      transport: 'filesystem',
+      label: 'Local output',
+      uri: '/library',
+      writable: true,
+      managedOutput: true,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      lastScannedAt: '2026-05-18T00:00:00.000Z',
+      lastScanStatus: 'ok',
+    })
+
+    expect((await service.getIndexStatus()).reason).toBe('stale_version')
+
+    await db.insert(metaTable).values([
+      { key: 'library_index_version', value: '1' },
+      { key: 'library_index_local_root_uri', value: '/library' },
+    ])
+
+    expect(await service.getIndexStatus()).toMatchObject({
+      currentLocalRootUri: '/library',
+      ready: true,
+      inProgress: false,
+      reason: 'ready',
+      lastScanStatus: 'ok',
+      indexVersion: 1,
+    })
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('refreshIndex performs incremental reconcile when index is ready', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(libraryRootsTable).values({
+      id: 'root_local_/library',
+      kind: 'local',
+      transport: 'filesystem',
+      label: 'Local output',
+      uri: '/library',
+      writable: true,
+      managedOutput: true,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      lastScannedAt: '2026-05-18T00:00:00.000Z',
+      lastScanStatus: 'ok',
+    })
+    await db.insert(metaTable).values([
+      { key: 'library_index_version', value: '1' },
+      { key: 'library_index_local_root_uri', value: '/library' },
+    ])
+    await db.insert(libraryTracksTable).values([
+      {
+        id: 'track_keep',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:liked123',
+        managedByApp: true,
+        tagSchemaVersion: 1,
+        youtubeMusicTrackId: 'liked123',
+        resolvedYoutubeMusicTrackId: 'catalog456',
+        title: 'Track Title',
+        artist: 'Artist Name',
+        album: 'Album Name',
+        albumArtist: 'Artist Name',
+        lyricsStatus: 'synced',
+        hasEmbeddedLyrics: true,
+        hasSidecarLyrics: false,
+        coverArtPresent: true,
+        missingFieldsJson: '[]',
+        preferredFileId: 'file_keep',
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        lastSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+      {
+        id: 'track_delete',
+        identityKind: 'path',
+        identityValue: '/library:gone.m4a',
+        managedByApp: false,
+        title: 'Gone',
+        artist: 'Ghost',
+        album: 'Lost',
+        albumArtist: 'Ghost',
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        missingFieldsJson: '[]',
+        preferredFileId: 'file_delete',
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        lastSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+    ])
+    await db.insert(libraryFilesTable).values([
+      {
+        id: 'file_keep',
+        trackId: 'track_keep',
+        rootId: 'root_local_/library',
+        relativePath: 'keep.m4a',
+        absolutePathSnapshot: '/library/keep.m4a',
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 123,
+        durationSeconds: 120,
+        bitrate: 256000,
+        modifiedAt: '2026-05-18T00:00:00.000Z',
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: 'fingerprint',
+        embeddedLyricsStatus: 'synced',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: '2026-05-18T00:00:00.000Z',
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+      {
+        id: 'file_delete',
+        trackId: 'track_delete',
+        rootId: 'root_local_/library',
+        relativePath: 'gone.m4a',
+        absolutePathSnapshot: '/library/gone.m4a',
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 77,
+        durationSeconds: 90,
+        bitrate: 256000,
+        modifiedAt: '2026-05-18T00:00:00.000Z',
+        sidecarModifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: 'gone',
+        embeddedLyricsStatus: 'missing',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'path',
+        lastScannedAt: '2026-05-18T00:00:00.000Z',
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+    ])
+
+    const pythonWorker = {
+      runJsonCommand: vi.fn().mockResolvedValue({
+        scanned_at: '2026-05-19T00:00:00.000Z',
+        files: [
+          scannedFile({
+            relative_path: 'keep.m4a',
+            absolute_path_snapshot: '/library/keep.m4a',
+            lrc_path: '/library/keep.lrc',
+            size_bytes: 456,
+            modified_at: '2026-05-19T00:00:00.000Z',
+            sidecar_modified_at: '2026-05-19T00:00:01.000Z',
+          }),
+        ],
+        deleted_relative_paths: ['gone.m4a'],
+      }),
+    }
+    const service = new LibraryService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/library',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+        }),
+      } as never,
+      pythonWorker as never
+    )
+
+    const result = await service.refreshIndex()
+    expect(result.ok).toBe(true)
+    expect(vi.mocked(pythonWorker.runJsonCommand)).toHaveBeenCalledWith(
+      'library-reconcile-local-root',
+      expect.objectContaining({
+        uri: '/library',
+      })
+    )
+
+    const files = await db.select().from(libraryFilesTable)
+    expect(files).toHaveLength(1)
+    expect(files[0]).toMatchObject({
+      relativePath: 'keep.m4a',
+      sidecarModifiedAt: '2026-05-19T00:00:01.000Z',
+    })
+
+    const tracks = await db.select().from(libraryTracksTable)
+    expect(tracks).toHaveLength(1)
+    expect((await service.getIndexStatus()).ready).toBe(true)
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
 })
 
 describe('sync run item contract', () => {
@@ -374,7 +609,6 @@ describe('sync run item contract', () => {
       status: 'running',
       startedAt: '2026-05-18T00:00:00.000Z',
       endedAt: null,
-      logDirectory: '/tmp/run_1',
       plannedCount: 0,
     })
 
@@ -440,6 +674,618 @@ describe('sync run item contract', () => {
       mbReleaseGroupId: 'mb-group',
       lyricsStatus: 'synced',
     })
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('liked artists service', () => {
+  it('refreshes artists from local library tracks and preserves favorite fields', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(likedArtistsTable).values({
+      id: 'artist_channel_1',
+      channelId: 'channel_1',
+      name: 'Old Name',
+      normalizedName: 'artist name',
+      photoUrl: null,
+      likedTrackCount: 1,
+      lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+      isFavorite: true,
+      favoritedAt: '2026-05-18T00:01:00.000Z',
+      lastCatalogRefreshedAt: '2026-05-18T00:02:00.000Z',
+      catalogTrackCount: 42,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    })
+    await db.insert(libraryTracksTable).values([
+      {
+        id: 'track_1',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:track_1',
+        managedByApp: true,
+        artist: 'Artist Name',
+        title: 'Track 1',
+        album: 'Album',
+        albumArtist: 'Artist Name',
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        lastSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+      {
+        id: 'track_2',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:track_2',
+        managedByApp: true,
+        artist: 'Artist Name',
+        title: 'Track 2',
+        album: 'Album',
+        albumArtist: 'Artist Name',
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        firstSeenAt: '2026-05-18T00:00:00.000Z',
+        lastSeenAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+    ])
+
+    const service = new LikedArtistsService(db)
+
+    await service.refreshArtists()
+
+    const artists = await service.listArtists()
+    expect(artists.map((artist) => artist.id)).toEqual([
+      'local_artist_artist_name',
+    ])
+    const [artist] = artists
+    expect(artist).toMatchObject({
+      id: 'local_artist_artist_name',
+      name: 'Artist Name',
+      likedTrackCount: 2,
+      isFavorite: true,
+      favoritedAt: '2026-05-18T00:01:00.000Z',
+      lastCatalogRefreshedAt: '2026-05-18T00:02:00.000Z',
+      catalogTrackCount: 42,
+    })
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('keeps unfound favorite artists after library refresh', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(likedArtistsTable).values([
+      {
+        id: 'favorite_missing',
+        channelId: 'channel_1',
+        name: 'Favorite Missing',
+        normalizedName: 'favorite missing',
+        photoUrl: null,
+        likedTrackCount: 1,
+        lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+        isFavorite: true,
+        favoritedAt: '2026-05-18T00:01:00.000Z',
+        lastCatalogRefreshedAt: null,
+        catalogTrackCount: null,
+        createdAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+      {
+        id: 'nonfavorite_missing',
+        channelId: 'channel_2',
+        name: 'Nonfavorite Missing',
+        normalizedName: 'nonfavorite missing',
+        photoUrl: null,
+        likedTrackCount: 1,
+        lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+        isFavorite: false,
+        favoritedAt: null,
+        lastCatalogRefreshedAt: null,
+        catalogTrackCount: null,
+        createdAt: '2026-05-18T00:00:00.000Z',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+    ])
+    const service = new LikedArtistsService(db)
+
+    await service.refreshArtists()
+
+    const artists = await service.listArtists()
+    expect(artists.map((artist) => artist.id)).toEqual(['favorite_missing'])
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('stamps favoritedAt only the first time', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(likedArtistsTable).values({
+      id: 'artist_1',
+      channelId: 'channel_1',
+      name: 'Artist',
+      normalizedName: 'artist',
+      photoUrl: null,
+      likedTrackCount: 1,
+      lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+      isFavorite: false,
+      favoritedAt: null,
+      lastCatalogRefreshedAt: null,
+      catalogTrackCount: null,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    })
+    const service = new LikedArtistsService(db)
+
+    await service.setArtistFavorite('artist_1', true)
+    const [first] = await service.listArtists()
+    await service.setArtistFavorite('artist_1', true)
+    const [second] = await service.listArtists()
+
+    expect(first?.favoritedAt).toBeTruthy()
+    expect(second?.favoritedAt).toBe(first?.favoritedAt)
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('caches artist images without blocking local artist refresh', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(likedArtistsTable).values({
+      id: 'local_artist_artist',
+      channelId: null,
+      name: 'Artist',
+      normalizedName: 'artist',
+      photoUrl: null,
+      likedTrackCount: 1,
+      lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+      isFavorite: false,
+      favoritedAt: null,
+      lastCatalogRefreshedAt: null,
+      catalogTrackCount: null,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    })
+    const service = new LikedArtistsService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          ytmusicBrowserAuth: 'auth',
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi
+          .fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            is_authenticated: true,
+            message: 'ok',
+          })
+          .mockResolvedValueOnce({
+            artists: [
+              {
+                id: 'local_artist_artist',
+                channel_id: 'channel_1',
+                photo_url: 'https://example.test/artist.jpg',
+              },
+            ],
+          }),
+      } as never
+    )
+
+    const result = await service.refreshArtistImages()
+
+    expect(result.ok).toBe(true)
+    const [artist] = await service.listArtists()
+    expect(artist).toMatchObject({
+      channelId: 'channel_1',
+      photoUrl: 'https://example.test/artist.jpg',
+    })
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('favorite artist catalog sync', () => {
+  it('rejects when no favorites are selected', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const service = new SyncService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        listFavoriteArtists: vi.fn().mockResolvedValue([]),
+      } as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    const result = await service.refreshFavoriteArtists(['artist_1'])
+
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('favorite artist')
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('starts favorite catalog runs with catalog payload and trigger mode', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child = {
+      stdout,
+      stderr,
+      on: vi.fn(),
+    }
+    const spawnNdjsonCommand = vi.fn().mockReturnValue(child)
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          dryRun: false,
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          lyricsApiBaseUrl: '',
+          ytmusicBrowserAuth: 'auth',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockResolvedValue({
+          ok: true,
+          is_authenticated: true,
+          message: 'ok',
+        }),
+        spawnNdjsonCommand,
+      } as never,
+      {
+        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
+        getIndexNotReadyResult: vi.fn(),
+        getManagedLocalSignatures: vi.fn().mockResolvedValue({
+          sourceIds: new Set(['liked_existing']),
+          resolvedIds: new Set(['resolved_existing']),
+          trackSignatures: [],
+          releaseSignatures: [],
+        }),
+      } as never,
+      {
+        listFavoriteArtists: vi.fn().mockResolvedValue([
+          {
+            id: 'artist_1',
+            channelId: 'channel_1',
+            name: 'Artist One',
+            normalizedName: 'artist one',
+            photoUrl: null,
+            likedTrackCount: 5,
+            lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+            isFavorite: true,
+            favoritedAt: '2026-05-18T00:01:00.000Z',
+            lastCatalogRefreshedAt: null,
+            catalogTrackCount: null,
+          },
+        ]),
+      } as never,
+      {
+        ensureReady: vi.fn().mockResolvedValue(undefined),
+        getBundleStatus: vi.fn().mockReturnValue({
+          pluginDirectory: '/tmp/plugins',
+          baseUrl: 'http://127.0.0.1:4416',
+        }),
+      } as never,
+      () => 'ffmpeg'
+    )
+
+    const result = await service.refreshFavoriteArtists(['artist_1'])
+
+    expect(result.ok).toBe(true)
+    expect(spawnNdjsonCommand).toHaveBeenCalledWith(
+      'sync-run',
+      expect.objectContaining({
+        favorite_artist_catalogs: [
+          {
+            id: 'artist_1',
+            channel_id: 'channel_1',
+            name: 'Artist One',
+            normalized_name: 'artist one',
+          },
+        ],
+        force_reprocess: false,
+      })
+    )
+    const [run] = await db.select().from(syncRunsTable)
+    expect(run?.triggerMode).toBe('favorite_artist_catalog')
+
+    stdout.destroy()
+    stderr.destroy()
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('forwards child stderr to terminal and temp mirror unchanged', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child = {
+      stdout,
+      stderr,
+      on: vi.fn(),
+    }
+    const spawnNdjsonCommand = vi.fn().mockReturnValue(child)
+    const tempLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-log-'))
+    const mirror = createTempLogMirror(tempLogDir)
+    setTempLogMirror(mirror)
+    const stderrWrite = vi
+      .spyOn(process.stderr, 'write')
+      .mockReturnValue(true as never)
+
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          dryRun: false,
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          lyricsApiBaseUrl: '',
+          ytmusicBrowserAuth: 'auth',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockResolvedValue({
+          ok: true,
+          is_authenticated: true,
+          message: 'ok',
+        }),
+        spawnNdjsonCommand,
+      } as never,
+      {
+        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
+        getIndexNotReadyResult: vi.fn(),
+        getManagedLocalSignatures: vi.fn().mockResolvedValue({
+          sourceIds: new Set(['liked_existing']),
+          resolvedIds: new Set(['resolved_existing']),
+          trackSignatures: [],
+          releaseSignatures: [],
+        }),
+      } as never,
+      {
+        listFavoriteArtists: vi.fn().mockResolvedValue([
+          {
+            id: 'artist_1',
+            channelId: 'channel_1',
+            name: 'Artist One',
+            normalizedName: 'artist one',
+            photoUrl: null,
+            likedTrackCount: 5,
+            lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+            isFavorite: true,
+            favoritedAt: '2026-05-18T00:01:00.000Z',
+            lastCatalogRefreshedAt: null,
+            catalogTrackCount: null,
+          },
+        ]),
+      } as never,
+      {
+        ensureReady: vi.fn().mockResolvedValue(undefined),
+        getBundleStatus: vi.fn().mockReturnValue({
+          pluginDirectory: '/tmp/plugins',
+          baseUrl: 'http://127.0.0.1:4416',
+        }),
+      } as never,
+      () => 'ffmpeg'
+    )
+
+    await service.refreshFavoriteArtists(['artist_1'])
+
+    stderr.write('yt-dlp: ERROR one\nsecond line\n')
+    mirror?.dispose()
+
+    expect(stderrWrite).toHaveBeenCalledWith('yt-dlp: ERROR one\nsecond line\n')
+    expect(fs.readFileSync(mirror!.getLogFilePath(), 'utf8')).toContain(
+      '[stderr] yt-dlp: ERROR one\n[stderr] second line\n'
+    )
+
+    stdout.destroy()
+    stderr.destroy()
+    sqlite.close()
+    fs.rmSync(tempLogDir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('mirrors parsed worker log events to terminal and temp mirror as pretty lines', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    const child = {
+      stdout,
+      stderr,
+      on: vi.fn(),
+    }
+    const spawnNdjsonCommand = vi.fn().mockReturnValue(child)
+    const tempLogDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-log-'))
+    const mirror = createTempLogMirror(tempLogDir)
+    setTempLogMirror(mirror)
+    const stdoutWrite = vi
+      .spyOn(process.stdout, 'write')
+      .mockReturnValue(true as never)
+
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          dryRun: false,
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          lyricsApiBaseUrl: '',
+          ytmusicBrowserAuth: 'auth',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockResolvedValue({
+          ok: true,
+          is_authenticated: true,
+          message: 'ok',
+        }),
+        spawnNdjsonCommand,
+      } as never,
+      {
+        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
+        getIndexNotReadyResult: vi.fn(),
+        getManagedLocalSignatures: vi.fn().mockResolvedValue({
+          sourceIds: new Set(['liked_existing']),
+          resolvedIds: new Set(['resolved_existing']),
+          trackSignatures: [],
+          releaseSignatures: [],
+        }),
+      } as never,
+      {
+        listFavoriteArtists: vi.fn().mockResolvedValue([
+          {
+            id: 'artist_1',
+            channelId: 'channel_1',
+            name: 'Artist One',
+            normalizedName: 'artist one',
+            photoUrl: null,
+            likedTrackCount: 5,
+            lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+            isFavorite: true,
+            favoritedAt: '2026-05-18T00:01:00.000Z',
+            lastCatalogRefreshedAt: null,
+            catalogTrackCount: null,
+          },
+        ]),
+      } as never,
+      {
+        ensureReady: vi.fn().mockResolvedValue(undefined),
+        getBundleStatus: vi.fn().mockReturnValue({
+          pluginDirectory: '/tmp/plugins',
+          baseUrl: 'http://127.0.0.1:4416',
+        }),
+      } as never,
+      () => 'ffmpeg'
+    )
+
+    await service.refreshFavoriteArtists(['artist_1'])
+
+    const line = `${JSON.stringify({
+      type: 'log',
+      run_id: 'run_test',
+      item_id: 'item_test',
+      youtube_music_track_id: 'ytm_test',
+      timestamp: '2026-05-23T23:45:00.000Z',
+      level: 'info',
+      stage: 'download',
+      event: 'worker-progress',
+      message: 'downloaded chunk',
+      context: { bytes: 1234 },
+    })}\n`
+    stdout.write(line)
+    await new Promise((resolve) => setImmediate(resolve))
+    mirror?.dispose()
+
+    expect(stdoutWrite).toHaveBeenCalledWith(
+      '[2026-05-23T23:45:00.000Z] [info] [worker][run_test][item_test] [download] worker-progress downloaded chunk | bytes=1234\n'
+    )
+    expect(fs.readFileSync(mirror!.getLogFilePath(), 'utf8')).not.toContain(
+      `[stdout] ${line}`
+    )
+    expect(fs.readFileSync(mirror!.getLogFilePath(), 'utf8')).toContain(
+      '[stdout] [2026-05-23T23:45:00.000Z] [info] [worker][run_test][item_test] [download] worker-progress downloaded chunk | bytes=1234\n'
+    )
+
+    stdout.destroy()
+    stderr.destroy()
+    sqlite.close()
+    fs.rmSync(tempLogDir, { recursive: true, force: true })
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('logs pre-worker setup blockers before returning', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stdoutWrite = vi
+      .spyOn(process.stdout, 'write')
+      .mockReturnValue(true as never)
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '',
+          dryRun: false,
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          lyricsApiBaseUrl: '',
+          ytmusicBrowserAuth: 'auth',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {
+        listFavoriteArtists: vi.fn().mockResolvedValue([
+          {
+            id: 'artist_1',
+            channelId: null,
+            name: 'Artist One',
+            normalizedName: 'artist one',
+            photoUrl: null,
+            likedTrackCount: 5,
+            lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+            isFavorite: true,
+            favoritedAt: '2026-05-18T00:01:00.000Z',
+            lastCatalogRefreshedAt: null,
+            catalogTrackCount: null,
+          },
+        ]),
+      } as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+
+    const result = await service.refreshFavoriteArtists(['artist_1'])
+
+    expect(result.ok).toBe(false)
+    expect(stdoutWrite).toHaveBeenCalledWith(
+      expect.stringContaining('startRun setup started')
+    )
+    expect(stdoutWrite).toHaveBeenCalledWith(
+      expect.stringContaining('startRun blocked: missing output directory')
+    )
 
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
@@ -639,8 +1485,12 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
-        scanLocalRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
-        scanRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+        ensureLocalIndexReady: vi.fn().mockResolvedValue({
+          ...readyIndexStatus(),
+          currentLocalRootUri: localDir,
+        }),
+        getIndexNotReadyResult: vi.fn(),
+        upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {} as never,
       {} as never,
@@ -842,8 +1692,12 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
-        scanLocalRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
-        scanRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+        ensureLocalIndexReady: vi.fn().mockResolvedValue({
+          ...readyIndexStatus(),
+          currentLocalRootUri: localDir,
+        }),
+        getIndexNotReadyResult: vi.fn(),
+        upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {} as never,
       {} as never,
@@ -874,7 +1728,10 @@ describe('sync missing to remote', () => {
         }),
       } as never,
       {} as never,
-      { scanRoots: vi.fn() } as never,
+      {
+        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
+        getIndexNotReadyResult: vi.fn(),
+      } as never,
       {} as never,
       {} as never,
       () => 'ffmpeg'
@@ -933,8 +1790,11 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
-        scanLocalRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
-        scanRoots: vi.fn().mockResolvedValue({ ok: true, message: 'ok' }),
+        ensureLocalIndexReady: vi.fn().mockResolvedValue({
+          ...readyIndexStatus(),
+          currentLocalRootUri: localDir,
+        }),
+        getIndexNotReadyResult: vi.fn(),
       } as never,
       {} as never,
       {} as never,

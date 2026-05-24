@@ -26,6 +26,12 @@ export const likedArtistsTable = sqliteTable('liked_artists', {
   photoUrl: text('photo_url'),
   likedTrackCount: integer('liked_track_count').notNull(),
   lastRefreshedAt: text('last_refreshed_at').notNull(),
+  isFavorite: integer('is_favorite', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  favoritedAt: text('favorited_at'),
+  lastCatalogRefreshedAt: text('last_catalog_refreshed_at'),
+  catalogTrackCount: integer('catalog_track_count'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 })
@@ -36,7 +42,6 @@ export const syncRunsTable = sqliteTable('sync_runs', {
   status: text('status').notNull(),
   startedAt: text('started_at').notNull(),
   endedAt: text('ended_at'),
-  logDirectory: text('log_directory').notNull(),
   plannedCount: integer('planned_count').notNull().default(0),
 })
 
@@ -58,6 +63,10 @@ export const syncRunItemsTable = sqliteTable('sync_run_items', {
   reasonCode: text('reason_code').notNull(),
   reasonDetail: text('reason_detail').notNull(),
   sourceKind: text('source_kind').notNull(),
+  sourceOrigin: text('source_origin'),
+  catalogReleaseBrowseId: text('catalog_release_browse_id'),
+  catalogReleaseTitle: text('catalog_release_title'),
+  catalogReleaseKind: text('catalog_release_kind'),
   videoType: text('video_type'),
   resolutionMethod: text('resolution_method').notNull(),
   trackNumber: integer('track_number'),
@@ -117,6 +126,10 @@ export const libraryTracksTable = sqliteTable(
     spotifyTrackId: text('spotify_track_id'),
     soundcloudTrackId: text('soundcloud_track_id'),
     resolvedYoutubeMusicTrackId: text('resolved_youtube_music_track_id'),
+    sourceOrigin: text('source_origin'),
+    catalogReleaseBrowseId: text('catalog_release_browse_id'),
+    catalogReleaseTitle: text('catalog_release_title'),
+    catalogReleaseKind: text('catalog_release_kind'),
     title: text('title'),
     artist: text('artist'),
     album: text('album'),
@@ -171,6 +184,7 @@ export const libraryFilesTable = sqliteTable(
     durationSeconds: real('duration_seconds'),
     bitrate: integer('bitrate'),
     modifiedAt: text('modified_at'),
+    sidecarModifiedAt: text('sidecar_modified_at'),
     audioSha256: text('audio_sha256'),
     tagFingerprint: text('tag_fingerprint'),
     embeddedLyricsStatus: text('embedded_lyrics_status').notNull(),
@@ -196,17 +210,4 @@ export const artifactsTable = sqliteTable('artifacts', {
   lrcPath: text('lrc_path'),
   remoteTarget: text('remote_target'),
   createdAt: text('created_at').notNull(),
-})
-
-export const songLogsTable = sqliteTable('song_logs', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  runId: text('run_id').notNull(),
-  youtubeMusicTrackId: text('youtube_music_track_id').notNull(),
-  itemId: text('item_id').notNull(),
-  timestamp: text('timestamp').notNull(),
-  level: text('level').notNull(),
-  stage: text('stage').notNull(),
-  event: text('event').notNull(),
-  message: text('message').notNull(),
-  contextJson: text('context_json').notNull(),
 })

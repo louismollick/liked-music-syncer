@@ -27,6 +27,11 @@ export function registerIpcHandlers(
       window.webContents.send(eventChannel, snapshot)
     }
   })
+  libraryService.subscribeIndexStatus(() => {
+    if (!window.isDestroyed()) {
+      window.webContents.send('library:indexStatusUpdated')
+    }
+  })
 
   ipcMain.handle('auth:getStatus', () => authService.getStatus())
   ipcMain.handle('auth:captureBrowserAuth', (_event, browser) =>
@@ -76,6 +81,11 @@ export function registerIpcHandlers(
   ipcMain.handle('sync:reprocessArtists', (_event, artistIds: string[]) =>
     syncService.reprocessArtists(artistIds)
   )
+  ipcMain.handle(
+    'sync:refreshFavoriteArtists',
+    (_event, artistIds?: string[]) =>
+      syncService.refreshFavoriteArtists(artistIds)
+  )
   ipcMain.handle('sync:cancel', (_event, runId: string) =>
     syncService.cancel(runId)
   )
@@ -89,19 +99,39 @@ export function registerIpcHandlers(
     syncService.getRun(runId)
   )
   ipcMain.handle('sync:getSnapshot', () => syncService.getSnapshot())
-  ipcMain.handle('sync:getRunLogs', (_event, runId: string) =>
-    syncService.getRunLogs(runId)
-  )
-  ipcMain.handle(
-    'sync:getSongLogs',
-    (_event, input: { runId: string; youtubeMusicTrackId: string }) =>
-      syncService.getSongLogs(input.runId, input.youtubeMusicTrackId)
-  )
   ipcMain.handle('library:scanRoots', () => libraryService.scanRoots())
-  ipcMain.handle('library:refreshArtists', () =>
-    likedArtistsService.refreshArtists()
+  ipcMain.handle('library:getIndexStatus', () =>
+    libraryService.getIndexStatus()
   )
+  const refreshLibrary = async () => {
+    const scanResult = await libraryService.refreshIndex()
+    if (!scanResult.ok) return scanResult
+
+    const refreshResult = await likedArtistsService.refreshArtists()
+    if (!window.isDestroyed()) {
+      window.webContents.send('library:artistsUpdated')
+    }
+    void likedArtistsService
+      .refreshArtistImages()
+      .then(() => {
+        if (!window.isDestroyed()) {
+          window.webContents.send('library:artistsUpdated')
+        }
+      })
+      .catch(() => undefined)
+    return {
+      ...refreshResult,
+      message: `${scanResult.message} ${refreshResult.message}`,
+    }
+  }
+  ipcMain.handle('library:refreshIndex', refreshLibrary)
+  ipcMain.handle('library:refreshArtists', refreshLibrary)
   ipcMain.handle('library:listArtists', () => likedArtistsService.listArtists())
+  ipcMain.handle(
+    'library:setArtistFavorite',
+    (_event, artistId: string, isFavorite: boolean) =>
+      likedArtistsService.setArtistFavorite(artistId, isFavorite)
+  )
   ipcMain.handle('library:listTracks', (_event, filter) =>
     libraryService.listTracks(filter)
   )

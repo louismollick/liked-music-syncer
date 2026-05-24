@@ -4,11 +4,9 @@ import type {
   CommandResult,
   YtDlpCookiesBrowser,
 } from '@shared/contracts'
-import type { AppDatabase } from '../db/database'
-import { songLogsTable } from '../db/schema'
+import { logMain } from './logger'
 import type { PythonWorkerService } from './python-worker'
 import type { SettingsService } from './settings-service'
-import { nowIso } from './utils'
 
 interface WorkerAuthStatusResponse {
   ok: boolean
@@ -19,12 +17,8 @@ interface WorkerAuthStatusResponse {
 
 export class AuthService {
   private lastError: string | null = null
-  private static readonly AUTH_LOG_RUN_ID = '__auth__'
-  private static readonly AUTH_LOG_ITEM_ID = '__auth__'
-  private static readonly AUTH_LOG_SOURCE_VIDEO_ID = '__auth__'
 
   constructor(
-    private readonly db: AppDatabase,
     private readonly settingsService: SettingsService,
     private readonly pythonWorker: PythonWorkerService
   ) {}
@@ -86,20 +80,14 @@ export class AuthService {
     message: string
   ) {
     if (!source) return
-
-    await this.db.insert(songLogsTable).values({
-      runId: AuthService.AUTH_LOG_RUN_ID,
-      itemId: AuthService.AUTH_LOG_ITEM_ID,
-      youtubeMusicTrackId: AuthService.AUTH_LOG_SOURCE_VIDEO_ID,
-      timestamp: nowIso(),
+    logMain({
       level: 'warn',
-      stage: 'ytmusic_auth',
-      event: 'auth-status-failed',
-      message,
-      contextJson: JSON.stringify({
+      source: 'auth',
+      message: `[ytmusic_auth] auth-status-failed ${message}`,
+      context: {
         auth_mode: authMode,
         source,
-      }),
+      },
     })
   }
 

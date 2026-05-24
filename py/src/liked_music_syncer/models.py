@@ -27,16 +27,21 @@ class SyncConfig:
     file_template: str
     embed_unsynced_lyrics: bool
     write_lrc_sidecar: bool
+    lyrics_api_base_url: str
+    spotify_match_enabled: bool
     ffmpeg_path: str
     yt_dlp_plugin_dir: str
     yt_dlp_po_token_base_url: str
     artist_filter_channel_ids: list[str] = field(default_factory=list)
     artist_filter_names_normalized: list[str] = field(default_factory=list)
+    favorite_artist_catalogs: list[dict[str, str | None]] = field(default_factory=list)
     force_reprocess: bool = False
     existing_local_youtube_music_track_ids: list[str] = field(default_factory=list)
     existing_local_resolved_youtube_music_track_ids: list[str] = field(
         default_factory=list
     )
+    existing_local_track_signatures: list[dict[str, Any]] = field(default_factory=list)
+    existing_local_release_signatures: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "SyncConfig":
@@ -53,6 +58,8 @@ class SyncConfig:
             file_template=str(payload["file_template"]),
             embed_unsynced_lyrics=bool(payload["embed_unsynced_lyrics"]),
             write_lrc_sidecar=bool(payload["write_lrc_sidecar"]),
+            lyrics_api_base_url=str(payload.get("lyrics_api_base_url", "")),
+            spotify_match_enabled=bool(payload.get("spotify_match_enabled", False)),
             artist_filter_channel_ids=[
                 str(value)
                 for value in payload.get("artist_filter_channel_ids", [])
@@ -62,6 +69,18 @@ class SyncConfig:
                 str(value).strip().lower()
                 for value in payload.get("artist_filter_names_normalized", [])
                 if isinstance(value, str) and value.strip()
+            ],
+            favorite_artist_catalogs=[
+                {
+                    "id": str(value.get("id", "")),
+                    "channel_id": str(value["channel_id"])
+                    if isinstance(value.get("channel_id"), str)
+                    else None,
+                    "name": str(value.get("name", "")),
+                    "normalized_name": str(value.get("normalized_name", "")),
+                }
+                for value in payload.get("favorite_artist_catalogs", [])
+                if isinstance(value, dict) and str(value.get("id", "")).strip()
             ],
             force_reprocess=bool(payload.get("force_reprocess", False)),
             existing_local_youtube_music_track_ids=[
@@ -73,6 +92,16 @@ class SyncConfig:
                 str(value)
                 for value in payload.get("existing_local_resolved_youtube_music_track_ids", [])
                 if isinstance(value, str) and value
+            ],
+            existing_local_track_signatures=[
+                value
+                for value in payload.get("existing_local_track_signatures", [])
+                if isinstance(value, dict)
+            ],
+            existing_local_release_signatures=[
+                value
+                for value in payload.get("existing_local_release_signatures", [])
+                if isinstance(value, dict)
             ],
             ffmpeg_path=str(payload["ffmpeg_path"]),
             yt_dlp_plugin_dir=str(payload.get("yt_dlp_plugin_dir", "")),
@@ -94,6 +123,12 @@ class SyncItemState:
     spotify_track_id: str | None = None
     soundcloud_track_id: str | None = None
     resolved_youtube_music_track_id: str | None = None
+    source_origin: str | None = None
+    catalog_release_browse_id: str | None = None
+    catalog_release_title: str | None = None
+    catalog_release_kind: str | None = None
+    normalized_primary_artist: str | None = None
+    normalized_title: str | None = None
     status: str = "pending"
     stage: str = "idle"
     reason_code: str = ""
@@ -136,6 +171,10 @@ class SyncItemState:
             "spotify_track_id": self.spotify_track_id,
             "soundcloud_track_id": self.soundcloud_track_id,
             "resolved_youtube_music_track_id": self.resolved_youtube_music_track_id,
+            "source_origin": self.source_origin,
+            "catalog_release_browse_id": self.catalog_release_browse_id,
+            "catalog_release_title": self.catalog_release_title,
+            "catalog_release_kind": self.catalog_release_kind,
             "title": self.title,
             "artist": self.artist,
             "album": self.album,
