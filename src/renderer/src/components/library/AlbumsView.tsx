@@ -4,7 +4,11 @@ import { useMemo } from 'react'
 import { useAlbumArtwork } from '../../hooks/useAlbumArtwork'
 import { FilterPill } from './FilterPill'
 import { LibraryActionButtons } from './LibraryActionButtons'
-import { groupAlbums, matchesArtistFilter, type AlbumGroup } from './library-utils'
+import {
+  type AlbumGroup,
+  groupAlbums,
+  matchesArtistFilter,
+} from './library-utils'
 
 interface ArtistFilter {
   artistName: string
@@ -89,14 +93,19 @@ export function AlbumsView({
   const visibleTracks = useMemo(
     () =>
       artistFilter
-        ? tracks.filter((track) => matchesArtistFilter(track, artistFilter.artistName))
+        ? tracks.filter((track) =>
+            matchesArtistFilter(track, artistFilter.artistName)
+          )
         : tracks,
     [artistFilter, tracks]
   )
   const albums = useMemo(() => groupAlbums(visibleTracks), [visibleTracks])
   const albumKeys = useMemo(() => albums.map((album) => album.key), [albums])
-  const { getArtworkUrl, loading: artworkLoading, error: artworkError } =
-    useAlbumArtwork(albumKeys)
+  const {
+    getArtworkUrl,
+    loading: artworkLoading,
+    error: artworkError,
+  } = useAlbumArtwork(albumKeys)
 
   return (
     <div className="p-6 h-full flex flex-col">

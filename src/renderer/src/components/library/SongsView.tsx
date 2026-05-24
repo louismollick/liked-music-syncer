@@ -130,7 +130,9 @@ export function SongsView({
   const visibleTracks = useMemo(
     () =>
       albumFilter
-        ? tracks.filter((track) => matchesAlbumFilter(track, albumFilter.albumKey))
+        ? tracks.filter((track) =>
+            matchesAlbumFilter(track, albumFilter.albumKey)
+          )
         : tracks,
     [albumFilter, tracks]
   )

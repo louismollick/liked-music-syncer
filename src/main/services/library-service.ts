@@ -1822,7 +1822,7 @@ export class LibraryService {
 
   private toTrackView(
     track: typeof libraryTracksTable.$inferSelect,
-    files: typeof libraryFilesTable.$inferSelect[] = [],
+    files: (typeof libraryFilesTable.$inferSelect)[] = [],
     rootById = new Map<string, typeof libraryRootsTable.$inferSelect>()
   ): LibraryTrackView {
     const hasLocalFile = files.some(

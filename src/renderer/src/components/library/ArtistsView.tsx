@@ -38,7 +38,9 @@ export function ArtistsView({
   const imageRefreshStarted = useRef(false)
 
   useEffect(() => {
-    const withPhoto = artists.filter((artist) => Boolean(artist.photoUrl)).length
+    const withPhoto = artists.filter((artist) =>
+      Boolean(artist.photoUrl)
+    ).length
     const needsRefresh = artists.filter((artist) =>
       isLowResArtistPhotoUrl(artist.photoUrl)
     ).length
@@ -137,9 +139,7 @@ export function ArtistsView({
           onReprocessFavoriteArtists={() =>
             onAction(window.api.sync.refreshFavoriteArtists())
           }
-          onSyncToRemote={() =>
-            onAction(window.api.sync.syncMissingToRemote())
-          }
+          onSyncToRemote={() => onAction(window.api.sync.syncMissingToRemote())}
         />
       </div>
 

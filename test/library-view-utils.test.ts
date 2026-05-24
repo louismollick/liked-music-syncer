@@ -63,9 +63,9 @@ describe('library view utils', () => {
   })
 
   it('matches album filters by album key', () => {
-    expect(
-      matchesAlbumFilter(makeTrack(), 'Album Name|||Album Artist')
-    ).toBe(true)
+    expect(matchesAlbumFilter(makeTrack(), 'Album Name|||Album Artist')).toBe(
+      true
+    )
     expect(matchesAlbumFilter(makeTrack(), 'Other|||Album Artist')).toBe(false)
   })
 

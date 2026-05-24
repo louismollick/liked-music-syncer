@@ -1,5 +1,5 @@
-import type { LibraryTrackView } from '@shared/contracts'
 import { buildAlbumKey } from '@shared/album-key'
+import type { LibraryTrackView } from '@shared/contracts'
 
 export interface AlbumGroup {
   key: string

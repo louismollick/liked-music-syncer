@@ -8,8 +8,8 @@ import { MainLayout } from './components/layout/MainLayout'
 import type { Screen } from './components/layout/Sidebar'
 import { AlbumsView } from './components/library/AlbumsView'
 import { ArtistsView } from './components/library/ArtistsView'
-import { SongsView } from './components/library/SongsView'
 import type { AlbumGroup } from './components/library/library-utils'
+import { SongsView } from './components/library/SongsView'
 import { SettingsView } from './components/settings/SettingsView'
 import { SyncApprovalView } from './components/sync/SyncApprovalView'
 import { SyncCompletedView } from './components/sync/SyncCompletedView'
@@ -71,8 +71,11 @@ function App(): JSX.Element {
   const [albumFilter, setAlbumFilter] = useState<AlbumFilterState | null>(null)
 
   const { artists } = useArtists()
-  const { tracks, loaded: tracksLoaded, refreshing: tracksRefreshing } =
-    useTracks()
+  const {
+    tracks,
+    loaded: tracksLoaded,
+    refreshing: tracksRefreshing,
+  } = useTracks()
   const snapshot = useSyncSnapshot()
   const { settings, setSettings, authStatus, setAuthStatus, save } =
     useSettings()
