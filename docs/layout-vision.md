@@ -107,7 +107,7 @@ Current library navigation behavior:
 - Artists expose a `Select` toggle for bulk artist actions such as selected reprocess and selected catalog refresh
 - Albums show the same top-level library sync actions as Artists and can drill into Songs
 - Albums and Songs show dismissible filter pills beside the view title when entered from drilldown
-- Songs expose lyrics type, language, and remote presence columns in the main table
+- Songs expose lyrics type, language, and remote presence columns in the main table, and those columns are sortable like the core song metadata columns
 
 The Library view should not include playback controls.
 

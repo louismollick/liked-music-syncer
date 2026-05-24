@@ -4,6 +4,7 @@ import {
   matchesAlbumFilter,
   matchesArtistFilter,
   remoteStatusLabel,
+  songSortValue,
 } from '../src/renderer/src/components/library/library-utils'
 import type { LibraryTrackView } from '../src/shared/contracts'
 
@@ -90,5 +91,18 @@ describe('library view utils', () => {
         makeTrack({ hasLocalFile: false, hasRemoteFile: false })
       )
     ).toBe('Missing')
+  })
+
+  it('derives song sort values for derived columns', () => {
+    expect(
+      songSortValue(makeTrack({ lyricsStatus: 'plain' }), 'lyricType')
+    ).toBe('Unsynced')
+    expect(songSortValue(makeTrack({ language: 'JA' }), 'language')).toBe('JA')
+    expect(
+      songSortValue(
+        makeTrack({ hasLocalFile: false, hasRemoteFile: true }),
+        'remoteStatus'
+      )
+    ).toBe('Remote Only')
   })
 })

@@ -8,9 +8,10 @@ import {
   lyricTypeLabel,
   matchesAlbumFilter,
   remoteStatusLabel,
+  type SongSortKey,
+  songSortValue,
 } from './library-utils'
 
-type SortKey = 'title' | 'artist' | 'album' | 'year'
 type SortDir = 'asc' | 'desc'
 
 interface AlbumFilter {
@@ -32,16 +33,18 @@ interface Props {
 
 function sortTracks(
   tracks: LibraryTrackView[],
-  key: SortKey,
+  key: SongSortKey,
   dir: SortDir
 ): LibraryTrackView[] {
   return [...tracks].sort((a, b) => {
-    const av = a[key] ?? ''
-    const bv = b[key] ?? ''
+    const av = songSortValue(a, key)
+    const bv = songSortValue(b, key)
     const cmp =
       typeof av === 'number' && typeof bv === 'number'
         ? av - bv
-        : String(av).localeCompare(String(bv))
+        : String(av).localeCompare(String(bv), undefined, {
+            sensitivity: 'base',
+          })
     return dir === 'asc' ? cmp : -cmp
   })
 }
@@ -54,10 +57,10 @@ function ColHeader({
   onClick,
 }: {
   label: string
-  sortKey: SortKey
+  sortKey: SongSortKey
   active: boolean
   dir: SortDir
-  onClick: (key: SortKey) => void
+  onClick: (key: SongSortKey) => void
 }): JSX.Element {
   return (
     <th className="text-left px-3 py-2">
@@ -124,7 +127,7 @@ export function SongsView({
   onReprocessFavoriteArtists,
   onSyncToRemote,
 }: Props): JSX.Element {
-  const [sortKey, setSortKey] = useState<SortKey>('title')
+  const [sortKey, setSortKey] = useState<SongSortKey>('title')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   const visibleTracks = useMemo(
@@ -137,7 +140,7 @@ export function SongsView({
     [albumFilter, tracks]
   )
 
-  const handleSort = (key: SortKey) => {
+  const handleSort = (key: SongSortKey) => {
     if (key === sortKey) {
       setSortDir((direction) => (direction === 'asc' ? 'desc' : 'asc'))
     } else {
@@ -224,15 +227,27 @@ export function SongsView({
                   dir={sortDir}
                   onClick={handleSort}
                 />
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-text-muted">
-                  Lyric Type
-                </th>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-text-muted">
-                  Language
-                </th>
-                <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-text-muted">
-                  Remote Status
-                </th>
+                <ColHeader
+                  label="Lyric Type"
+                  sortKey="lyricType"
+                  active={sortKey === 'lyricType'}
+                  dir={sortDir}
+                  onClick={handleSort}
+                />
+                <ColHeader
+                  label="Language"
+                  sortKey="language"
+                  active={sortKey === 'language'}
+                  dir={sortDir}
+                  onClick={handleSort}
+                />
+                <ColHeader
+                  label="Remote Status"
+                  sortKey="remoteStatus"
+                  active={sortKey === 'remoteStatus'}
+                  dir={sortDir}
+                  onClick={handleSort}
+                />
               </tr>
             </thead>
             <tbody>

@@ -86,3 +86,28 @@ export function remoteStatusLabel(
   if (track.hasRemoteFile) return 'Remote Only'
   return 'Missing'
 }
+
+export type SongSortKey =
+  | 'title'
+  | 'artist'
+  | 'album'
+  | 'year'
+  | 'lyricType'
+  | 'language'
+  | 'remoteStatus'
+
+export function songSortValue(
+  track: LibraryTrackView,
+  key: SongSortKey
+): number | string {
+  switch (key) {
+    case 'lyricType':
+      return lyricTypeLabel(track.lyricsStatus)
+    case 'language':
+      return track.language ?? ''
+    case 'remoteStatus':
+      return remoteStatusLabel(track)
+    default:
+      return track[key] ?? ''
+  }
+}
