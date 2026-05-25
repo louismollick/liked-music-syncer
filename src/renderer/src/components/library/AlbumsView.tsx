@@ -49,32 +49,39 @@ function AlbumCard({
   onClick: () => void
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="bg-surface-secondary rounded-xl border border-border p-4 flex flex-col gap-1.5 text-left hover:border-border/80 transition-colors"
-    >
-      <div className="w-full aspect-square bg-surface-tertiary rounded-lg mb-2 overflow-hidden flex items-center justify-center">
-        {artworkUrl ? (
-          <img
-            src={artworkUrl}
-            alt=""
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <AlbumPlaceholderIcon />
-        )}
-      </div>
-      <p className="text-sm font-medium text-text-primary truncate">
-        {group.album}
-      </p>
-      <p className="text-xs text-text-muted truncate">{group.albumArtist}</p>
-      <p className="text-xs text-text-muted">
-        {group.trackCount} {group.trackCount === 1 ? 'track' : 'tracks'}
-        {group.year ? ` · ${group.year}` : ''}
-      </p>
-    </button>
+    <div className="group relative bg-surface-secondary rounded-xl border border-border transition-all overflow-hidden hover:border-surface-hover">
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full text-left cursor-pointer"
+        aria-label={`Open ${group.album}`}
+      >
+        <div className="w-full aspect-square bg-surface-tertiary relative overflow-hidden flex items-center justify-center">
+          {artworkUrl ? (
+            <img
+              src={artworkUrl}
+              alt=""
+              className="w-full h-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            <AlbumPlaceholderIcon />
+          )}
+        </div>
+        <div className="p-2.5">
+          <p className="text-sm font-medium text-text-primary truncate">
+            {group.album}
+          </p>
+          <p className="text-xs text-text-muted truncate">
+            {group.albumArtist}
+          </p>
+          <p className="text-xs text-text-muted">
+            {group.trackCount} {group.trackCount === 1 ? 'track' : 'tracks'}
+            {group.year ? ` · ${group.year}` : ''}
+          </p>
+        </div>
+      </button>
+    </div>
   )
 }
 

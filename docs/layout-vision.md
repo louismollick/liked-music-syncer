@@ -5,6 +5,10 @@
 - Left nav `Sync` is one non-expandable destination.
 - No Sync subnavigation.
 
+## Library Cards
+- Artist and album grid cards use edge-to-edge square media.
+- Metadata sits in a compact padded footer below the image/artwork.
+
 ## Sync Page
 - One Sync page with in-page filters: `All`, `In Progress`, `Completed`, `Failed`.
 - Job cards remain parent/child grouped (job header + track rows).
