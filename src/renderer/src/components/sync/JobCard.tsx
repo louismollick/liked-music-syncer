@@ -1,43 +1,44 @@
-import type { SyncJobView } from '@shared/contracts'
+import type {
+  SyncJobDisplayStatus,
+  SyncJobView,
+  SyncTrackWorkView,
+} from '@shared/contracts'
 import type { JSX } from 'react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
 import { TrackRow } from './TrackRow'
 
 function jobStatusVariant(
-  status: SyncJobView['status']
+  status: SyncJobDisplayStatus
 ): 'success' | 'error' | 'warning' | 'default' | 'info' {
-  switch (status) {
-    case 'completed':
-      return 'success'
-    case 'failed':
-      return 'error'
-    case 'running':
-      return 'info'
-    case 'waiting_approval':
-      return 'warning'
-    case 'cancelled':
-      return 'default'
-    default:
-      return 'default'
-  }
+  return status === 'completed' ? 'success' : 'info'
+}
+
+function jobStatusLabel(status: SyncJobDisplayStatus) {
+  return status === 'completed' ? 'Completed' : 'In Progress'
 }
 
 interface Props {
   job: SyncJobView
+  tracks?: SyncTrackWorkView[]
   onCancel?: (jobId: string) => void
   defaultExpanded?: boolean
 }
 
 export function JobCard({
   job,
+  tracks,
   onCancel,
   defaultExpanded = false,
 }: Props): JSX.Element {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const canCancel =
     onCancel && (job.status === 'running' || job.status === 'queued')
+  const visibleTracks = useMemo(
+    () => tracks ?? job.tracks,
+    [tracks, job.tracks]
+  )
 
   return (
     <div className="bg-surface-secondary rounded-xl border border-border overflow-hidden">
@@ -68,16 +69,13 @@ export function JobCard({
           </p>
           <p className="text-xs text-text-muted mt-0.5">
             {job.processedTracks}/{job.totalTracks} tracks
-            {job.failedTracks > 0 ? ` · ${job.failedTracks} failed` : ''}
-            {job.pendingApprovalTracks > 0
-              ? ` · ${job.pendingApprovalTracks} pending approval`
-              : ''}
+            {job.failedTracks > 0 ? ` - ${job.failedTracks} failed` : ''}
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
-          <Badge variant={jobStatusVariant(job.status)}>
-            {job.status.replace(/_/g, ' ')}
+          <Badge variant={jobStatusVariant(job.displayStatus)}>
+            {jobStatusLabel(job.displayStatus)}
           </Badge>
           {canCancel ? (
             <Button
@@ -94,11 +92,17 @@ export function JobCard({
         </div>
       </button>
 
-      {expanded && job.tracks.length > 0 ? (
+      {expanded ? (
         <div className="border-t border-border px-2 py-1 max-h-64 overflow-y-auto">
-          {job.tracks.map((track) => (
-            <TrackRow key={track.id} track={track} />
-          ))}
+          {visibleTracks.length > 0 ? (
+            visibleTracks.map((track) => (
+              <TrackRow key={track.id} track={track} />
+            ))
+          ) : (
+            <p className="text-xs text-text-muted px-3 py-2">
+              No tracks in this filter.
+            </p>
+          )}
         </div>
       ) : null}
     </div>

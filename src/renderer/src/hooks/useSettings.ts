@@ -7,7 +7,6 @@ import { useEffect, useState } from 'react'
 
 const EMPTY_SETTINGS: AppSettingsView = {
   outputDirectory: '',
-  autoApproveChanges: false,
   remoteCopyEnabled: false,
   outputFormat: 'm4a',
   rcloneRemote: '',
@@ -45,7 +44,6 @@ export function useSettings() {
   const save = async (): Promise<CommandResult> => {
     const result = await window.api.settings.save({
       outputDirectory: settings.outputDirectory,
-      autoApproveChanges: settings.autoApproveChanges,
       remoteCopyEnabled: settings.remoteCopyEnabled,
       ytDlpCookiesBrowser: settings.ytDlpCookiesBrowser,
       rcloneRemote: settings.rcloneRemote,

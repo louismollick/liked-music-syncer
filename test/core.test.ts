@@ -196,4 +196,31 @@ describe('lyrics', () => {
 
     globalThis.fetch = originalFetch
   })
+
+  it('returns plain lyrics when timestamps are absent', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          lines: [
+            { words: 'line one' },
+            { startTimeMs: '', words: 'line two' },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      )
+    }) as typeof fetch
+
+    const result = await fetchLyricsLrc(
+      'track-id',
+      'https://lyrics.example.test'
+    )
+    expect(result.lyrics).toBe('line one\nline two\n')
+    expect(result.syncedLines).toBe(0)
+
+    globalThis.fetch = originalFetch
+  })
 })

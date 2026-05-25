@@ -94,12 +94,6 @@ export function registerIpcHandlers(
   ipcMain.handle('sync:reprocessArtists', (_event, artistIds: string[]) =>
     syncService.reprocessArtists(artistIds)
   )
-  ipcMain.handle('sync:approveChanges', (_event, approvalIds: string[]) =>
-    syncService.approveChanges(approvalIds)
-  )
-  ipcMain.handle('sync:denyChanges', (_event, approvalIds: string[]) =>
-    syncService.denyChanges(approvalIds)
-  )
   ipcMain.handle(
     'sync:refreshFavoriteArtists',
     (_event, artistIds?: string[]) =>

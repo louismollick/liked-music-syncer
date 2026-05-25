@@ -15,7 +15,6 @@ import { expandHome, nowIso } from './utils'
 
 const DEFAULT_SETTINGS: AppSettingsView = {
   outputDirectory: '',
-  autoApproveChanges: false,
   remoteCopyEnabled: false,
   outputFormat: 'm4a',
   rcloneRemote: '',
@@ -36,7 +35,6 @@ const SETTINGS_FILE_VERSION = 1
 interface PersistedSettingsFile {
   version: number
   outputDirectory: string
-  autoApproveChanges: boolean
   remoteCopyEnabled: boolean
   rcloneRemote: string
   remoteMusicRoot: string
@@ -50,7 +48,6 @@ interface PersistedSettingsFile {
 
 export interface RuntimeSettings {
   outputDirectory: string
-  autoApproveChanges: boolean
   remoteCopyEnabled: boolean
   rcloneRemote: string
   remoteMusicRoot: string
@@ -79,9 +76,6 @@ export class SettingsService {
       outputDirectory:
         persisted?.outputDirectory ??
         this.getPlainValue(rowMap, 'outputDirectory'),
-      autoApproveChanges:
-        persisted?.autoApproveChanges ??
-        this.getBooleanValue(rowMap, 'autoApproveChanges'),
       remoteCopyEnabled:
         persisted?.remoteCopyEnabled ??
         this.getBooleanValue(rowMap, 'remoteCopyEnabled'),
@@ -118,10 +112,6 @@ export class SettingsService {
     this.writePersistedSettings(persisted)
 
     await this.writeValue('outputDirectory', persisted.outputDirectory)
-    await this.writeValue(
-      'autoApproveChanges',
-      String(persisted.autoApproveChanges)
-    )
     await this.writeValue(
       'remoteCopyEnabled',
       String(persisted.remoteCopyEnabled)
@@ -166,10 +156,6 @@ export class SettingsService {
         persisted?.outputDirectory ??
         (await this.getSecretOrPlain('outputDirectory')) ??
         '',
-      autoApproveChanges:
-        persisted?.autoApproveChanges ??
-        ((await this.getSecretOrPlain('autoApproveChanges')) ?? 'false') ===
-          'true',
       remoteCopyEnabled:
         persisted?.remoteCopyEnabled ??
         ((await this.getSecretOrPlain('remoteCopyEnabled')) ?? 'false') ===
@@ -356,7 +342,6 @@ export class SettingsService {
     return {
       version: SETTINGS_FILE_VERSION,
       outputDirectory: expandHome(input.outputDirectory.trim()),
-      autoApproveChanges: input.autoApproveChanges,
       remoteCopyEnabled: input.remoteCopyEnabled,
       rcloneRemote: input.rcloneRemote.trim(),
       remoteMusicRoot: input.remoteMusicRoot.trim(),
@@ -387,7 +372,6 @@ export class SettingsService {
           typeof parsed.outputDirectory === 'string'
             ? parsed.outputDirectory
             : '',
-        autoApproveChanges: parsed.autoApproveChanges === true,
         remoteCopyEnabled: parsed.remoteCopyEnabled === true,
         rcloneRemote:
           typeof parsed.rcloneRemote === 'string' ? parsed.rcloneRemote : '',

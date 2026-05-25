@@ -4,13 +4,12 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
 
-const SCHEMA_VERSION = '11'
+const SCHEMA_VERSION = '12'
 
 const ALL_TABLES = [
   'library_files',
   'library_tracks',
   'library_roots',
-  'sync_approval_items',
   'sync_job_tracks',
   'sync_jobs',
   'liked_artists',
@@ -112,7 +111,6 @@ function resetSchema(sqlite: Database.Database) {
       lyrics_source TEXT,
       selected_source_url TEXT,
       visible INTEGER NOT NULL DEFAULT 1,
-      approval_required INTEGER NOT NULL DEFAULT 0,
       terminal_outcome TEXT,
       sort_index INTEGER,
       remote_target TEXT,
@@ -124,21 +122,6 @@ function resetSchema(sqlite: Database.Database) {
       updated_at TEXT NOT NULL
     );
 
-    CREATE TABLE sync_approval_items (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      track_work_id TEXT NOT NULL,
-      library_track_id TEXT,
-      status TEXT NOT NULL,
-      action_kind TEXT NOT NULL,
-      diff_json TEXT NOT NULL,
-      before_json TEXT NOT NULL,
-      after_json TEXT NOT NULL,
-      album_art_diff_json TEXT,
-      payload_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
 
     CREATE TABLE library_roots (
       id TEXT PRIMARY KEY,

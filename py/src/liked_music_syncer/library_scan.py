@@ -13,9 +13,8 @@ from typing import Any
 
 from mediafile import MediaFile
 
+from .lyrics import classify_lyrics_text
 from .media_tags import register_lms_mediafile_fields, read_legacy_youtube_track_id
-
-LYRICS_TIMESTAMP_RE = re.compile(r"^\[\d{2}:\d{2}(?:\.\d{2})?\]", flags=re.MULTILINE)
 
 
 @dataclass(slots=True)
@@ -46,9 +45,7 @@ def _normalize_text(value: str) -> str:
 
 
 def _classify_lyrics_text(value: str | None) -> str:
-    if not value or not value.strip():
-        return "missing"
-    return "synced" if LYRICS_TIMESTAMP_RE.search(value) else "plain"
+    return classify_lyrics_text(value)
 
 
 def _best_lyrics_status(*values: str) -> str:

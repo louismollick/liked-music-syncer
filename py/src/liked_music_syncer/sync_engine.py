@@ -25,6 +25,7 @@ from .album_identity import UNKNOWN_ALBUM_NAME, canonical_album_name, is_unknown
 from .auth import build_browser_auth_client
 from .cover_art import make_square_cover
 from .json_io import emit_event
+from .lyrics import classify_lyrics_text, is_zero_timestamp_only_lrc, lyrics_sidecar_text
 from .lyrics_language import detect_primary_lyrics_language
 from .media_tags import write_media_tags
 from .models import SyncConfig, SyncItemState
@@ -1060,9 +1061,7 @@ def _format_lrc_line(start_ms: int, text: str) -> str:
 
 
 def _classify_lyrics_text(lyrics_text: str | None) -> str:
-    if not lyrics_text or not lyrics_text.strip():
-        return "missing"
-    return "synced" if re.search(r"^\[\d{2}:\d{2}(?:\.\d{2})?\]", lyrics_text, flags=re.MULTILINE) else "plain"
+    return classify_lyrics_text(lyrics_text)
 
 
 def _should_skip_existing(config: SyncConfig, item: SyncItemState) -> bool:
@@ -1549,8 +1548,9 @@ def _spotify_fetch_lyrics(spotify_track_id: str, lyrics_api_base_url: str) -> tu
         start_time = line.get("startTimeMs")
         if isinstance(start_time, str) and start_time.strip().isdigit():
             rendered_synced.append(_format_lrc_line(int(start_time.strip()), words.strip()))
-    if rendered_synced:
-        return "\n".join(rendered_synced) + "\n", "synced"
+    rendered_synced_text = "\n".join(rendered_synced) + "\n" if rendered_synced else None
+    if rendered_synced_text and not is_zero_timestamp_only_lrc(rendered_synced_text):
+        return rendered_synced_text, "synced"
     if rendered_plain:
         return "\n".join(rendered_plain) + "\n", "plain"
     return None, "missing"
@@ -1809,7 +1809,7 @@ def run_sync(config: SyncConfig) -> None:
             except Exception as exc:  # noqa: BLE001
                 _log(config.job_id, item, item.stage, "warn", "lyrics", str(exc))
                 lyrics_text, lyrics_source = None, None
-            item.lyrics_status = _classify_lyrics_text(lyrics_text)
+            item.lyrics_status = classify_lyrics_text(lyrics_text)
             item.language = detect_primary_lyrics_language(lyrics_text)
             if lyrics_text:
                 item.lyrics_matched = True
@@ -1844,11 +1844,13 @@ def run_sync(config: SyncConfig) -> None:
                     embedded_lyrics = lyrics_text if (lyrics_text and (item.lyrics_status == "synced" or config.embed_unsynced_lyrics)) else None
                     write_media_tags(output_path, item, cover_bytes, embedded_lyrics)
 
-                    if config.write_lrc_sidecar and lyrics_text:
-                        item.lrc_path = str(output_path.with_suffix(".lrc"))
-                        Path(item.lrc_path).write_text(lyrics_text, encoding="utf-8")
-                    elif config.force_reprocess:
-                        stale_lrc = output_path.with_suffix(".lrc")
+                    sidecar_text = lyrics_sidecar_text(lyrics_text, item.lyrics_status)
+                    stale_lrc = output_path.with_suffix(".lrc")
+                    if config.write_lrc_sidecar and sidecar_text:
+                        item.lrc_path = str(stale_lrc)
+                        stale_lrc.write_text(sidecar_text, encoding="utf-8")
+                    else:
+                        item.lrc_path = None
                         if stale_lrc.exists():
                             stale_lrc.unlink()
 

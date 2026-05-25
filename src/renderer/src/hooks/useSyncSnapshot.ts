@@ -2,11 +2,8 @@ import type { SyncSnapshot } from '@shared/contracts'
 import { useEffect, useState } from 'react'
 
 const EMPTY: SyncSnapshot = {
-  queue: [],
-  needsApproval: [],
-  completed: [],
-  failures: [],
-  counts: { queue: 0, needsApproval: 0, completed: 0, failures: 0 },
+  jobs: [],
+  counts: { all: 0, inProgress: 0, completed: 0, failed: 0 },
 }
 
 export function useSyncSnapshot() {

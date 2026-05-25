@@ -6,12 +6,11 @@ interface Props {
   screen: Screen
   onNavigate: (screen: Screen) => void
   counts: {
-    queue: number
-    needsApproval: number
+    all: number
+    inProgress: number
     completed: number
-    failures: number
+    failed: number
   }
-  showNeedsApproval: boolean
   children: React.ReactNode
 }
 
@@ -19,17 +18,11 @@ export function MainLayout({
   screen,
   onNavigate,
   counts,
-  showNeedsApproval,
   children,
 }: Props): JSX.Element {
   return (
     <div className="flex h-screen bg-surface-primary overflow-hidden">
-      <Sidebar
-        screen={screen}
-        onNavigate={onNavigate}
-        counts={counts}
-        showNeedsApproval={showNeedsApproval}
-      />
+      <Sidebar screen={screen} onNavigate={onNavigate} counts={counts} />
       <main className="flex-1 overflow-auto">{children}</main>
     </div>
   )

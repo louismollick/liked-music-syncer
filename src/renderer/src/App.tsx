@@ -11,10 +11,7 @@ import { ArtistsView } from './components/library/ArtistsView'
 import type { AlbumGroup } from './components/library/library-utils'
 import { SongsView } from './components/library/SongsView'
 import { SettingsView } from './components/settings/SettingsView'
-import { SyncApprovalView } from './components/sync/SyncApprovalView'
-import { SyncCompletedView } from './components/sync/SyncCompletedView'
-import { SyncFailuresView } from './components/sync/SyncFailuresView'
-import { SyncQueueView } from './components/sync/SyncQueueView'
+import { SyncView } from './components/sync/SyncView'
 import { useArtists } from './hooks/useArtists'
 import { useSettings } from './hooks/useSettings'
 import { useSyncSnapshot } from './hooks/useSyncSnapshot'
@@ -79,14 +76,6 @@ function App(): JSX.Element {
   const snapshot = useSyncSnapshot()
   const { settings, setSettings, authStatus, setAuthStatus, save } =
     useSettings()
-  const showNeedsApproval =
-    !settings.autoApproveChanges && snapshot.counts.needsApproval > 0
-
-  useEffect(() => {
-    if (screen === 'sync-approval' && !showNeedsApproval) {
-      setScreen('sync-queue')
-    }
-  }, [screen, showNeedsApproval])
 
   useEffect(() => {
     void window.api.library.getIndexStatus().then(setLibraryIndexStatus)
@@ -107,17 +96,12 @@ function App(): JSX.Element {
   }
 
   const navigateScreen = (nextScreen: Screen) => {
-    if (nextScreen === 'library-artists') {
-      setArtistFilter(null)
-      setAlbumFilter(null)
-    } else if (nextScreen === 'library-albums') {
-      setArtistFilter(null)
-      setAlbumFilter(null)
-    } else if (nextScreen === 'library-songs') {
-      setArtistFilter(null)
-      setAlbumFilter(null)
+    if (nextScreen.startsWith('library-')) {
+      if (nextScreen === 'library-artists') {
+        setArtistFilter(null)
+        setAlbumFilter(null)
+      }
     }
-
     setScreen(nextScreen)
   }
 
@@ -154,7 +138,6 @@ function App(): JSX.Element {
       screen={screen}
       onNavigate={navigateScreen}
       counts={snapshot.counts}
-      showNeedsApproval={showNeedsApproval}
     >
       {screen === 'library-artists' ? (
         <ArtistsView
@@ -202,23 +185,8 @@ function App(): JSX.Element {
         />
       ) : null}
 
-      {screen === 'sync-queue' ? (
-        <SyncQueueView snapshot={snapshot} onAction={runAction} />
-      ) : null}
-
-      {screen === 'sync-approval' ? (
-        <SyncApprovalView snapshot={snapshot} onAction={runAction} />
-      ) : null}
-
-      {screen === 'sync-completed' ? (
-        <SyncCompletedView snapshot={snapshot} />
-      ) : null}
-
-      {screen === 'sync-failures' ? (
-        <SyncFailuresView
-          snapshot={snapshot}
-          onClear={() => runAction(window.api.sync.clearFailures())}
-        />
+      {screen === 'sync' ? (
+        <SyncView snapshot={snapshot} onAction={runAction} />
       ) : null}
 
       {screen === 'settings' ? (

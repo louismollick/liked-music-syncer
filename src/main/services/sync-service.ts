@@ -5,13 +5,13 @@ import type {
   CommandResult,
   LikedArtistView,
   LogLevel,
-  SyncApprovalItemView,
   SyncItemStatus,
+  SyncJobDisplayStatus,
   SyncJobKind,
   SyncJobStatus,
-  SyncJobView,
   SyncSnapshot,
   SyncStage,
+  SyncTrackDisplayStatus,
   SyncTrackWorkView,
 } from '@shared/contracts'
 import { and, desc, eq, inArray } from 'drizzle-orm'
@@ -21,7 +21,6 @@ import {
   libraryFilesTable,
   libraryRootsTable,
   libraryTracksTable,
-  syncApprovalItemsTable,
   syncJobsTable,
   syncJobTracksTable,
 } from '../db/schema'
@@ -161,40 +160,9 @@ interface ReprocessCandidatePayload {
   cover_art_present: boolean
 }
 
-interface ReprocessPreviewRow {
-  track_work_id: string
-  library_track_id: string
-  same_video: boolean
-  action_kind: 'noop' | 'update' | 'replace'
-  diff: Record<string, { before: unknown; after: unknown }>
-  before: Record<string, unknown>
-  after: Record<string, unknown>
-  album_art_diff: Record<string, unknown> | null
-  payload: Record<string, unknown>
-}
-
-interface ReprocessApplyResult {
-  ok: boolean
-  output_path: string
-  lrc_path: string | null
-  replaced: boolean
-}
-
 interface WorkerLaunchOptions {
   onCompleted?: () => Promise<void>
   onFinally?: () => void
-}
-
-interface ReprocessPreviewStreamEvent {
-  type: 'reprocess_preview'
-  event: 'started' | 'progress' | 'batch' | 'completed'
-  job_id: string
-  total_count: number
-  processed_count: number
-  changed_count: number
-  noop_count: number
-  items?: ReprocessPreviewRow[]
-  message?: string
 }
 
 interface ManagedFileRow {
@@ -218,7 +186,6 @@ interface RuntimeSettingsLike {
   fileTemplate: string
   embedUnsyncedLyrics: boolean
   writeLrcSidecar: boolean
-  autoApproveChanges?: boolean
 }
 
 interface PoTokenBundle {
@@ -234,7 +201,7 @@ interface JobCreateInput {
   label: string
   plannedCount?: number
   status?: SyncJobStatus
-  queueBucket?: SyncJobView['bucket']
+  queueBucket?: string
 }
 
 interface RemoteBackfillCandidate {
@@ -423,9 +390,6 @@ export class SyncService {
   private activeJobId: string | null = null
   private activeProcess: ChildProcessWithoutNullStreams | null = null
   private cancelKillTimer: NodeJS.Timeout | null = null
-  private activePreviewJobId: string | null = null
-  private activePreviewProcess: ChildProcessWithoutNullStreams | null = null
-  private previewCancelKillTimer: NodeJS.Timeout | null = null
   private cancelRequestedJobId: string | null = null
   private schedulerRunning = false
   private readonly poTokenService: PoTokenService
@@ -519,91 +483,6 @@ export class SyncService {
     )
   }
 
-  async approveChanges(approvalIds: string[]): Promise<CommandResult> {
-    const uniqueIds = [...new Set(approvalIds.filter(Boolean))]
-    if (uniqueIds.length === 0) {
-      return { ok: false, message: 'Select at least one change.' }
-    }
-
-    const approvals = await this.db
-      .select()
-      .from(syncApprovalItemsTable)
-      .where(inArray(syncApprovalItemsTable.id, uniqueIds))
-    const pending = approvals.filter((row) => row.status === 'pending')
-    if (pending.length === 0) {
-      return { ok: false, message: 'No pending approvals selected.' }
-    }
-
-    for (const row of pending) {
-      const timestamp = nowIso()
-      await this.db
-        .update(syncApprovalItemsTable)
-        .set({ status: 'approved', updatedAt: timestamp })
-        .where(eq(syncApprovalItemsTable.id, row.id))
-      await this.db
-        .update(syncJobTracksTable)
-        .set({
-          status: 'pending',
-          stage: 'idle',
-          reasonCode: '',
-          reasonDetail: '',
-          terminalOutcome: null,
-          updatedAt: timestamp,
-        })
-        .where(eq(syncJobTracksTable.id, row.trackWorkId))
-      await this.recomputeJob(row.jobId)
-    }
-
-    await this.emitSnapshot()
-    void this.runScheduler()
-    return {
-      ok: true,
-      message: `Approved ${pending.length} change${pending.length === 1 ? '' : 's'}.`,
-    }
-  }
-
-  async denyChanges(approvalIds: string[]): Promise<CommandResult> {
-    const uniqueIds = [...new Set(approvalIds.filter(Boolean))]
-    if (uniqueIds.length === 0) {
-      return { ok: false, message: 'Select at least one change.' }
-    }
-
-    const approvals = await this.db
-      .select()
-      .from(syncApprovalItemsTable)
-      .where(inArray(syncApprovalItemsTable.id, uniqueIds))
-    const pending = approvals.filter((row) => row.status === 'pending')
-    if (pending.length === 0) {
-      return { ok: false, message: 'No pending approvals selected.' }
-    }
-
-    for (const row of pending) {
-      const timestamp = nowIso()
-      await this.db
-        .update(syncApprovalItemsTable)
-        .set({ status: 'denied', updatedAt: timestamp })
-        .where(eq(syncApprovalItemsTable.id, row.id))
-      await this.db
-        .update(syncJobTracksTable)
-        .set({
-          status: 'completed_local_only',
-          stage: 'finalize',
-          reasonCode: 'approval_denied',
-          reasonDetail: 'Change denied by user.',
-          terminalOutcome: 'noop_denied',
-          updatedAt: timestamp,
-        })
-        .where(eq(syncJobTracksTable.id, row.trackWorkId))
-      await this.recomputeJob(row.jobId)
-    }
-
-    await this.emitSnapshot()
-    return {
-      ok: true,
-      message: `Denied ${pending.length} change${pending.length === 1 ? '' : 's'}.`,
-    }
-  }
-
   async cancel(jobId: string): Promise<CommandResult> {
     const job = await this.db.query.syncJobsTable.findFirst({
       where: eq(syncJobsTable.id, jobId),
@@ -640,42 +519,7 @@ export class SyncService {
       return { ok: true, message: 'Cancellation requested.' }
     }
 
-    if (this.activePreviewJobId === jobId) {
-      this.cancelRequestedJobId = jobId
-      if (this.activePreviewProcess) {
-        const child = this.activePreviewProcess
-        const killed = this.killPreviewProcess('SIGTERM')
-        if (!killed)
-          return { ok: false, message: 'Unable to stop the active job.' }
-        if (this.previewCancelKillTimer)
-          clearTimeout(this.previewCancelKillTimer)
-        this.previewCancelKillTimer = setTimeout(() => {
-          if (this.activePreviewProcess === child) {
-            this.killPreviewProcess('SIGKILL')
-          }
-        }, 5_000)
-      }
-      await this.failPendingTracksForCancellation(jobId)
-      await this.db
-        .update(syncJobsTable)
-        .set({
-          status: 'cancelled',
-          queueBucket: 'failures',
-          endedAt: nowIso(),
-          updatedAt: nowIso(),
-        })
-        .where(eq(syncJobsTable.id, jobId))
-      await this.emitSnapshot()
-      return { ok: true, message: 'Cancellation requested.' }
-    }
-
-    // Allow cancelling queued jobs and those waiting for approval.
-    // Also allow cancelling reprocess preview jobs which are created with
-    // status 'running' while the preview pass executes (see startReprocessJob).
-    if (
-      !['queued', 'waiting_approval'].includes(job.status) &&
-      !(job.kind === 'reprocess' && job.status === 'running')
-    ) {
+    if (!['queued', 'running'].includes(job.status)) {
       return { ok: false, message: 'That job cannot be cancelled now.' }
     }
 
@@ -689,28 +533,18 @@ export class SyncService {
         updatedAt: nowIso(),
       })
       .where(eq(syncJobsTable.id, jobId))
-    await this.db
-      .update(syncApprovalItemsTable)
-      .set({ status: 'denied', updatedAt: nowIso() })
-      .where(eq(syncApprovalItemsTable.jobId, jobId))
     await this.emitSnapshot()
     return { ok: true, message: 'Cancellation requested.' }
   }
 
   async clearSyncData(): Promise<CommandResult> {
-    if (
-      this.activeJobId ||
-      this.activeProcess ||
-      this.activePreviewJobId ||
-      this.activePreviewProcess
-    ) {
+    if (this.activeJobId || this.activeProcess) {
       return {
         ok: false,
         message: 'Stop the active job before clearing sync data.',
       }
     }
 
-    await this.db.delete(syncApprovalItemsTable)
     await this.db.delete(syncJobTracksTable)
     await this.db.delete(syncJobsTable)
     await this.emitSnapshot()
@@ -721,12 +555,7 @@ export class SyncService {
   }
 
   async clearFailures(): Promise<CommandResult> {
-    if (
-      this.activeJobId ||
-      this.activeProcess ||
-      this.activePreviewJobId ||
-      this.activePreviewProcess
-    ) {
+    if (this.activeJobId || this.activeProcess) {
       return {
         ok: false,
         message: 'Stop the active job before clearing failures.',
@@ -743,9 +572,6 @@ export class SyncService {
       return { ok: true, message: 'No failures to clear.' }
     }
 
-    await this.db
-      .delete(syncApprovalItemsTable)
-      .where(inArray(syncApprovalItemsTable.jobId, jobIds))
     await this.db
       .delete(syncJobTracksTable)
       .where(inArray(syncJobTracksTable.jobId, jobIds))
@@ -812,16 +638,12 @@ export class SyncService {
   }
 
   async getSnapshot(): Promise<SyncSnapshot> {
-    const [jobs, tracks, approvals] = await Promise.all([
+    const [jobs, tracks] = await Promise.all([
       this.db
         .select()
         .from(syncJobsTable)
         .orderBy(desc(syncJobsTable.startedAt)),
       this.db.select().from(syncJobTracksTable),
-      this.db
-        .select()
-        .from(syncApprovalItemsTable)
-        .where(eq(syncApprovalItemsTable.status, 'pending')),
     ])
 
     const visibleTracks = tracks.filter((track) => track.visible)
@@ -832,12 +654,24 @@ export class SyncService {
       tracksByJobId.set(track.jobId, current)
     }
 
-    const approvalsByTrackId = new Map(
-      approvals.map((row) => [row.trackWorkId, row])
-    )
-    const queue: SyncJobView[] = []
-    const completed: SyncJobView[] = []
-    const failures: SyncJobView[] = []
+    const allJobs: {
+      id: string
+      kind: SyncJobKind
+      scope: 'library' | 'artist' | null
+      label: string
+      status: SyncJobStatus
+      displayStatus: SyncJobDisplayStatus
+      startedAt: string
+      endedAt: string | null
+      totalTracks: number
+      processedTracks: number
+      completedTracks: number
+      failedTracks: number
+      tracks: SyncTrackWorkView[]
+    }[] = []
+    let completedCount = 0
+    let inProgressCount = 0
+    let failedCount = 0
 
     for (const job of jobs) {
       const jobTracks = [...(tracksByJobId.get(job.id) ?? [])].sort((a, b) => {
@@ -853,65 +687,38 @@ export class SyncService {
         track.status.startsWith('failed')
       ).length
       const processedTracks = completedTracks + failedTracks
-      const pendingApprovalTracks = jobTracks.filter((track) =>
-        Boolean(approvalsByTrackId.get(track.id))
-      ).length
-      const view: SyncJobView = {
+      const displayStatus: SyncJobDisplayStatus =
+        job.status === 'running' || job.status === 'queued'
+          ? 'in_progress'
+          : 'completed'
+      const view = {
         id: job.id,
         kind: job.kind as SyncJobKind,
-        scope: (job.scope as SyncJobView['scope']) ?? null,
+        scope: (job.scope as 'library' | 'artist' | null) ?? null,
         label: job.label,
         status: job.status as SyncJobStatus,
-        bucket: job.queueBucket as SyncJobView['bucket'],
+        displayStatus,
         startedAt: job.startedAt,
         endedAt: job.endedAt,
         totalTracks: Math.max(jobTracks.length, job.plannedCount ?? 0),
         processedTracks,
         completedTracks,
         failedTracks,
-        pendingApprovalTracks,
-        tracks:
-          job.queueBucket === 'needs_approval'
-            ? []
-            : jobTracks.map((track) => this.toTrackView(track)),
+        tracks: jobTracks.map((track) => this.toTrackView(track)),
       }
-
-      if (view.bucket === 'queue') queue.push(view)
-      else if (view.bucket === 'completed') completed.push(view)
-      else if (view.bucket === 'failures') failures.push(view)
+      if (displayStatus === 'completed') completedCount += 1
+      else inProgressCount += 1
+      failedCount += view.failedTracks
+      allJobs.push(view)
     }
 
-    const trackById = new Map(tracks.map((track) => [track.id, track]))
-    const needsApproval: SyncApprovalItemView[] = approvals
-      .map((approval) => {
-        const track = trackById.get(approval.trackWorkId)
-        if (!track) return null
-        return {
-          id: approval.id,
-          jobId: approval.jobId,
-          trackWorkId: approval.trackWorkId,
-          title: track.title,
-          artist: track.artist,
-          album: track.album,
-          status: 'pending',
-          actionKind: approval.actionKind as 'update' | 'replace' | 'delete',
-          diffJson: approval.diffJson,
-          beforeJson: approval.beforeJson,
-          afterJson: approval.afterJson,
-        }
-      })
-      .filter((value): value is SyncApprovalItemView => Boolean(value))
-
     return {
-      queue,
-      needsApproval,
-      completed,
-      failures,
+      jobs: allJobs,
       counts: {
-        queue: queue.reduce((sum, job) => sum + job.totalTracks, 0),
-        needsApproval: needsApproval.length,
-        completed: completed.reduce((sum, job) => sum + job.totalTracks, 0),
-        failures: failures.reduce((sum, job) => sum + job.totalTracks, 0),
+        all: allJobs.length,
+        inProgress: inProgressCount,
+        completed: completedCount,
+        failed: failedCount,
       },
     }
   }
@@ -1044,7 +851,7 @@ export class SyncService {
       )
     }
 
-    if (this.activeJobId || this.activePreviewJobId) {
+    if (this.activeJobId) {
       this.pendingWorkerLaunches.set(jobId, launch)
       await this.emitSnapshot()
       return {
@@ -1291,7 +1098,7 @@ export class SyncService {
 
     await this.seedDirectReprocessQueuedTracks(jobId, candidates)
     await this.emitSnapshot()
-    if (this.activeJobId || this.activePreviewJobId) {
+    if (this.activeJobId) {
       this.pendingWorkerLaunches.set(jobId, launch)
       return { ok: true, message: 'Reprocess queued.' }
     }
@@ -1359,7 +1166,6 @@ export class SyncService {
         id: candidate.track_work_id,
         libraryTrackId: candidate.library_track_id,
         visible: true,
-        approvalRequired: false,
         sortIndex: index + 1,
         status: 'pending',
         stage: 'idle',
@@ -1483,325 +1289,37 @@ export class SyncService {
         )
       }
 
-      const reprocessPayload = this.buildReprocessWorkerPayload(
+      await this.db
+        .update(syncJobsTable)
+        .set({
+          status: 'queued',
+          queueBucket: 'queue',
+          updatedAt: nowIso(),
+        })
+        .where(eq(syncJobsTable.id, jobId))
+      return await this.startDirectReprocessJob(
         jobId,
+        scope,
         runtime,
         browserAuthInput,
         poTokenBundle,
         candidates
       )
-      const autoApprove = Boolean(runtime.autoApproveChanges)
-      if (autoApprove) {
-        await this.db
-          .update(syncJobsTable)
-          .set({
-            status: 'queued',
-            queueBucket: 'queue',
-            updatedAt: nowIso(),
-          })
-          .where(eq(syncJobsTable.id, jobId))
-        return await this.startDirectReprocessJob(
-          jobId,
-          scope,
-          runtime,
-          browserAuthInput,
-          poTokenBundle,
-          candidates
-        )
-      }
-
-      const visibleCount = await this.runReprocessPreview(jobId, {
-        ...reprocessPayload,
-        batch_size: 25,
-        progress_every: 25,
-      })
-
-      if (visibleCount === 0) {
-        await this.db
-          .update(syncJobsTable)
-          .set({
-            status: 'completed',
-            queueBucket: 'completed',
-            endedAt: nowIso(),
-            updatedAt: nowIso(),
-          })
-          .where(eq(syncJobsTable.id, jobId))
-        await this.emitSnapshot()
-        return {
-          ok: true,
-          message: 'Reprocess preview complete. No changes found.',
-        }
-      }
-
-      await this.recomputeJob(jobId)
-      await this.emitSnapshot()
-      return {
-        ok: true,
-        message:
-          'Reprocess preview complete. Review changes in Needs Approval.',
-      }
     } catch (error) {
       await this.failPreparingJob(jobId)
       throw error
     }
   }
 
-  private async runReprocessPreview(
-    jobId: string,
-    payload: Record<string, unknown>
-  ): Promise<number> {
-    const child = this.pythonWorker.spawnNdjsonCommand(
-      'reprocess-preview-stream',
-      payload
-    )
-    this.activePreviewJobId = jobId
-    this.activePreviewProcess = child
-
-    let stdoutBuffer = ''
-    let stderrBuffer = ''
-    let visibleCount = 0
-    let nextSortIndex = 0
-    let finalized = false
-    let pending = Promise.resolve()
-
-    const finalize = async (
-      status: 'completed' | 'failed' | 'cancelled',
-      details?: {
-        code?: number | null
-        signal?: NodeJS.Signals | null
-        errorMessage?: string
-      }
-    ) => {
-      if (finalized) return
-      finalized = true
-      if (this.previewCancelKillTimer) {
-        clearTimeout(this.previewCancelKillTimer)
-        this.previewCancelKillTimer = null
-      }
-      this.activePreviewProcess = null
-      if (this.activePreviewJobId === jobId) this.activePreviewJobId = null
-      if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
-
-      if (status !== 'completed') {
-        this.logSync({
-          level: status === 'cancelled' ? 'warn' : 'error',
-          jobId,
-          stage: 'finalize',
-          event:
-            status === 'cancelled'
-              ? 'reprocess-preview-cancelled'
-              : 'reprocess-preview-exit',
-          message:
-            details?.errorMessage ??
-            stderrBuffer.trim().split('\n').filter(Boolean).at(-1) ??
-            'Reprocess preview failed.',
-          context: {
-            exit_code: details?.code ?? null,
-            signal: details?.signal ?? null,
-          },
-        })
-      }
-      await this.emitSnapshot()
-      void this.runScheduler()
-    }
-
-    return new Promise<number>((resolve, reject) => {
-      child.stdout.setEncoding('utf8')
-      child.stdout.on('data', (chunk: string) => {
-        stdoutBuffer += chunk
-        let nextNewline = stdoutBuffer.indexOf('\n')
-        while (nextNewline >= 0) {
-          const line = stdoutBuffer.slice(0, nextNewline).trim()
-          stdoutBuffer = stdoutBuffer.slice(nextNewline + 1)
-          if (line.startsWith('{')) {
-            pending = pending
-              .then(() =>
-                this.handleReprocessPreviewEvent(jobId, line, {
-                  nextSortIndex,
-                })
-              )
-              .then((result) => {
-                visibleCount += result.visibleCountDelta
-                nextSortIndex = result.nextSortIndex
-              })
-              .catch(reject)
-          }
-          nextNewline = stdoutBuffer.indexOf('\n')
-        }
-      })
-
-      child.stderr.setEncoding('utf8')
-      child.stderr.on('data', (chunk: string) => {
-        stderrBuffer += chunk
-        writeStderrRaw(chunk)
-      })
-
-      child.on('exit', (code, signal) => {
-        const status =
-          this.cancelRequestedJobId === jobId
-            ? 'cancelled'
-            : code === 0
-              ? 'completed'
-              : signal === 'SIGTERM'
-                ? 'cancelled'
-                : 'failed'
-        void pending.finally(async () => {
-          await finalize(status, { code, signal })
-          if (status === 'completed') {
-            resolve(visibleCount)
-            return
-          }
-          reject(
-            new Error(
-              stderrBuffer.trim() ||
-                `Reprocess preview exited with status ${status}.`
-            )
-          )
-        })
-      })
-
-      child.on('error', (error) => {
-        void finalize('failed', { errorMessage: error.message })
-        reject(error)
-      })
-    })
-  }
-
-  private async handleReprocessPreviewEvent(
-    jobId: string,
-    line: string,
-    options: { nextSortIndex: number }
-  ) {
-    let event: ReprocessPreviewStreamEvent
-    try {
-      event = JSON.parse(line) as ReprocessPreviewStreamEvent
-    } catch (error) {
-      this.logSync({
-        level: 'error',
-        jobId,
-        stage: 'finalize',
-        event: 'reprocess-preview-parse-failed',
-        message: 'Reprocess preview emitted malformed NDJSON.',
-        context: {
-          line,
-          parse_error: error instanceof Error ? error.message : String(error),
-        },
-      })
-      return { visibleCountDelta: 0, nextSortIndex: options.nextSortIndex }
-    }
-
-    await this.db
-      .update(syncJobsTable)
-      .set({
-        plannedCount: event.total_count,
-        updatedAt: nowIso(),
-      })
-      .where(eq(syncJobsTable.id, jobId))
-
-    if (event.message) {
-      this.logSync({
-        level: event.event === 'completed' ? 'info' : 'debug',
-        jobId,
-        stage: 'finalize',
-        event: `reprocess-preview.${event.event}`,
-        message: event.message,
-        context: {
-          processed_count: event.processed_count,
-          total_count: event.total_count,
-          changed_count: event.changed_count,
-          noop_count: event.noop_count,
-        },
-      })
-    }
-
-    if (event.event !== 'batch') {
-      await this.emitSnapshot()
-      return { visibleCountDelta: 0, nextSortIndex: options.nextSortIndex }
-    }
-
-    const persisted = await this.persistReprocessPreviewBatch(
-      jobId,
-      event.items ?? [],
-      options.nextSortIndex
-    )
-    await this.recomputeJob(jobId)
-    await this.emitSnapshot()
-    return persisted
-  }
-
-  private async persistReprocessPreviewBatch(
-    jobId: string,
-    rows: ReprocessPreviewRow[],
-    startSortIndex: number
-  ) {
-    let visibleCountDelta = 0
-    let nextSortIndex = startSortIndex
-    for (const row of rows) {
-      if (row.action_kind === 'noop' || Object.keys(row.diff).length === 0) {
-        continue
-      }
-      visibleCountDelta += 1
-      nextSortIndex += 1
-      const itemPayload = row.payload.item as WorkerTrackPayload
-      const timestamp = nowIso()
-      await this.upsertJobTrack(jobId, itemPayload, {
-        id: row.track_work_id,
-        libraryTrackId: row.library_track_id,
-        currentOutputPath:
-          typeof row.before.outputPath === 'string'
-            ? row.before.outputPath
-            : null,
-        outputPath:
-          typeof row.after.outputPath === 'string'
-            ? row.after.outputPath
-            : null,
-        lrcPath:
-          typeof row.after.lrcPath === 'string' ? row.after.lrcPath : null,
-        visible: true,
-        approvalRequired: true,
-        sortIndex: nextSortIndex,
-        status: 'pending',
-        stage: 'idle',
-        reasonCode: 'awaiting_approval',
-        reasonDetail: 'Waiting for approval.',
-        jobPhase: 'reprocess_preview',
-      })
-      await this.db.insert(syncApprovalItemsTable).values({
-        id: createId('approval'),
-        jobId,
-        trackWorkId: row.track_work_id,
-        libraryTrackId: row.library_track_id,
-        status: 'pending',
-        actionKind: row.action_kind,
-        diffJson: JSON.stringify(row.diff),
-        beforeJson: JSON.stringify(row.before),
-        afterJson: JSON.stringify(row.after),
-        albumArtDiffJson: row.album_art_diff
-          ? JSON.stringify(row.album_art_diff)
-          : null,
-        payloadJson: JSON.stringify(row.payload),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-    }
-    return { visibleCountDelta, nextSortIndex }
-  }
-
   private async runScheduler() {
-    if (this.schedulerRunning || this.activeJobId || this.activePreviewJobId)
-      return
+    if (this.schedulerRunning || this.activeJobId) return
     this.schedulerRunning = true
     try {
-      while (!this.activeJobId && !this.activePreviewJobId) {
+      while (!this.activeJobId) {
         const next = await this.getNextRunnableJob()
         if (!next) break
         if (this.pendingWorkerLaunches.has(next.id)) {
           await this.pendingWorkerLaunches.get(next.id)!()
-        } else if (next.kind === 'reprocess') {
-          await this.runReprocessApplyJob(
-            next.id,
-            next.scope as 'library' | 'artist' | null
-          )
         } else if (next.kind === 'sync_missing_to_remote') {
           await this.runRemoteBackfillJob(next.id)
         } else {
@@ -1821,61 +1339,9 @@ export class SyncService {
       .orderBy(desc(syncJobsTable.createdAt))
     for (const job of jobs.reverse()) {
       if (this.pendingWorkerLaunches.has(job.id)) return job
-      if (job.kind !== 'reprocess') return job
-      const approved = await this.db
-        .select()
-        .from(syncApprovalItemsTable)
-        .where(
-          and(
-            eq(syncApprovalItemsTable.jobId, job.id),
-            eq(syncApprovalItemsTable.status, 'approved')
-          )
-        )
-      if (approved.length > 0) return job
+      return job
     }
     return null
-  }
-
-  private async runReprocessApplyJob(
-    jobId: string,
-    scope: 'library' | 'artist' | null
-  ) {
-    this.activeJobId = jobId
-    await this.db
-      .update(syncJobsTable)
-      .set({ status: 'running', queueBucket: 'queue', updatedAt: nowIso() })
-      .where(eq(syncJobsTable.id, jobId))
-    await this.emitSnapshot()
-
-    const approvals = await this.db
-      .select()
-      .from(syncApprovalItemsTable)
-      .where(
-        and(
-          eq(syncApprovalItemsTable.jobId, jobId),
-          eq(syncApprovalItemsTable.status, 'approved')
-        )
-      )
-
-    for (const approval of approvals) {
-      if (this.cancelRequestedJobId === jobId) break
-      await this.applyApprovedReprocessTrack(
-        jobId,
-        approval.trackWorkId,
-        approval.id
-      )
-    }
-
-    if (scope === 'artist' && this.cancelRequestedJobId !== jobId) {
-      await this.cleanupArtistReprocessFiles(jobId)
-    }
-    await this.recomputeJob(
-      jobId,
-      this.cancelRequestedJobId === jobId ? 'cancelled' : undefined
-    )
-    if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
-    this.activeJobId = null
-    await this.emitSnapshot()
   }
 
   private async runRemoteBackfillJob(jobId: string) {
@@ -2004,7 +1470,6 @@ export class SyncService {
           id: trackWorkId,
           libraryTrackId: track.id,
           visible: true,
-          approvalRequired: false,
           sortIndex: index,
           status: 'pending',
           stage: 'remote_copy',
@@ -2204,7 +1669,6 @@ export class SyncService {
     if (event.type === 'track') {
       await this.upsertJobTrack(jobId, event.item, {
         visible: event.item.status !== 'skipped_existing',
-        approvalRequired: false,
       })
       await this.recomputeJob(jobId)
       await this.emitSnapshot()
@@ -2272,7 +1736,6 @@ export class SyncService {
       outputPath: string | null
       lrcPath: string | null
       visible: boolean
-      approvalRequired: boolean
       terminalOutcome: string | null
       sortIndex: number | null
       remoteTarget: string | null
@@ -2352,7 +1815,6 @@ export class SyncService {
       lyricsSource: item.lyrics_source ?? null,
       selectedSourceUrl: item.selected_source_url ?? null,
       visible,
-      approvalRequired: overrides.approvalRequired ?? false,
       terminalOutcome,
       sortIndex: overrides.sortIndex ?? null,
       remoteTarget: overrides.remoteTarget ?? null,
@@ -2381,7 +1843,7 @@ export class SyncService {
     jobId: string,
     forcedTerminal?: 'failed' | 'cancelled'
   ) {
-    const [job, tracks, approvals] = await Promise.all([
+    const [job, tracks] = await Promise.all([
       this.db.query.syncJobsTable.findFirst({
         where: eq(syncJobsTable.id, jobId),
       }),
@@ -2389,10 +1851,6 @@ export class SyncService {
         .select()
         .from(syncJobTracksTable)
         .where(eq(syncJobTracksTable.jobId, jobId)),
-      this.db
-        .select()
-        .from(syncApprovalItemsTable)
-        .where(eq(syncApprovalItemsTable.jobId, jobId)),
     ])
     if (!job) return
 
@@ -2400,31 +1858,26 @@ export class SyncService {
     const hasFailedVisibleTrack = visibleTracks.some((track) =>
       track.status.startsWith('failed')
     )
-    const hasPendingApproval = approvals.some((row) => row.status === 'pending')
     const hasProcessing = visibleTracks.some(
       (track) => track.status === 'processing'
     )
     const hasPending = visibleTracks.some((track) => track.status === 'pending')
 
     let status: SyncJobStatus
-    let queueBucket: SyncJobView['bucket']
+    let queueBucket: string
     let endedAt: string | null
 
     if (forcedTerminal === 'cancelled' || job.status === 'cancelled') {
       status = 'cancelled'
-      queueBucket = 'failures'
+      queueBucket = 'completed'
       endedAt = nowIso()
     } else if (forcedTerminal === 'failed' || hasFailedVisibleTrack) {
-      status = 'failed'
-      queueBucket = 'failures'
-      endedAt = nowIso()
+      status = hasPending || hasProcessing ? 'running' : 'completed'
+      queueBucket = status === 'completed' ? 'completed' : 'queue'
+      endedAt = status === 'completed' ? nowIso() : null
     } else if (hasProcessing || this.activeJobId === jobId) {
       status = 'running'
       queueBucket = 'queue'
-      endedAt = null
-    } else if (hasPendingApproval) {
-      status = 'waiting_approval'
-      queueBucket = 'needs_approval'
       endedAt = null
     } else if (hasPending) {
       status = 'queued'
@@ -2450,6 +1903,16 @@ export class SyncService {
   private toTrackView(
     track: typeof syncJobTracksTable.$inferSelect
   ): SyncTrackWorkView {
+    const displayStatus: SyncTrackDisplayStatus =
+      track.status === 'pending'
+        ? 'queued'
+        : track.status === 'processing'
+          ? 'in_progress'
+          : track.status === 'completed' ||
+              track.status === 'completed_local_only' ||
+              track.status === 'skipped_existing'
+            ? 'succeeded'
+            : 'failed'
     return {
       id: track.id,
       jobId: track.jobId,
@@ -2459,6 +1922,7 @@ export class SyncService {
       youtubeMusicTrackId: track.youtubeMusicTrackId,
       resolvedYoutubeMusicTrackId: track.resolvedYoutubeMusicTrackId,
       status: track.status as SyncItemStatus,
+      displayStatus,
       stage: track.stage as SyncStage,
       reasonCode: track.reasonCode,
       reasonDetail: track.reasonDetail,
@@ -2604,137 +2068,6 @@ export class SyncService {
     return candidates
   }
 
-  private async applyApprovedReprocessTrack(
-    jobId: string,
-    trackId: string,
-    approvalId: string
-  ) {
-    const [track, approval, settings] = await Promise.all([
-      this.db.query.syncJobTracksTable.findFirst({
-        where: eq(syncJobTracksTable.id, trackId),
-      }),
-      this.db.query.syncApprovalItemsTable.findFirst({
-        where: eq(syncApprovalItemsTable.id, approvalId),
-      }),
-      this.settingsService.getRuntimeSettings(),
-    ])
-    if (!track || !approval) return
-
-    await this.db
-      .update(syncJobTracksTable)
-      .set({
-        status: 'processing',
-        stage: approval.actionKind === 'replace' ? 'download' : 'tagging',
-        reasonCode: '',
-        reasonDetail: '',
-        jobPhase: 'reprocess_apply',
-        updatedAt: nowIso(),
-      })
-      .where(eq(syncJobTracksTable.id, trackId))
-    await this.emitSnapshot()
-
-    try {
-      await this.poTokenService.ensureReady()
-      const poTokenBundle = this.getPoTokenBundle()
-      const runtime = settings as RuntimeSettingsLike
-      const authStatus =
-        await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-          'auth-status',
-          { browser_auth_input: runtime.ytmusicBrowserAuth }
-        )
-      const browserAuthInput =
-        authStatus.credential_json ?? runtime.ytmusicBrowserAuth
-      const result =
-        await this.pythonWorker.runJsonCommand<ReprocessApplyResult>(
-          'reprocess-apply',
-          {
-            job_id: jobId,
-            output_directory: runtime.outputDirectory,
-            remote_copy_enabled: runtime.remoteCopyEnabled,
-            rclone_remote: runtime.rcloneRemote,
-            remote_music_root: runtime.remoteMusicRoot,
-            ytmusic_browser_auth: browserAuthInput,
-            yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
-            folder_template: runtime.folderTemplate,
-            file_template: runtime.fileTemplate,
-            embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
-            write_lrc_sidecar: runtime.writeLrcSidecar,
-            lyrics_api_base_url: runtime.lyricsApiBaseUrl,
-            spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
-            ffmpeg_path: this.getBundledFfmpegPath(),
-            yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
-            yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
-            payload: JSON.parse(approval.payloadJson),
-          }
-        )
-
-      const before = JSON.parse(approval.beforeJson) as {
-        outputPath?: string | null
-        lrcPath?: string | null
-      }
-      await this.db
-        .update(syncJobTracksTable)
-        .set({
-          status: 'completed',
-          stage: 'finalize',
-          reasonCode: 'reprocess_applied',
-          reasonDetail: 'Approved reprocess applied.',
-          outputPath: result.output_path,
-          lrcPath: result.lrc_path,
-          terminalOutcome: result.replaced ? 'replaced' : 'updated',
-          updatedAt: nowIso(),
-        })
-        .where(eq(syncJobTracksTable.id, trackId))
-      await this.syncIndexedArtifacts({
-        previousOutputPath: before.outputPath ?? null,
-        previousLrcPath: before.lrcPath ?? null,
-        nextOutputPath: result.output_path,
-      })
-    } catch (error) {
-      await this.db
-        .update(syncJobTracksTable)
-        .set({
-          status: 'failed_terminal',
-          stage: 'finalize',
-          reasonCode: 'reprocess_apply_failed',
-          reasonDetail:
-            error instanceof Error ? error.message : 'Reprocess apply failed.',
-          terminalOutcome: 'failed_reprocess_apply',
-          updatedAt: nowIso(),
-        })
-        .where(eq(syncJobTracksTable.id, trackId))
-    }
-  }
-
-  private async syncIndexedArtifacts(input: {
-    previousOutputPath: string | null
-    previousLrcPath: string | null
-    nextOutputPath: string
-  }) {
-    const settings =
-      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
-    await this.libraryService.upsertLocalOutputs([input.nextOutputPath])
-    if (
-      input.previousOutputPath &&
-      input.previousOutputPath !== input.nextOutputPath
-    ) {
-      const relativePath = path
-        .relative(settings.outputDirectory, input.previousOutputPath)
-        .split(path.sep)
-        .join('/')
-      await this.libraryService.pruneIndexedFile(
-        settings.outputDirectory,
-        relativePath
-      )
-    }
-    if (settings.remoteCopyEnabled) {
-      await this.libraryService.upsertRemoteCopyFromLocalPath(
-        input.nextOutputPath
-      )
-    }
-    await this.likedArtistsService.refreshArtists()
-  }
-
   private async refreshIndexedOutputsForJob(jobId: string) {
     try {
       const tracks = await this.db
@@ -2854,21 +2187,6 @@ export class SyncService {
 
   private killActiveProcess(signal: NodeJS.Signals) {
     const child = this.activeProcess
-    if (!child) return false
-    try {
-      if (process.platform !== 'win32' && child.pid) {
-        process.kill(-child.pid, signal)
-      } else {
-        child.kill(signal)
-      }
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  private killPreviewProcess(signal: NodeJS.Signals) {
-    const child = this.activePreviewProcess
     if (!child) return false
     try {
       if (process.platform !== 'win32' && child.pid) {

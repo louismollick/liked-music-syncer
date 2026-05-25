@@ -3,24 +3,23 @@ import type { JSX } from 'react'
 import { Badge } from '../ui/Badge'
 
 function statusVariant(
-  status: SyncTrackWorkView['status']
+  status: SyncTrackWorkView['displayStatus']
 ): 'success' | 'error' | 'warning' | 'default' | 'info' {
   switch (status) {
-    case 'completed':
+    case 'succeeded':
       return 'success'
-    case 'completed_local_only':
-      return 'warning'
-    case 'failed_terminal':
+    case 'failed':
       return 'error'
-    case 'failed_retryable':
-      return 'warning'
-    case 'processing':
+    case 'in_progress':
       return 'info'
-    case 'skipped_existing':
-      return 'default'
     default:
       return 'default'
   }
+}
+
+function statusLabel(status: SyncTrackWorkView['displayStatus']) {
+  if (status === 'in_progress') return 'In Progress'
+  return status[0].toUpperCase() + status.slice(1)
 }
 
 interface Props {
@@ -32,7 +31,7 @@ export function TrackRow({ track }: Props): JSX.Element {
     <div className="flex items-center gap-3 py-2 px-3 hover:bg-surface-tertiary/30 rounded-lg transition-colors">
       <div className="flex-1 min-w-0">
         <p className="text-sm text-text-primary truncate">
-          {track.artist} — {track.title}
+          {track.artist} - {track.title}
         </p>
         {track.reasonDetail || track.reasonCode ? (
           <p className="text-xs text-text-muted truncate mt-0.5">
@@ -42,8 +41,8 @@ export function TrackRow({ track }: Props): JSX.Element {
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         <span className="text-xs text-text-muted">{track.stage}</span>
-        <Badge variant={statusVariant(track.status)}>
-          {track.status.replace(/_/g, ' ')}
+        <Badge variant={statusVariant(track.displayStatus)}>
+          {statusLabel(track.displayStatus)}
         </Badge>
       </div>
     </div>

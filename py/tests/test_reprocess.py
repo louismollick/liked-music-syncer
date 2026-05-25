@@ -111,6 +111,95 @@ def test_apply_reprocess_changed_video_downloads_audio(tmp_path: Path, monkeypat
     assert Path(result["output_path"]).exists()
 
 
+def test_preview_reprocess_sets_target_lrc_path_none_for_plain_lyrics(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(reprocess_module, "_build_ytmusic_client", lambda auth: object())
+    monkeypatch.setattr(reprocess_module, "_resolve_exact_catalog", lambda *args, **kwargs: None)
+    monkeypatch.setattr(reprocess_module, "_should_run_musicbrainz", lambda item: False)
+    monkeypatch.setattr(
+        reprocess_module,
+        "_resolve_best_lyrics",
+        lambda *args, **kwargs: ("plain one\nplain two\n", "spotify"),
+    )
+
+    result = reprocess_module.preview_reprocess(
+        {
+            **_config_payload(tmp_path),
+            "items": [
+                {
+                    "track_work_id": "track_1",
+                    "youtube_music_track_id": "liked123",
+                    "resolved_youtube_music_track_id": "resolved123",
+                    "title": "Song",
+                    "artist": "Artist",
+                    "album": "Album",
+                    "album_artist": "Artist",
+                    "source_url": "https://music.youtube.com/watch?v=liked123",
+                    "lyrics_status": "missing",
+                }
+            ],
+        }
+    )
+
+    preview = result["items"][0]
+    assert preview["after"]["lyricsStatus"] == "plain"
+    assert preview["after"]["lrcPath"] is None
+    assert preview["payload"]["target_lrc_path"] is None
+
+
+def test_apply_reprocess_same_video_plain_lyrics_deletes_old_lrc(
+    tmp_path: Path, monkeypatch
+) -> None:
+    payload = _apply_payload(tmp_path, same_video=True)
+    target_output = Path(str(payload["payload"]["target_output_path"]))
+    target_output.parent.mkdir(parents=True, exist_ok=True)
+    current_output = Path(str(payload["payload"]["current_output_path"]))
+    current_output.write_bytes(b"old-audio")
+    stale_lrc = current_output.with_suffix(".lrc")
+    stale_lrc.write_text("[00:00.00]old\n", encoding="utf-8")
+    payload["payload"]["item"]["lyrics_status"] = "plain"
+    payload["payload"]["lyrics_text"] = "plain one\nplain two\n"
+    payload["payload"]["current_lrc_path"] = str(stale_lrc)
+    payload["payload"]["target_lrc_path"] = None
+
+    embedded_lyrics: list[str | None] = []
+    monkeypatch.setattr(reprocess_module, "_download_audio", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        reprocess_module,
+        "write_media_tags",
+        lambda _path, _item, _cover, lyrics: embedded_lyrics.append(lyrics),
+    )
+    monkeypatch.setattr(reprocess_module, "_sync_remote_artifacts", lambda *args: None)
+
+    result = reprocess_module.apply_reprocess(payload)
+
+    assert result["ok"] is True
+    assert result["lrc_path"] is None
+    assert embedded_lyrics == ["plain one\nplain two\n"]
+    assert not stale_lrc.exists()
+
+
+def test_apply_reprocess_same_video_synced_lyrics_preserves_lrc(
+    tmp_path: Path, monkeypatch
+) -> None:
+    payload = _apply_payload(tmp_path, same_video=True)
+    payload["payload"]["item"]["lyrics_status"] = "synced"
+    payload["payload"]["lyrics_text"] = "[00:01.00]line one\n"
+    target_lrc_path = Path(str(payload["payload"]["target_output_path"])).with_suffix(".lrc")
+    payload["payload"]["target_lrc_path"] = str(target_lrc_path)
+
+    monkeypatch.setattr(reprocess_module, "_download_audio", lambda *args, **kwargs: None)
+    monkeypatch.setattr(reprocess_module, "write_media_tags", lambda *args, **kwargs: None)
+    monkeypatch.setattr(reprocess_module, "_sync_remote_artifacts", lambda *args: None)
+
+    result = reprocess_module.apply_reprocess(payload)
+
+    assert result["ok"] is True
+    assert result["lrc_path"] == str(target_lrc_path)
+    assert target_lrc_path.read_text(encoding="utf-8") == "[00:01.00]line one\n"
+
+
 def test_run_reprocess_stream_noop_emits_completed_without_writes(
     tmp_path: Path, monkeypatch
 ) -> None:

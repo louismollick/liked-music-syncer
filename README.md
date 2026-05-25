@@ -12,7 +12,7 @@ It can:
 - try synced lyrics via Spotify-match + lyrics API
 - download audio with `yt-dlp`
 - convert/tag output with `ffmpeg`
-- write `.m4a` + optional `.lrc`
+- write `.m4a` + optional synced-only `.lrc`
 - optionally copy output to a VPS via `rclone`
 - print sync diagnostics to process `stdout`/`stderr`
 - mirror those same terminal diagnostics into per-launch temp log files
@@ -122,6 +122,27 @@ Expected behavior:
 - app calls `GET <LYRICS_API_BASE_URL>?trackid=<spotifyTrackId>&format=lrc`
 - endpoint returns synced line data
 - worker prefers lyrics in this order: YT Music synced, Spotify synced, YT Music plain, Spotify plain
+- `.lrc` sidecars are only written for truly synced lyrics
+- plain/unsynced lyrics stay embedded-only when enabled
+
+## Lyrics sidecar repair
+
+If old runs wrote bogus all-zero timestamp `.lrc` files, repair each filesystem root separately with:
+
+```bash
+uv run --project py python -m liked_music_syncer.fix_unsynced_lrc --root "/Users/mollicl/Downloads/music"
+uv run --project py python -m liked_music_syncer.fix_unsynced_lrc --root "/Users/mollicl/Downloads/music" --apply
+```
+
+Run the same command again on the remote host using the remote library path there. Do not run this through `rclone`.
+
+Behavior:
+
+- dry-run by default
+- scans LMS-managed files only by default
+- rewrites bogus embedded all-zero timed lyrics to plain embedded lyrics
+- deletes bogus sibling `.lrc`
+- leaves valid synced `.lrc` untouched
 
 Put it in:
 

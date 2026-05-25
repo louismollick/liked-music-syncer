@@ -26,10 +26,6 @@ const api: ElectronApi = {
     refreshFavoriteArtists: (artistIds) =>
       ipcRenderer.invoke('sync:refreshFavoriteArtists', artistIds),
     clearFailures: () => ipcRenderer.invoke('sync:clearFailures'),
-    approveChanges: (approvalIds) =>
-      ipcRenderer.invoke('sync:approveChanges', approvalIds),
-    denyChanges: (approvalIds) =>
-      ipcRenderer.invoke('sync:denyChanges', approvalIds),
     cancel: (jobId) => ipcRenderer.invoke('sync:cancel', jobId),
     clearSyncData: () => ipcRenderer.invoke('sync:clearSyncData'),
     syncMissingToRemote: () => ipcRenderer.invoke('sync:syncMissingToRemote'),

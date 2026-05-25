@@ -21,6 +21,7 @@ from liked_music_syncer.sync_engine import (
     _resolve_exact_catalog,
     _resolve_lyrics,
     _skip_reason_for_existing_signature,
+    _spotify_fetch_lyrics,
 )
 
 
@@ -81,12 +82,16 @@ def _run_sync_for_lyrics(
     *,
     lyrics_text: str | None,
     embed_unsynced_lyrics: bool = True,
+    write_lrc_sidecar: bool = False,
+    force_reprocess: bool = False,
+    stale_lrc: bool = False,
 ) -> tuple[dict[str, Any], list[tuple[str | None, str | None]]]:
     events: list[dict[str, Any]] = []
     tag_calls: list[tuple[str | None, str | None]] = []
     config = _config(tmp_path)
     config.embed_unsynced_lyrics = embed_unsynced_lyrics
-    config.write_lrc_sidecar = False
+    config.write_lrc_sidecar = write_lrc_sidecar
+    config.force_reprocess = force_reprocess
 
     class FakeYTMusic:
         def get_liked_songs(self, limit: int = 5000) -> dict[str, object]:
@@ -116,7 +121,13 @@ def _run_sync_for_lyrics(
     )
     monkeypatch.setattr(
         "liked_music_syncer.sync_engine._normalize_audio",
-        lambda *args, **kwargs: None,
+        lambda _downloaded, output_path, *_args, **_kwargs: (
+            output_path.parent.mkdir(parents=True, exist_ok=True),
+            output_path.write_bytes(b"audio"),
+            output_path.with_suffix(".lrc").write_text("[00:00.00]stale\n", encoding="utf-8")
+            if stale_lrc
+            else None,
+        ),
     )
     monkeypatch.setattr(
         "liked_music_syncer.sync_engine._copy_remote",
@@ -230,6 +241,7 @@ def test_run_sync_sets_language_from_plain_lyrics(
             "Hello from the other side\nI must have called a thousand times\n",
         )
     ]
+    assert final_item["lrc_path"] is None
 
 
 def test_run_sync_keeps_language_none_without_lyrics(
@@ -259,6 +271,95 @@ def test_run_sync_sets_language_for_unsynced_lyrics_even_when_embed_disabled(
     assert final_item["language"] == "en"
     assert final_item["lyrics_status"] == "plain"
     assert tag_calls == [("en", None)]
+
+
+def test_run_sync_plain_lyrics_do_not_write_lrc_sidecar(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    final_item, _tag_calls = _run_sync_for_lyrics(
+        monkeypatch,
+        tmp_path,
+        lyrics_text="plain one\nplain two\n",
+        write_lrc_sidecar=True,
+    )
+
+    output_path = Path(str(final_item["output_path"]))
+    assert final_item["lyrics_status"] == "plain"
+    assert final_item["lrc_path"] is None
+    assert not output_path.with_suffix(".lrc").exists()
+
+
+def test_run_sync_synced_lyrics_write_lrc_sidecar(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    final_item, tag_calls = _run_sync_for_lyrics(
+        monkeypatch,
+        tmp_path,
+        lyrics_text="[00:01.00]line one\n[00:02.00]line two\n",
+        write_lrc_sidecar=True,
+    )
+
+    output_path = Path(str(final_item["output_path"]))
+    assert final_item["lyrics_status"] == "synced"
+    assert final_item["lrc_path"] == str(output_path.with_suffix(".lrc"))
+    assert output_path.with_suffix(".lrc").read_text(encoding="utf-8") == "[00:01.00]line one\n[00:02.00]line two\n"
+    assert tag_calls == [("en", "[00:01.00]line one\n[00:02.00]line two\n")]
+
+
+def test_run_sync_force_reprocess_removes_stale_lrc_for_plain_lyrics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    final_item, _tag_calls = _run_sync_for_lyrics(
+        monkeypatch,
+        tmp_path,
+        lyrics_text="plain one\nplain two\n",
+        write_lrc_sidecar=True,
+        force_reprocess=True,
+        stale_lrc=True,
+    )
+
+    output_path = Path(str(final_item["output_path"]))
+    assert final_item["lrc_path"] is None
+    assert not output_path.with_suffix(".lrc").exists()
+
+
+def test_spotify_fetch_lyrics_returns_plain_when_timestamps_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"lines": [{"words": "line one"}, {"words": "line two"}]}
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.httpx.get", lambda *args, **kwargs: FakeResponse())
+
+    lyrics_text, lyrics_status = _spotify_fetch_lyrics("track_1", "https://lyrics.example.test")
+
+    assert lyrics_status == "plain"
+    assert lyrics_text == "line one\nline two\n"
+
+
+def test_spotify_fetch_lyrics_rejects_all_zero_fake_timed_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "lines": [
+                    {"timeTag": "00:00.00", "words": "line one"},
+                    {"startTimeMs": "0", "words": "line two"},
+                ]
+            }
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.httpx.get", lambda *args, **kwargs: FakeResponse())
+
+    lyrics_text, lyrics_status = _spotify_fetch_lyrics("track_1", "https://lyrics.example.test")
+
+    assert lyrics_status == "plain"
+    assert lyrics_text == "line one\nline two\n"
 
 
 def test_dedupe_tracks_prefers_album_over_songs_duplicate() -> None:

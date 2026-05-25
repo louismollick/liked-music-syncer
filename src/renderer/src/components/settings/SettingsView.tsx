@@ -160,14 +160,6 @@ export function SettingsView({
         />
       </SettingsSection>
 
-      <SettingsSection title="Preferences">
-        <Checkbox
-          label="Don't require approvals for modifications and deletions"
-          checked={settings.autoApproveChanges}
-          onChange={(e) => onChange({ autoApproveChanges: e.target.checked })}
-        />
-      </SettingsSection>
-
       <SettingsSection title="Maintenance">
         <div className="flex gap-2">
           <Button onClick={() => onAction(window.api.settings.testRemote())}>

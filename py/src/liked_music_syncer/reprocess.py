@@ -11,18 +11,16 @@ from typing import Any
 from ytmusicapi import YTMusic
 
 from .album_identity import canonical_album_name
-from .auth import build_browser_auth_client
 from .cover_art import make_square_cover
 from .lyrics_language import detect_primary_lyrics_language
 from .media_tags import write_media_tags
 from .models import SyncConfig, SyncItemState
 from .json_io import emit_event
+from .lyrics import classify_lyrics_text, lyrics_sidecar_text
 from .sync_engine import (
     _build_ytmusic_client,
     _download_audio,
     _download_bytes,
-    _format_lrc_line,
-    _lyrics_browse_id_for_track,
     _musicbrainz_enrich,
     _normalize_audio,
     _resolve_best_lyrics,
@@ -222,11 +220,12 @@ def _preview_one(
         lyrics_text, lyrics_source = None, None
     item.lyrics_source = lyrics_source
     item.lyrics_matched = bool(lyrics_text)
-    item.lyrics_status = _classify_lyrics(lyrics_text)
+    item.lyrics_status = classify_lyrics_text(lyrics_text)
     item.language = detect_primary_lyrics_language(lyrics_text)
 
     output_path, default_lrc_path = _target_paths(config, item, track_index)
-    target_lrc_path = str(default_lrc_path) if lyrics_text and default_lrc_path else None
+    sidecar_text = lyrics_sidecar_text(lyrics_text, item.lyrics_status)
+    target_lrc_path = str(default_lrc_path) if sidecar_text and default_lrc_path else None
     same_video = bool(
         current_resolved
         and item.resolved_youtube_music_track_id
@@ -439,12 +438,6 @@ def preview_reprocess_stream(payload: dict[str, Any]) -> None:
     )
 
 
-def _classify_lyrics(lyrics_text: str | None) -> str:
-    if not lyrics_text or not lyrics_text.strip():
-        return "missing"
-    return "synced" if lyrics_text.startswith("[") else "plain"
-
-
 def _path_state(path: Path | None) -> str:
     if path is None:
         return "none"
@@ -593,6 +586,7 @@ def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) 
         and (item.lyrics_status == "synced" or config.embed_unsynced_lyrics)
         else None
     )
+    sidecar_text = lyrics_sidecar_text(lyrics_text, item.lyrics_status)
 
     old_output = Path(current_output_path) if current_output_path else None
     old_lrc = Path(current_lrc_path) if current_lrc_path else None
@@ -614,8 +608,8 @@ def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) 
                     target_output_path.unlink()
                 shutil.move(str(old_output), str(target_output_path))
             write_media_tags(target_output_path, item, cover_bytes, embedded_lyrics)
-            if target_lrc_path and lyrics_text:
-                target_lrc_path.write_text(lyrics_text, encoding="utf-8")
+            if target_lrc_path and sidecar_text:
+                target_lrc_path.write_text(sidecar_text, encoding="utf-8")
             if old_lrc and old_lrc.exists() and (not target_lrc_path or old_lrc != target_lrc_path):
                 old_lrc.unlink()
             if target_lrc_path is None:
@@ -648,8 +642,8 @@ def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) 
         try:
             _normalize_audio(downloaded_path, target_output_path, config.ffmpeg_path, item.audio_codec)
             write_media_tags(target_output_path, item, cover_bytes, embedded_lyrics)
-            if target_lrc_path and lyrics_text:
-                target_lrc_path.write_text(lyrics_text, encoding="utf-8")
+            if target_lrc_path and sidecar_text:
+                target_lrc_path.write_text(sidecar_text, encoding="utf-8")
             elif target_output_path.with_suffix(".lrc").exists():
                 target_output_path.with_suffix(".lrc").unlink()
         except OSError as exc:

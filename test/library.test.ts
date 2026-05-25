@@ -21,7 +21,6 @@ import {
   libraryTracksTable,
   likedArtistsTable,
   metaTable,
-  syncApprovalItemsTable,
   syncJobsTable,
   syncJobTracksTable,
 } from '../src/main/db/schema'
@@ -1842,7 +1841,6 @@ describe('clear failures', () => {
         lyricsSource: null,
         selectedSourceUrl: null,
         visible: true,
-        approvalRequired: false,
         terminalOutcome: 'failed',
         sortIndex: 0,
         remoteTarget: null,
@@ -1898,7 +1896,6 @@ describe('clear failures', () => {
         lyricsSource: null,
         selectedSourceUrl: null,
         visible: true,
-        approvalRequired: false,
         terminalOutcome: null,
         sortIndex: 0,
         remoteTarget: null,
@@ -1910,50 +1907,15 @@ describe('clear failures', () => {
         updatedAt: stamp,
       },
     ])
-    await db.insert(syncApprovalItemsTable).values([
-      {
-        id: 'approval_failed',
-        jobId: 'job_failed',
-        trackWorkId: 'track_failed',
-        libraryTrackId: null,
-        status: 'pending',
-        actionKind: 'update',
-        diffJson: '{}',
-        beforeJson: '{}',
-        afterJson: '{}',
-        albumArtDiffJson: null,
-        payloadJson: '{}',
-        createdAt: stamp,
-        updatedAt: stamp,
-      },
-      {
-        id: 'approval_queue',
-        jobId: 'job_queue',
-        trackWorkId: 'track_queue',
-        libraryTrackId: null,
-        status: 'pending',
-        actionKind: 'update',
-        diffJson: '{}',
-        beforeJson: '{}',
-        afterJson: '{}',
-        albumArtDiffJson: null,
-        payloadJson: '{}',
-        createdAt: stamp,
-        updatedAt: stamp,
-      },
-    ])
-
     await expect(service.clearFailures()).resolves.toMatchObject({ ok: true })
 
     const jobs = await db.select().from(syncJobsTable)
     const tracks = await db.select().from(syncJobTracksTable)
-    const approvals = await db.select().from(syncApprovalItemsTable)
     expect(jobs.map((job) => job.id).sort()).toEqual([
       'job_completed',
       'job_queue',
     ])
     expect(tracks.map((track) => track.id)).toEqual(['track_queue'])
-    expect(approvals.map((approval) => approval.id)).toEqual(['approval_queue'])
 
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
@@ -2038,7 +2000,6 @@ describe('library reprocess candidates', () => {
           fileTemplate: '{track:02d} {title}',
           embedUnsyncedLyrics: true,
           writeLrcSidecar: true,
-          autoApproveChanges: false,
         }),
         saveYtMusicBrowserAuth: vi.fn(),
       } as never,
@@ -2109,104 +2070,50 @@ describe('library reprocess candidates', () => {
 
     child.stdout.write(
       `${JSON.stringify({
-        type: 'reprocess_preview',
-        event: 'started',
+        type: 'track',
+        event: 'upsert',
         job_id: 'ignored',
-        total_count: 1,
-        processed_count: 0,
-        changed_count: 0,
-        noop_count: 0,
-        message: 'Reprocess preview started.',
-      })}\n`
-    )
-    child.stdout.write(
-      `${JSON.stringify({
-        type: 'reprocess_preview',
-        event: 'batch',
-        job_id: 'ignored',
-        total_count: 1,
-        processed_count: 1,
-        changed_count: 1,
-        noop_count: 0,
-        items: [
-          {
-            track_work_id: 'track_work_1',
-            library_track_id: 'library_track_1',
-            same_video: true,
-            action_kind: 'update',
-            diff: {
-              title: { before: 'Song', after: 'Song (Remastered)' },
-            },
-            before: {
-              outputPath: '/tmp/out/Artist/Album/01 Song.m4a',
-              lrcPath: null,
-            },
-            after: {
-              outputPath: '/tmp/out/Artist/Album/01 Song.m4a',
-              lrcPath: null,
-            },
-            album_art_diff: null,
-            payload: {
-              item: {
-                id: 'track_work_1',
-                youtube_music_track_id: 'liked123',
-                resolved_youtube_music_track_id: 'resolved123',
-                title: 'Song (Remastered)',
-                artist: 'Artist',
-                album: 'Album',
-                album_artist: 'Artist',
-                source_url: 'https://music.youtube.com/watch?v=liked123',
-                status: 'pending',
-                stage: 'idle',
-                reason_code: '',
-                reason_detail: '',
-                resolution_method: 'exact',
-                lyrics_status: 'missing',
-              },
-            },
-          },
-        ],
+        item: {
+          id: 'track_work_1',
+          youtube_music_track_id: 'liked123',
+          resolved_youtube_music_track_id: 'resolved123',
+          title: 'Song (Remastered)',
+          artist: 'Artist',
+          album: 'Album',
+          album_artist: 'Artist',
+          source_url: 'https://music.youtube.com/watch?v=liked123',
+          status: 'processing',
+          stage: 'tagging',
+          reason_code: '',
+          reason_detail: '',
+          resolution_method: 'exact',
+          lyrics_status: 'missing',
+        },
       })}\n`
     )
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(await db.select().from(syncJobTracksTable)).toHaveLength(1)
-    expect(await db.select().from(syncApprovalItemsTable)).toHaveLength(1)
-
-    child.stdout.write(
-      `${JSON.stringify({
-        type: 'reprocess_preview',
-        event: 'completed',
-        job_id: 'ignored',
-        total_count: 1,
-        processed_count: 1,
-        changed_count: 1,
-        noop_count: 0,
-        message: 'Reprocess preview complete.',
-      })}\n`
-    )
     child.emitExit(0, null)
 
     await expect(startPromise).resolves.toMatchObject({
       ok: true,
-      message: 'Reprocess preview complete. Review changes in Needs Approval.',
+      message: 'Reprocess started.',
     })
 
     const [job] = await db.select().from(syncJobsTable)
-    expect(job?.status).toBe('waiting_approval')
+    expect(['running', 'completed']).toContain(job?.status)
     expect(spawnNdjsonCommand).toHaveBeenCalledWith(
-      'reprocess-preview-stream',
-      expect.objectContaining({
-        batch_size: 25,
-        progress_every: 25,
-      })
+      'reprocess-job',
+      expect.any(Object)
     )
 
+    await new Promise((resolve) => setTimeout(resolve, 10))
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('runs no-approval reprocess as a direct worker job without approval rows', async () => {
+  it('runs reprocess as a direct worker job', async () => {
     const { db, sqlite, dir } = makeTempDb()
     const child = createMockChildProcess()
     const spawnNdjsonCommand = vi.fn().mockReturnValue(child)
@@ -2225,7 +2132,6 @@ describe('library reprocess candidates', () => {
           fileTemplate: '{track:02d} {title}',
           embedUnsyncedLyrics: true,
           writeLrcSidecar: true,
-          autoApproveChanges: true,
         }),
         saveYtMusicBrowserAuth: vi.fn(),
       } as never,
@@ -2346,13 +2252,13 @@ describe('library reprocess candidates', () => {
     child.emitExit(0, null)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(await db.select().from(syncApprovalItemsTable)).toHaveLength(0)
     const [job] = await db.select().from(syncJobsTable)
     const [track] = await db.select().from(syncJobTracksTable)
     expect(job?.status).toBe('completed')
     expect(job?.queueBucket).toBe('completed')
     expect(track?.terminalOutcome).toBe('updated')
 
+    await new Promise((resolve) => setTimeout(resolve, 10))
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
   })
@@ -2376,7 +2282,6 @@ describe('library reprocess candidates', () => {
           fileTemplate: '{track:02d} {title}',
           embedUnsyncedLyrics: true,
           writeLrcSidecar: true,
-          autoApproveChanges: true,
         }),
         saveYtMusicBrowserAuth: vi.fn(),
       } as never,
@@ -3025,12 +2930,8 @@ describe('sync missing to remote', () => {
     expect(result.ok).toBe(true)
     expect(result.details).toContain('Copied 1')
     expect(
-      snapshots.some(
-        (snapshot) =>
-          snapshot.queue.some((job) => job.kind === 'sync_missing_to_remote') ||
-          snapshot.completed.some(
-            (job) => job.kind === 'sync_missing_to_remote'
-          )
+      snapshots.some((snapshot) =>
+        snapshot.jobs.some((job) => job.kind === 'sync_missing_to_remote')
       )
     ).toBe(true)
     const [job] = await db.select().from(syncJobsTable)

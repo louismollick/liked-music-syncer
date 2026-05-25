@@ -5,23 +5,19 @@ export type Screen =
   | 'library-artists'
   | 'library-albums'
   | 'library-songs'
-  | 'sync-queue'
-  | 'sync-approval'
-  | 'sync-completed'
-  | 'sync-failures'
+  | 'sync'
   | 'settings'
 
-type SectionKey = 'library' | 'sync'
+type SectionKey = 'library'
 
 interface Props {
   screen: Screen
   onNavigate: (screen: Screen) => void
-  showNeedsApproval: boolean
   counts: {
-    queue: number
-    needsApproval: number
+    all: number
+    inProgress: number
     completed: number
-    failures: number
+    failed: number
   }
 }
 
@@ -30,7 +26,7 @@ function loadExpanded(): Set<SectionKey> {
     const stored = localStorage.getItem('sidebar-expanded')
     if (stored) return new Set(JSON.parse(stored) as SectionKey[])
   } catch {}
-  return new Set<SectionKey>(['library', 'sync'])
+  return new Set<SectionKey>(['library'])
 }
 
 function saveExpanded(expanded: Set<SectionKey>): void {
@@ -86,14 +82,10 @@ function NavSection({
 function NavSubItem({
   label,
   active,
-  badge,
-  badgeVariant = 'default',
   onClick,
 }: {
   label: string
   active: boolean
-  badge?: number
-  badgeVariant?: 'default' | 'warning'
   onClick: () => void
 }): JSX.Element {
   return (
@@ -107,17 +99,6 @@ function NavSubItem({
       }`}
     >
       <span className="flex-1">{label}</span>
-      {badge != null && badge > 0 ? (
-        <span
-          className={`text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center ${
-            badgeVariant === 'warning'
-              ? 'bg-yellow-500/20 text-yellow-500'
-              : 'bg-accent text-white'
-          }`}
-        >
-          {badge}
-        </span>
-      ) : null}
     </button>
   )
 }
@@ -126,11 +107,13 @@ function NavItem({
   label,
   icon,
   active,
+  badge,
   onClick,
 }: {
   label: string
   icon: JSX.Element
   active: boolean
+  badge?: number
   onClick: () => void
 }): JSX.Element {
   return (
@@ -145,16 +128,16 @@ function NavItem({
     >
       <span className="w-4 h-4 flex-shrink-0">{icon}</span>
       <span className="flex-1">{label}</span>
+      {badge != null && badge > 0 ? (
+        <span className="text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center bg-accent text-white">
+          {badge}
+        </span>
+      ) : null}
     </button>
   )
 }
 
-export function Sidebar({
-  screen,
-  onNavigate,
-  counts,
-  showNeedsApproval,
-}: Props): JSX.Element {
+export function Sidebar({ screen, onNavigate, counts }: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<SectionKey>>(loadExpanded)
 
   const toggle = (key: SectionKey, firstSubItem: Screen) => {
@@ -172,7 +155,6 @@ export function Sidebar({
   }
 
   const isLibraryActive = screen.startsWith('library-')
-  const isSyncActive = screen.startsWith('sync-')
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-primary border-r border-border flex flex-col h-screen">
@@ -212,11 +194,11 @@ export function Sidebar({
           />
         </NavSection>
 
-        <NavSection
+        <NavItem
           label="Sync"
-          expanded={expanded.has('sync')}
-          active={isSyncActive}
-          onToggle={() => toggle('sync', 'sync-queue')}
+          active={screen === 'sync'}
+          badge={counts.inProgress}
+          onClick={() => onNavigate('sync')}
           icon={
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
               <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z" />
@@ -226,34 +208,7 @@ export function Sidebar({
               />
             </svg>
           }
-        >
-          <NavSubItem
-            label="Queue"
-            active={screen === 'sync-queue'}
-            badge={counts.queue}
-            onClick={() => onNavigate('sync-queue')}
-          />
-          {showNeedsApproval ? (
-            <NavSubItem
-              label="Needs Approval"
-              active={screen === 'sync-approval'}
-              badge={counts.needsApproval}
-              badgeVariant="warning"
-              onClick={() => onNavigate('sync-approval')}
-            />
-          ) : null}
-          <NavSubItem
-            label="Completed"
-            active={screen === 'sync-completed'}
-            onClick={() => onNavigate('sync-completed')}
-          />
-          <NavSubItem
-            label="Failures"
-            active={screen === 'sync-failures'}
-            badge={counts.failures}
-            onClick={() => onNavigate('sync-failures')}
-          />
-        </NavSection>
+        />
 
         <NavItem
           label="Settings"

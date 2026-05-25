@@ -101,9 +101,6 @@ export const syncJobTracksTable = sqliteTable('sync_job_tracks', {
   lyricsSource: text('lyrics_source'),
   selectedSourceUrl: text('selected_source_url'),
   visible: integer('visible', { mode: 'boolean' }).notNull().default(true),
-  approvalRequired: integer('approval_required', { mode: 'boolean' })
-    .notNull()
-    .default(false),
   terminalOutcome: text('terminal_outcome'),
   sortIndex: integer('sort_index'),
   remoteTarget: text('remote_target'),
@@ -217,19 +214,3 @@ export const libraryFilesTable = sqliteTable(
     ),
   })
 )
-
-export const syncApprovalItemsTable = sqliteTable('sync_approval_items', {
-  id: text('id').primaryKey(),
-  jobId: text('job_id').notNull(),
-  trackWorkId: text('track_work_id').notNull(),
-  libraryTrackId: text('library_track_id'),
-  status: text('status').notNull(),
-  actionKind: text('action_kind').notNull(),
-  diffJson: text('diff_json').notNull(),
-  beforeJson: text('before_json').notNull(),
-  afterJson: text('after_json').notNull(),
-  albumArtDiffJson: text('album_art_diff_json'),
-  payloadJson: text('payload_json').notNull(),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-})

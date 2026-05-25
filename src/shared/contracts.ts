@@ -48,14 +48,19 @@ export type SyncJobKind =
   | 'sync_missing_to_remote'
 
 export type SyncJobScopeKind = 'library' | 'artist'
-export type SyncBucket = 'queue' | 'needs_approval' | 'completed' | 'failures'
 export type SyncJobStatus =
   | 'queued'
   | 'running'
-  | 'waiting_approval'
   | 'completed'
   | 'failed'
   | 'cancelled'
+export type SyncJobDisplayStatus = 'in_progress' | 'completed'
+export type SyncTrackDisplayStatus =
+  | 'queued'
+  | 'in_progress'
+  | 'succeeded'
+  | 'failed'
+export type SyncFilter = 'all' | 'in_progress' | 'completed' | 'failed'
 
 export interface AuthStatus {
   authMode: 'browser_headers' | 'none'
@@ -66,7 +71,6 @@ export interface AuthStatus {
 
 export interface AppSettingsView {
   outputDirectory: string
-  autoApproveChanges: boolean
   remoteCopyEnabled: boolean
   outputFormat: 'm4a'
   rcloneRemote: string
@@ -82,7 +86,6 @@ export interface AppSettingsView {
 
 export interface SaveSettingsInput {
   outputDirectory: string
-  autoApproveChanges: boolean
   remoteCopyEnabled: boolean
   ytmusicBrowserAuth?: string
   ytDlpCookiesBrowser: YtDlpCookiesBrowser
@@ -118,25 +121,12 @@ export interface SyncTrackWorkView {
   youtubeMusicTrackId: string
   resolvedYoutubeMusicTrackId: string | null
   status: SyncItemStatus
+  displayStatus: SyncTrackDisplayStatus
   stage: SyncStage
   reasonCode: string
   reasonDetail: string
   outputPath: string | null
   lrcPath: string | null
-}
-
-export interface SyncApprovalItemView {
-  id: string
-  jobId: string
-  trackWorkId: string
-  title: string
-  artist: string
-  album: string
-  status: 'pending' | 'approved' | 'denied'
-  actionKind: 'update' | 'replace' | 'delete'
-  diffJson: string
-  beforeJson: string
-  afterJson: string
 }
 
 export interface SyncJobView {
@@ -145,27 +135,23 @@ export interface SyncJobView {
   scope: SyncJobScopeKind | null
   label: string
   status: SyncJobStatus
-  bucket: SyncBucket
+  displayStatus: SyncJobDisplayStatus
   startedAt: string
   endedAt: string | null
   totalTracks: number
   processedTracks: number
   completedTracks: number
   failedTracks: number
-  pendingApprovalTracks: number
   tracks: SyncTrackWorkView[]
 }
 
 export interface SyncSnapshot {
-  queue: SyncJobView[]
-  needsApproval: SyncApprovalItemView[]
-  completed: SyncJobView[]
-  failures: SyncJobView[]
+  jobs: SyncJobView[]
   counts: {
-    queue: number
-    needsApproval: number
+    all: number
+    inProgress: number
     completed: number
-    failures: number
+    failed: number
   }
 }
 
@@ -342,8 +328,6 @@ export interface ElectronApi {
     refreshFavoriteArtists: (artistIds?: string[]) => Promise<CommandResult>
     clearFailures: () => Promise<CommandResult>
     syncMissingToRemote: () => Promise<CommandResult>
-    approveChanges: (approvalIds: string[]) => Promise<CommandResult>
-    denyChanges: (approvalIds: string[]) => Promise<CommandResult>
     cancel: (jobId: string) => Promise<CommandResult>
     clearSyncData: () => Promise<CommandResult>
     doctor: () => Promise<CommandResult>

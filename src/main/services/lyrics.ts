@@ -39,7 +39,7 @@ function normalizeTimeTag(line: LyricsApiLine) {
     }
   }
 
-  return '00:00.00'
+  return null
 }
 
 export async function fetchLyricsLrc(
@@ -65,13 +65,30 @@ export async function fetchLyricsLrc(
   }
 
   const totalLines = payload.lines?.length ?? 0
-  const lines = (payload.lines || [])
-    .filter(
-      (line) => typeof line.words === 'string' && line.words.trim() !== ''
-    )
-    .map((line) => `[${normalizeTimeTag(line)}]${line.words!.trim()}`)
+  const syncedLines: string[] = []
+  const plainLines: string[] = []
 
-  if (lines.length === 0) {
+  for (const line of payload.lines || []) {
+    if (typeof line.words !== 'string' || line.words.trim() === '') {
+      continue
+    }
+    const words = line.words.trim()
+    plainLines.push(words)
+    const timeTag = normalizeTimeTag(line)
+    if (timeTag) {
+      syncedLines.push(`[${timeTag}]${words}`)
+    }
+  }
+
+  if (syncedLines.length > 0) {
+    return {
+      lyrics: `${syncedLines.join('\n')}\n`,
+      totalLines,
+      syncedLines: syncedLines.length,
+    }
+  }
+
+  if (plainLines.length === 0) {
     return {
       lyrics: null,
       totalLines,
@@ -80,8 +97,8 @@ export async function fetchLyricsLrc(
   }
 
   return {
-    lyrics: `${lines.join('\n')}\n`,
+    lyrics: `${plainLines.join('\n')}\n`,
     totalLines,
-    syncedLines: lines.length,
+    syncedLines: 0,
   }
 }
