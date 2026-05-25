@@ -24,7 +24,7 @@ The user should be able to:
 - see how local library items were formed from one or more liked music libraries on source platforms
 - see whether local library items are present in the remote library
 - start a sync from liked songs
-- review planned changes before download
+- review planned changes inside sync activity
 - watch active sync progress
 - let background sync happen on a schedule
 - inspect failures and diagnostics without making debug output the main experience
@@ -72,17 +72,17 @@ Sync should likely become a guided workflow and status surface, without exposing
 2. Compare liked songs with disk.
 3. Match metadata and sources.
 4. Automatically download clean new matches by default.
-5. Ask for confirmation only before destructive actions, existing-library modifications, or unresolved matching choices.
+5. Show planned changes inline when useful, but default to executing work without an approval gate.
 6. Download, tag, write lyrics, and copy remote if enabled.
 
-Reprocess should use that same Sync system, but with a preview-first workflow for existing library items:
+Reprocess should use that same Sync system and execute directly for existing library items:
 
 1. Select a scope such as song, album, artist, or whole library.
 2. Re-run source resolution, metadata lookup, artwork lookup, and lyrics lookup for each in-scope track.
-3. If a track has no resulting change, do not create approval work for it.
-4. If a track has changes, create a Proposed Change with a full before/after diff.
-5. Do not write or delete anything before approval, unless the global auto-approve setting is enabled.
-6. After approval, either replace the whole track when the resolved video changed, or skip download and apply metadata and lyrics updates when the resolved video stayed the same.
+3. If a track has no resulting change, do not create visible sync work for it.
+4. If a track has changes, execute them directly and surface the result in Sync.
+5. When the resolved video changed, replace the whole track using the current replacement behavior.
+6. When the resolved video stayed the same, skip redownload and apply metadata and lyrics updates directly.
 
 Settings should not be a primary navigation item. It should be a utility button, likely placed near the bottom-left of the app shell with a cog icon.
 
@@ -208,12 +208,18 @@ Sync should remain visible in primary navigation even when scheduled background 
 
 For now, live progress should stay inside Sync rather than a persistent shell panel. Primary navigation should stay Library and Sync.
 
-Likely subnavigation:
+Sync should not use subnavigation. The left nav should contain one non-expandable `Sync` item that opens one Sync view.
 
-- Queue
-- Needs approval
+The Sync view should use four in-page filters:
+
+- All
+- In Progress
 - Completed
-- Failures
+- Failed
+
+In this model, mixed-result jobs should not be moved into a separate failure-only destination. Parent jobs should use only `In Progress` or `Completed`, while child tracks carry the actual queued, active, success, or failure outcome.
+
+`In Progress` filtering should show only jobs that are still running. Inside those jobs, it should show only non-terminal child tracks, meaning `Queued` and `In Progress`, while hiding already-succeeded and already-failed siblings.
 
 Failures should support clearing only failed jobs without wiping queued, approval, or completed sync history.
 

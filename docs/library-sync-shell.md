@@ -21,6 +21,7 @@
 - `Needs Approval` also hidden when there are zero approval rows.
 - Reprocess uses preview-first approval rows only when approvals are required.
 - When approvals are disabled, reprocess skips preview rows entirely, runs as a normal worker job, and writes no `sync_approval_items`.
+- Direct reprocess now pre-seeds all candidate tracks into Queue as `pending`/`idle` before processing starts, then advances rows to `processing` one-by-one.
 - Same-video direct reprocess updates metadata, tags, lyrics, artwork, and paths in place without redownloading audio.
 - Changed-video direct reprocess replaces the local file through the normal redownload path.
 - Reprocess includes all local tracks with an LMS source ID (`lms_source` identity), including older liked-song downloads that only have a legacy YouTube ID in comments and are not marked `managedByApp`.

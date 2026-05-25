@@ -1289,6 +1289,7 @@ export class SyncService {
       )
     }
 
+    await this.seedDirectReprocessQueuedTracks(jobId, candidates)
     await this.emitSnapshot()
     if (this.activeJobId || this.activePreviewJobId) {
       this.pendingWorkerLaunches.set(jobId, launch)
@@ -1297,6 +1298,79 @@ export class SyncService {
 
     await launch()
     return { ok: true, message: 'Reprocess started.' }
+  }
+
+  private toQueuedReprocessTrackPayload(
+    candidate: ReprocessCandidatePayload
+  ): WorkerTrackPayload {
+    const youtubeMusicTrackId =
+      candidate.youtube_music_track_id ??
+      candidate.resolved_youtube_music_track_id ??
+      candidate.track_work_id
+    return {
+      id: candidate.track_work_id,
+      youtube_music_track_id: youtubeMusicTrackId,
+      spotify_track_id: candidate.spotify_track_id,
+      soundcloud_track_id: candidate.soundcloud_track_id,
+      resolved_youtube_music_track_id:
+        candidate.resolved_youtube_music_track_id,
+      title: candidate.title ?? 'Unknown Title',
+      artist: candidate.artist ?? 'Unknown Artist',
+      album: candidate.album ?? 'Unknown Album',
+      album_artist: candidate.album_artist ?? candidate.artist ?? 'Unknown',
+      source_url: `https://music.youtube.com/watch?v=${youtubeMusicTrackId}`,
+      status: 'pending',
+      stage: 'idle',
+      source_kind: 'reprocess',
+      source_origin: candidate.source_origin,
+      catalog_release_browse_id: candidate.catalog_release_browse_id,
+      catalog_release_title: candidate.catalog_release_title,
+      catalog_release_kind: candidate.catalog_release_kind,
+      resolution_method: 'unchanged',
+      track_number: candidate.track_number,
+      track_total: candidate.track_total,
+      disc_number: candidate.disc_number,
+      disc_total: candidate.disc_total,
+      year: candidate.year,
+      date: candidate.date,
+      genre: candidate.genre,
+      language: candidate.language,
+      isrc: candidate.isrc,
+      mb_track_id: candidate.mb_track_id,
+      mb_album_id: candidate.mb_album_id,
+      mb_releasegroup_id: candidate.mb_releasegroup_id,
+      lyrics_status:
+        candidate.lyrics_status === 'plain' ||
+        candidate.lyrics_status === 'synced'
+          ? candidate.lyrics_status
+          : 'missing',
+      output_path: candidate.current_output_path,
+      lrc_path: candidate.current_lrc_path,
+    }
+  }
+
+  private async seedDirectReprocessQueuedTracks(
+    jobId: string,
+    candidates: ReprocessCandidatePayload[]
+  ) {
+    for (const [index, candidate] of candidates.entries()) {
+      const payload = this.toQueuedReprocessTrackPayload(candidate)
+      await this.upsertJobTrack(jobId, payload, {
+        id: candidate.track_work_id,
+        libraryTrackId: candidate.library_track_id,
+        visible: true,
+        approvalRequired: false,
+        sortIndex: index + 1,
+        status: 'pending',
+        stage: 'idle',
+        reasonCode: '',
+        reasonDetail: '',
+        jobPhase: 'reprocess_apply',
+        currentOutputPath: candidate.current_output_path,
+        outputPath: candidate.current_output_path,
+        lrcPath: candidate.current_lrc_path,
+      })
+    }
   }
 
   private async failPreparingJob(jobId: string) {

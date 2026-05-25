@@ -72,19 +72,23 @@ The user can watch current sync progress in the desktop app when they care to.
 
 Sync should be the single funnel for async download-related work across the app. Whether work was triggered by a Liked Songs Sync, a Favorite Artist catalog refresh, or a Copy Missing to Remote action, it should appear in the same Sync area.
 
-Sync should use subnavigation for Queue, Needs approval, Completed, and Failures.
+Sync should be one destination with no subnavigation.
 
-The underlying async work model should be track-first, but the Queue UI should stay job-first with expandable nested track rows. For example, a Liked Songs Sync job or Favorite Artist catalog job can appear first as a parent row, then expand into nested track rows once songs are discovered.
+The underlying async work model should be track-first, but the Sync UI should stay job-first with expandable nested track rows. For example, a Liked Songs Sync job or Favorite Artist catalog job can appear first as a parent row, then expand into nested track rows once songs are discovered.
 
 Favorite Artist refresh jobs should include the artist name directly in the main parent row label.
 
 Default child track rows should stay lightweight and focus on title, artist, Queue State, active Track Step, and failure reason when needed. Resolved-source badges are not required in the default row UI for now.
 
-Queue should be organized by concrete state sections such as Currently running and Queued. Each parent job should keep its nested track rows visible in that same queue, with currently running tracks sorted before queued siblings.
+The Sync view should expose in-page filters for All, In Progress, Completed, and Failed rather than separate tabs or subviews.
 
-Completed should use the same job-first grouped structure as Queue, with expandable nested track rows, so users can review finished work without falling back to run history.
+Parent jobs should use only `In Progress` or `Completed` status pills. Child tracks should use `Queued`, `In Progress`, `Succeeded`, or `Failed` status pills.
 
-Failures should use that same job-first grouped structure as Queue and Completed so users can inspect failures without losing parent-job context.
+Completed filtering should keep the same job-first grouped structure so users can review finished work without falling back to run history, even when some child tracks failed.
+
+Failed filtering should use that same job-first grouped structure so users can inspect failures without losing parent-job context. Failed is a track-level filter, not a separate job destination.
+
+In Progress filtering should show only jobs that are still running. Inside those jobs, it should show only non-terminal child tracks, meaning `Queued` and `In Progress`, while hiding already-succeeded and already-failed siblings.
 
 If one Sync Job finishes with both completed and failed tracks, the whole job should appear in Failures rather than being split across multiple Sync views.
 
@@ -92,17 +96,7 @@ Sync terminology should distinguish Queue State, Job Phase, and Track Step so pa
 
 The user should be able to inspect an active song to see its current Track Step, such as matching, downloading, tagging, writing lyrics, or copying to remote. The scheduler should run one executable job at a time while still showing queued follow-up jobs in Sync.
 
-Needs approval should be its own Sync view because proposed changes and cleanup may need richer diff-style detail than the main Queue. Once approval is granted, affected tracks should return to Queue to finish remaining work.
-
-Needs Approval should be track-first because approval decisions apply to concrete track-level diffs. It can remain less finalized than Queue, Completed, and Failures without blocking implementation of those other Sync views.
-
-When Needs Approval is shown, it should use a standard table-style selection model with row checkboxes, a header checkbox, and bulk approve or deny actions. Default selection should be none.
-
-The diff should be a full before/after comparison for every changed field, including empty-to-filled values and album art changes. For now, the app should not hide low-level fields from the diff.
-
-If the user denies a change, that track should leave Needs Approval and end in Completed rather than Failures.
-
-A global settings toggle should be able to auto-approve all modifications and deletions. When that toggle is enabled, qualifying items should bypass Needs Approval entirely.
+The app should not have a Needs Approval flow. Modifications and deletions should execute by default without a separate approval gate or setting.
 
 The user should not need to understand internal sync runs. Over time, sync should be able to run automatically on a schedule in the background, with the app surfacing the current library state and concrete problems that need action.
 
@@ -120,13 +114,13 @@ Reprocess should target local library tracks that have a source-song tag identit
 
 When reprocessing starts, the app should still do all the same source resolution, metadata lookup, artwork lookup, and lyrics lookup work it would do for a fresh track.
 
-If reprocessing finds no actual diff for a track, that track should not enter Needs Approval.
+If reprocessing finds no actual diff for a track, that track should not create visible sync work.
 
-If the resolved YouTube video changes, the app should show one combined Proposed Change for that track, including the resolved-source replacement and all downstream metadata, lyrics, artwork, path, and file actions. After approval, the app should replace the existing track using the current replace-the-track behavior.
+If the resolved YouTube video changes, the app should treat that as one combined track replacement and execute it using the current replace-the-track behavior.
 
-If the resolved YouTube video stays the same, the app should skip the audio download step and focus on metadata, lyrics, artwork, tags, sidecars, and other local updates. Those updates should still be previewed and approved first when approval is required.
+If the resolved YouTube video stays the same, the app should skip the audio download step and focus on metadata, lyrics, artwork, tags, sidecars, and other local updates.
 
-Reprocess should compute its proposed changes before writing anything when approval is required. If `Don't require approvals for modifications and deletions` is enabled, Reprocess should skip Needs Approval entirely and apply changes directly as a normal worker job.
+Reprocess should execute direct changes as a normal worker job, without a preview-only approval phase or approval setting.
 
 ### 6. Reprocess the Whole Library
 

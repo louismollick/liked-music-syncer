@@ -445,8 +445,66 @@ def _classify_lyrics(lyrics_text: str | None) -> str:
     return "synced" if lyrics_text.startswith("[") else "plain"
 
 
+def _path_state(path: Path | None) -> str:
+    if path is None:
+        return "none"
+    return f"{path} (exists={path.exists()})"
+
+
+def _wrap_file_operation_error(
+    exc: OSError,
+    *,
+    action: str,
+    current_output_path: Path | None,
+    target_output_path: Path,
+    current_lrc_path: Path | None,
+    target_lrc_path: Path | None,
+    same_video: bool,
+) -> RuntimeError:
+    return RuntimeError(
+        f"{action} failed: {exc}. "
+        f"same_video={same_video}; "
+        f"current_output={_path_state(current_output_path)}; "
+        f"target_output={_path_state(target_output_path)}; "
+        f"current_lrc={_path_state(current_lrc_path)}; "
+        f"target_lrc={_path_state(target_lrc_path)}; "
+        "Likely stale local path or file changed during reprocess."
+    )
+
+
+def _wrap_rclone_error(
+    exc: subprocess.CalledProcessError,
+    *,
+    action: str,
+    local_path: Path | None,
+    remote_path: str,
+) -> RuntimeError:
+    stdout = exc.stdout.decode("utf-8", errors="replace").strip() if isinstance(exc.stdout, bytes) else str(exc.stdout or "").strip()
+    stderr = exc.stderr.decode("utf-8", errors="replace").strip() if isinstance(exc.stderr, bytes) else str(exc.stderr or "").strip()
+    local_exists = local_path.exists() if local_path else None
+    local_size = local_path.stat().st_size if local_path and local_path.exists() else None
+    return RuntimeError(
+        f"{action} failed: returncode={exc.returncode}; "
+        f"local_path={local_path}; local_exists={local_exists}; local_size={local_size}; "
+        f"remote_path={remote_path}; "
+        f"stderr={stderr or '<empty>'}; stdout={stdout or '<empty>'}"
+    )
+
+
 def _copy_remote_file(config: SyncConfig, local_path: Path, remote_path: str) -> None:
-    subprocess.run(["rclone", "copyto", str(local_path), remote_path], check=True, capture_output=True)
+    try:
+        subprocess.run(
+            ["rclone", "copyto", str(local_path), remote_path],
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise _wrap_rclone_error(
+            exc,
+            action="rclone copyto",
+            local_path=local_path,
+            remote_path=remote_path,
+        ) from exc
 
 
 def _delete_remote_file(remote_path: str) -> None:
@@ -457,7 +515,12 @@ def _delete_remote_file(remote_path: str) -> None:
         # Deleting stale artifacts should be best-effort and not fail reprocess.
         if exc.returncode == 4:
             return
-        raise
+        raise _wrap_rclone_error(
+            exc,
+            action="rclone deletefile",
+            local_path=None,
+            remote_path=remote_path,
+        ) from exc
 
 
 def _remote_target(config: SyncConfig, local_path: Path) -> str:
@@ -536,21 +599,39 @@ def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) 
 
     if same_video:
         if not old_output or not old_output.exists():
-            raise FileNotFoundError("Current local file missing for same-video update")
-        target_output_path.parent.mkdir(parents=True, exist_ok=True)
-        if old_output != target_output_path:
-            if target_output_path.exists():
-                target_output_path.unlink()
-            shutil.move(str(old_output), str(target_output_path))
-        write_media_tags(target_output_path, item, cover_bytes, embedded_lyrics)
-        if target_lrc_path and lyrics_text:
-            target_lrc_path.write_text(lyrics_text, encoding="utf-8")
-        if old_lrc and old_lrc.exists() and (not target_lrc_path or old_lrc != target_lrc_path):
-            old_lrc.unlink()
-        if target_lrc_path is None:
-            stale_lrc = target_output_path.with_suffix(".lrc")
-            if stale_lrc.exists():
-                stale_lrc.unlink()
+            raise RuntimeError(
+                "Current local file missing for same-video update. "
+                f"current_output={_path_state(old_output)}; "
+                f"target_output={_path_state(target_output_path)}; "
+                f"current_lrc={_path_state(old_lrc)}; "
+                f"target_lrc={_path_state(target_lrc_path)}; "
+                "Likely stale local path before apply."
+            )
+        try:
+            target_output_path.parent.mkdir(parents=True, exist_ok=True)
+            if old_output != target_output_path:
+                if target_output_path.exists():
+                    target_output_path.unlink()
+                shutil.move(str(old_output), str(target_output_path))
+            write_media_tags(target_output_path, item, cover_bytes, embedded_lyrics)
+            if target_lrc_path and lyrics_text:
+                target_lrc_path.write_text(lyrics_text, encoding="utf-8")
+            if old_lrc and old_lrc.exists() and (not target_lrc_path or old_lrc != target_lrc_path):
+                old_lrc.unlink()
+            if target_lrc_path is None:
+                stale_lrc = target_output_path.with_suffix(".lrc")
+                if stale_lrc.exists():
+                    stale_lrc.unlink()
+        except OSError as exc:
+            raise _wrap_file_operation_error(
+                exc,
+                action="same-video local apply",
+                current_output_path=old_output,
+                target_output_path=target_output_path,
+                current_lrc_path=old_lrc,
+                target_lrc_path=target_lrc_path,
+                same_video=True,
+            ) from exc
         _sync_remote_artifacts(config, target_output_path, target_lrc_path, old_output, old_lrc)
         return {
             "ok": True,
@@ -564,12 +645,23 @@ def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) 
         downloaded_path, info = _download_audio(config, item, temp_dir)
         codec = info.get("acodec")
         item.audio_codec = str(codec) if isinstance(codec, str) else item.audio_codec
-        _normalize_audio(downloaded_path, target_output_path, config.ffmpeg_path, item.audio_codec)
-        write_media_tags(target_output_path, item, cover_bytes, embedded_lyrics)
-        if target_lrc_path and lyrics_text:
-            target_lrc_path.write_text(lyrics_text, encoding="utf-8")
-        elif target_output_path.with_suffix(".lrc").exists():
-            target_output_path.with_suffix(".lrc").unlink()
+        try:
+            _normalize_audio(downloaded_path, target_output_path, config.ffmpeg_path, item.audio_codec)
+            write_media_tags(target_output_path, item, cover_bytes, embedded_lyrics)
+            if target_lrc_path and lyrics_text:
+                target_lrc_path.write_text(lyrics_text, encoding="utf-8")
+            elif target_output_path.with_suffix(".lrc").exists():
+                target_output_path.with_suffix(".lrc").unlink()
+        except OSError as exc:
+            raise _wrap_file_operation_error(
+                exc,
+                action="replace local apply",
+                current_output_path=old_output,
+                target_output_path=target_output_path,
+                current_lrc_path=old_lrc,
+                target_lrc_path=target_lrc_path,
+                same_video=False,
+            ) from exc
 
     if old_output and old_output.exists() and old_output != target_output_path:
         old_output.unlink()

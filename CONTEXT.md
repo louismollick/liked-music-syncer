@@ -52,9 +52,9 @@ _Avoid_: Artist
 The current observable status of library discovery, matching, downloading, tagging, lyrics, and remote copy work. Users should see song and library state, not internal run history.
 _Avoid_: Run, sync run, run history
 
-**Queue State**:
-The top-level bucket a Sync Job or track work item appears in inside Sync, such as Needs approval, Currently running, Queued, Completed, or Failed.
-_Avoid_: Stage, step
+**Sync Filter**:
+The user-visible filter applied inside the single Sync view, such as All, In Progress, Completed, or Failed.
+_Avoid_: Tab, subview, bucket
 
 **Job Phase**:
 The current parent-level progress of a Sync Job, such as fetching liked songs, expanding a Favorite Artist catalog, or copying to remote.
@@ -68,32 +68,28 @@ _Avoid_: State, phase
 A user-visible unit of async sync work such as a Liked Songs Sync, Favorite Artist catalog refresh, or Copy Missing to Remote operation. A Sync Job can expand into many track work items.
 _Avoid_: Run, background task
 
-**Sync Queue**:
-The user-visible list of pending and running Sync Jobs and their track work items, organized by Queue State. The underlying work model is track-first, but the UI stays job-first with expandable track rows and can temporarily show a parent Sync Job before its track list is known. Once approval is granted, affected tracks return to the Sync Queue to finish remaining work.
-_Avoid_: Run history, worker queue
+**Sync View**:
+The single user-visible Sync screen for pending, running, completed, and failed Sync Jobs and track work items. It stays job-first with expandable track rows and uses in-page filters rather than separate subviews.
+_Avoid_: Queue, run history, worker queue
 
-**Needs Approval**:
-The Sync view for proposed changes and cleanup that require user confirmation before work can continue. It is track-first because approval decisions apply to concrete track-level diffs. Once approved, affected tracks return to the Sync Queue rather than jumping directly to Completed Work.
-_Avoid_: Active, queue
+**Job Status**:
+The lifecycle state of a Sync Job itself. In the Sync UI, the parent job pill should use only `In Progress` or `Completed`.
+_Avoid_: Failed job, queue bucket
 
-**Completed Work**:
-Finished Sync Jobs and their track work items after they leave the Sync Queue. Completed Work uses the same job-first grouped UI as the Sync Queue rather than flattening into old run history.
-_Avoid_: History, completed runs
-
-**Failed Work**:
-Sync Jobs and track work items that did not complete successfully. Failed Work uses the same job-first grouped UI as the Sync Queue so failure context stays attached to the parent Sync Job. If one Sync Job finishes with mixed completed and failed tracks, the whole job belongs in Failed Work.
-_Avoid_: Error log, failed runs
+**Track Status**:
+The lifecycle or outcome state of an individual track work item. In the Sync UI, child track pills should use `Queued`, `In Progress`, `Succeeded`, or `Failed`.
+_Avoid_: Job status, queue bucket
 
 **Reprocess**:
 User-requested work that revisits an existing library item with a source-song identity to refresh matching, metadata, lyrics, artwork, or files. Reprocess can target one artist, one album, one song, or a wider library scope.
 _Avoid_: Resync, rerun
 
 **Proposed Change**:
-A pending modification to an existing library item that needs confirmation before it changes or removes local files or metadata.
+A planned modification to an existing library item discovered during sync or reprocess. It is informational by default and does not imply a separate approval step.
 _Avoid_: Low confidence, review item
 
 **Proposed Cleanup**:
-A proposed deletion or removal action for library content that may no longer belong, such as a song no longer found in liked music libraries. It must be confirmed before anything is deleted.
+A planned deletion or removal action for library content that may no longer belong, such as a song no longer found in liked music libraries.
 _Avoid_: Auto-delete, pruning
 
 ## Example Dialogue

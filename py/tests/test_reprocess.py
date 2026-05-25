@@ -184,29 +184,6 @@ def test_run_reprocess_stream_noop_emits_completed_without_writes(
         }
     )
 
-
-def test_delete_remote_file_ignores_rclone_not_found(monkeypatch) -> None:
-    def raise_not_found(*args: object, **kwargs: object) -> None:
-        raise subprocess.CalledProcessError(4, ["rclone", "deletefile", "remote:path"])
-
-    monkeypatch.setattr(reprocess_module.subprocess, "run", raise_not_found)
-
-    reprocess_module._delete_remote_file("remote:path")
-
-
-def test_delete_remote_file_rethrows_other_rclone_errors(monkeypatch) -> None:
-    def raise_other(*args: object, **kwargs: object) -> None:
-        raise subprocess.CalledProcessError(3, ["rclone", "deletefile", "remote:path"])
-
-    monkeypatch.setattr(reprocess_module.subprocess, "run", raise_other)
-
-    try:
-        reprocess_module._delete_remote_file("remote:path")
-    except subprocess.CalledProcessError as exc:
-        assert exc.returncode == 3
-    else:
-        raise AssertionError("Expected non-4 rclone delete errors to be re-raised")
-
     track_events = [event for event in events if event["type"] == "track"]
     assert [event["event"] for event in events if event["type"] == "job"] == [
         "started",
@@ -219,3 +196,84 @@ def test_delete_remote_file_rethrows_other_rclone_errors(monkeypatch) -> None:
     assert final_item["reason_code"] == "reprocess_no_changes"
     assert calls["download"] == 0
     assert calls["tag"] == 0
+
+
+def test_apply_reprocess_same_video_missing_file_reports_context(
+    tmp_path: Path,
+) -> None:
+    payload = _apply_payload(tmp_path, same_video=True)
+    current_output = Path(str(payload["payload"]["current_output_path"]))
+    current_output.unlink()
+
+    try:
+        reprocess_module.apply_reprocess(payload)
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "Current local file missing for same-video update." in message
+        assert "Likely stale local path before apply." in message
+        assert str(current_output) in message
+    else:
+        raise AssertionError("Expected missing current output to fail with context")
+
+
+def test_copy_remote_file_wraps_rclone_failure_with_stdio(
+    tmp_path: Path, monkeypatch
+) -> None:
+    local_path = tmp_path / "audio.m4a"
+    local_path.write_bytes(b"audio")
+
+    def raise_rclone(*args: object, **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(
+            3,
+            ["rclone", "copyto", str(local_path), "remote:path"],
+            output=b"partial output",
+            stderr=b"sftp failure",
+        )
+
+    monkeypatch.setattr(reprocess_module.subprocess, "run", raise_rclone)
+
+    try:
+        reprocess_module._copy_remote_file(
+            reprocess_module._config_from_payload(_config_payload(tmp_path)),
+            local_path,
+            "remote:path",
+        )
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "rclone copyto failed: returncode=3" in message
+        assert "local_exists=True" in message
+        assert "local_size=5" in message
+        assert "stderr=sftp failure" in message
+        assert "stdout=partial output" in message
+    else:
+        raise AssertionError("Expected wrapped rclone copy error")
+
+
+def test_delete_remote_file_ignores_rclone_not_found(monkeypatch) -> None:
+    def raise_not_found(*args: object, **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(4, ["rclone", "deletefile", "remote:path"])
+
+    monkeypatch.setattr(reprocess_module.subprocess, "run", raise_not_found)
+
+    reprocess_module._delete_remote_file("remote:path")
+
+
+def test_delete_remote_file_rethrows_other_rclone_errors(monkeypatch) -> None:
+    def raise_other(*args: object, **kwargs: object) -> None:
+        raise subprocess.CalledProcessError(
+            3,
+            ["rclone", "deletefile", "remote:path"],
+            stderr=b"permission denied",
+        )
+
+    monkeypatch.setattr(reprocess_module.subprocess, "run", raise_other)
+
+    try:
+        reprocess_module._delete_remote_file("remote:path")
+    except RuntimeError as exc:
+        message = str(exc)
+        assert "rclone deletefile failed: returncode=3" in message
+        assert "remote_path=remote:path" in message
+        assert "stderr=permission denied" in message
+    else:
+        raise AssertionError("Expected non-4 rclone delete errors to be re-raised")
