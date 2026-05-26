@@ -8,6 +8,7 @@
 ## Library Cards
 - Artist and album grid cards use edge-to-edge square media.
 - Metadata sits in a compact padded footer below the image/artwork.
+- Virtualized artist/album grids keep inter-row card spacing at `12px`.
 
 ## Sync Page
 - One Sync page with in-page filters: `All`, `In Progress`, `Completed`, `Failed`.

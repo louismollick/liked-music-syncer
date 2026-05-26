@@ -1,14 +1,20 @@
 import type { LibraryTrackView } from '@shared/contracts'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { JSX } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useAlbumArtwork } from '../../hooks/useAlbumArtwork'
+import { useElementSize } from '../../hooks/useElementSize'
 import { FilterPill } from './FilterPill'
 import { LibraryActionButtons } from './LibraryActionButtons'
+import type { AlbumGroup } from './library-utils'
 import {
-  type AlbumGroup,
-  groupAlbums,
-  matchesArtistFilter,
-} from './library-utils'
+  ALBUM_CARD_HEIGHT,
+  chunkItems,
+  GRID_GAP_PX,
+  GRID_ROW_OVERSCAN,
+  getGridColumnCount,
+  getVirtualGridRowHeight,
+} from './virtualization'
 
 interface ArtistFilter {
   artistName: string
@@ -16,15 +22,18 @@ interface ArtistFilter {
 
 interface Props {
   tracks: LibraryTrackView[]
+  albums: AlbumGroup[]
   tracksLoaded: boolean
   tracksRefreshing: boolean
   artistFilter: ArtistFilter | null
+  isActive: boolean
   onOpenAlbum: (album: AlbumGroup) => void
   onClearArtistFilter: () => void
   onSyncLikedSongs: () => void
   onReprocessLibrary: () => void
   onReprocessFavoriteArtists: () => void
   onSyncToRemote: () => void
+  onInitialRender?: () => void
 }
 
 function AlbumPlaceholderIcon(): JSX.Element {
@@ -49,30 +58,29 @@ function AlbumCard({
   onClick: () => void
 }): JSX.Element {
   return (
-    <div className="group relative bg-surface-secondary rounded-xl border border-border transition-all overflow-hidden hover:border-surface-hover">
+    <div className="group relative overflow-hidden rounded-xl border border-border bg-surface-secondary transition-all hover:border-surface-hover">
       <button
         type="button"
         onClick={onClick}
-        className="w-full text-left cursor-pointer"
+        className="w-full cursor-pointer text-left"
         aria-label={`Open ${group.album}`}
       >
-        <div className="w-full aspect-square bg-surface-tertiary relative overflow-hidden flex items-center justify-center">
+        <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden bg-surface-tertiary">
           {artworkUrl ? (
             <img
               src={artworkUrl}
               alt=""
-              className="w-full h-full object-cover"
-              loading="lazy"
+              className="h-full w-full object-cover"
             />
           ) : (
             <AlbumPlaceholderIcon />
           )}
         </div>
         <div className="p-2.5">
-          <p className="text-sm font-medium text-text-primary truncate">
+          <p className="truncate text-sm font-medium text-text-primary">
             {group.album}
           </p>
-          <p className="text-xs text-text-muted truncate">
+          <p className="truncate text-xs text-text-muted">
             {group.albumArtist}
           </p>
           <p className="text-xs text-text-muted">
@@ -87,36 +95,94 @@ function AlbumCard({
 
 export function AlbumsView({
   tracks,
+  albums,
   tracksLoaded,
   tracksRefreshing,
   artistFilter,
+  isActive,
   onOpenAlbum,
   onClearArtistFilter,
   onSyncLikedSongs,
   onReprocessLibrary,
   onReprocessFavoriteArtists,
   onSyncToRemote,
+  onInitialRender,
 }: Props): JSX.Element {
-  const visibleTracks = useMemo(
-    () =>
-      artistFilter
-        ? tracks.filter((track) =>
-            matchesArtistFilter(track, artistFilter.artistName)
-          )
-        : tracks,
-    [artistFilter, tracks]
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const { width, height } = useElementSize(scrollRef)
+  const shouldVirtualize = width > 0 && height > 0
+  const columnCount = getGridColumnCount(width)
+  const rows = useMemo(
+    () => chunkItems(albums, columnCount),
+    [albums, columnCount]
   )
-  const albums = useMemo(() => groupAlbums(visibleTracks), [visibleTracks])
-  const albumKeys = useMemo(() => albums.map((album) => album.key), [albums])
+  const rowHeight = getVirtualGridRowHeight(
+    width,
+    columnCount,
+    ALBUM_CARD_HEIGHT
+  )
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan: GRID_ROW_OVERSCAN,
+  })
+
+  useEffect(() => {
+    if (isActive && shouldVirtualize) {
+      void rowHeight
+      virtualizer.measure()
+    }
+  }, [isActive, rowHeight, shouldVirtualize, virtualizer])
+
+  const virtualRows = virtualizer.getVirtualItems()
+  const visibleAlbumKeys = useMemo(
+    () =>
+      shouldVirtualize
+        ? [
+            ...new Set(
+              virtualRows.flatMap(
+                (virtualRow) =>
+                  rows[virtualRow.index]?.map((album) => album.key) ?? []
+              )
+            ),
+          ]
+        : albums.map((album) => album.key),
+    [albums, rows, shouldVirtualize, virtualRows]
+  )
   const {
     getArtworkUrl,
     loading: artworkLoading,
     error: artworkError,
-  } = useAlbumArtwork(albumKeys)
+  } = useAlbumArtwork(visibleAlbumKeys)
+
+  useEffect(() => {
+    if (
+      isActive &&
+      albums.length > 0 &&
+      (!shouldVirtualize || virtualRows.length > 0)
+    ) {
+      onInitialRender?.()
+    }
+  }, [
+    albums.length,
+    isActive,
+    onInitialRender,
+    shouldVirtualize,
+    virtualRows.length,
+  ])
+
+  const renderedRows = shouldVirtualize
+    ? virtualRows
+    : rows.map((_, index) => ({
+        index,
+        key: index,
+        start: index * rowHeight,
+      }))
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="flex items-center justify-between gap-4 mb-5">
+    <div className="flex h-full flex-col p-6">
+      <div className="mb-5 flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-xl font-semibold text-text-primary">Albums</h2>
@@ -127,12 +193,13 @@ export function AlbumsView({
               />
             ) : null}
           </div>
-          <p className="text-xs text-text-muted mt-0.5">
+          <p className="mt-0.5 text-xs text-text-muted">
             {albums.length} albums
             {!tracksLoaded ? ' · loading library…' : ''}
             {tracksRefreshing ? ' · refreshing library…' : ''}
             {artworkLoading ? ' · loading artwork…' : ''}
             {artworkError ? ' · artwork unavailable' : ''}
+            {tracks.length === 0 && tracksLoaded ? ' · empty library' : ''}
           </p>
         </div>
         <LibraryActionButtons
@@ -143,23 +210,48 @@ export function AlbumsView({
         />
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto">
         {albums.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-text-muted">
             <AlbumPlaceholderIcon />
-            <p className="text-sm mt-3">
+            <p className="mt-3 text-sm">
               {tracksLoaded ? 'No albums found' : 'Loading library…'}
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-            {albums.map((group) => (
-              <AlbumCard
-                key={group.key}
-                group={group}
-                artworkUrl={getArtworkUrl(group.key)}
-                onClick={() => onOpenAlbum(group)}
-              />
+          <div
+            className="relative w-full"
+            style={{
+              height: shouldVirtualize ? virtualizer.getTotalSize() : 'auto',
+            }}
+          >
+            {renderedRows.map((virtualRow) => (
+              <div
+                key={virtualRow.key}
+                className="grid w-full"
+                style={{
+                  boxSizing: 'border-box',
+                  gap: `${GRID_GAP_PX}px`,
+                  gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
+                  height: shouldVirtualize ? rowHeight : undefined,
+                  paddingBottom: `${GRID_GAP_PX}px`,
+                  position: shouldVirtualize ? 'absolute' : 'relative',
+                  top: 0,
+                  left: 0,
+                  transform: shouldVirtualize
+                    ? `translateY(${virtualRow.start}px)`
+                    : undefined,
+                }}
+              >
+                {rows[virtualRow.index]?.map((group) => (
+                  <AlbumCard
+                    key={group.key}
+                    group={group}
+                    artworkUrl={getArtworkUrl(group.key)}
+                    onClick={() => onOpenAlbum(group)}
+                  />
+                ))}
+              </div>
             ))}
           </div>
         )}

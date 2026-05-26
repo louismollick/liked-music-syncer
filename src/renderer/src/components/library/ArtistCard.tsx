@@ -86,12 +86,26 @@ export function ArtistCard({
           ) : null}
         </div>
       </button>
-
-      <div className="p-2.5">
+      <div className="px-2.5 pt-2.5 pb-3">
         <div className="flex items-start justify-between gap-1">
-          <p className="text-sm font-medium text-text-primary truncate flex-1 leading-tight">
-            {artist.name}
-          </p>
+          <button
+            type="button"
+            onClick={onClick}
+            className="min-w-0 flex-1 cursor-pointer text-left"
+            aria-label={
+              selectionEnabled
+                ? `${selected ? 'Deselect' : 'Select'} ${artist.name}`
+                : `Open ${artist.name}`
+            }
+          >
+            <p className="truncate text-sm font-medium leading-tight text-text-primary">
+              {artist.name}
+            </p>
+            <p className="mt-0.5 text-xs text-text-muted">
+              {artist.likedTrackCount} track
+              {artist.likedTrackCount !== 1 ? 's' : ''}
+            </p>
+          </button>
           <button
             type="button"
             onClick={onToggleFavorite}
@@ -101,10 +115,6 @@ export function ArtistCard({
             <StarIcon filled={artist.isFavorite} />
           </button>
         </div>
-        <p className="text-xs text-text-muted mt-0.5">
-          {artist.likedTrackCount} track
-          {artist.likedTrackCount !== 1 ? 's' : ''}
-        </p>
       </div>
     </div>
   )

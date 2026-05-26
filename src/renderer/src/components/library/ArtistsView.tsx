@@ -7,6 +7,7 @@ import type {
 } from '@shared/contracts'
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
+import { useElementSize } from '../../hooks/useElementSize'
 import { ArtistGrid } from './ArtistGrid'
 import { LibraryActionButtons } from './LibraryActionButtons'
 
@@ -16,11 +17,13 @@ interface Props {
   selectionEnabled: boolean
   libraryIndexStatus: LibraryIndexStatus
   authStatus: AuthStatus
+  isActive: boolean
   onToggleSelectionMode: () => void
   onToggleSelect: (id: string) => void
   onOpenArtist: (artist: LikedArtistView) => void
   onAction: (action: Promise<CommandResult>) => void
   onClearSelected: () => void
+  onInitialRender?: () => void
 }
 
 export function ArtistsView({
@@ -29,15 +32,21 @@ export function ArtistsView({
   selectionEnabled,
   libraryIndexStatus,
   authStatus,
+  isActive,
   onToggleSelectionMode,
   onToggleSelect,
   onOpenArtist,
   onAction,
   onClearSelected,
+  onInitialRender,
 }: Props): JSX.Element {
   const imageRefreshStarted = useRef(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const { width, height } = useElementSize(scrollRef)
 
   useEffect(() => {
+    if (!isActive) return
+
     const withPhoto = artists.filter((artist) =>
       Boolean(artist.photoUrl)
     ).length
@@ -84,7 +93,7 @@ export function ArtistsView({
         })
         imageRefreshStarted.current = false
       })
-  }, [artists, authStatus.isAuthenticated, libraryIndexStatus.ready])
+  }, [artists, authStatus.isAuthenticated, isActive, libraryIndexStatus.ready])
 
   const toggleFavorite = (artist: LikedArtistView) => {
     onAction(
@@ -143,13 +152,18 @@ export function ArtistsView({
         />
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto">
         <ArtistGrid
           artists={artists}
           selectedIds={selectedIds}
           selectionEnabled={selectionEnabled}
+          isActive={isActive}
           onArtistClick={handleArtistClick}
           onToggleFavorite={toggleFavorite}
+          scrollElement={scrollRef.current}
+          containerWidth={width}
+          containerHeight={height}
+          onInitialRender={onInitialRender}
         />
       </div>
     </div>
