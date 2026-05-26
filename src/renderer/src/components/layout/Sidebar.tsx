@@ -1,18 +1,11 @@
-import type { JSX } from 'react'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
+import type { JSX, ReactNode } from 'react'
 import { useState } from 'react'
-
-export type Screen =
-  | 'library-artists'
-  | 'library-albums'
-  | 'library-songs'
-  | 'sync'
-  | 'settings'
+import { type LibraryTab, libraryTabSchema } from '../../routes/library'
 
 type SectionKey = 'library'
 
 interface Props {
-  screen: Screen
-  onNavigate: (screen: Screen) => void
   counts: {
     all: number
     inProgress: number
@@ -46,7 +39,7 @@ function NavSection({
   expanded: boolean
   active: boolean
   onToggle: () => void
-  children: React.ReactNode
+  children: ReactNode
 }): JSX.Element {
   return (
     <div>
@@ -137,24 +130,39 @@ function NavItem({
   )
 }
 
-export function Sidebar({ screen, onNavigate, counts }: Props): JSX.Element {
+export function Sidebar({ counts }: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<SectionKey>>(loadExpanded)
+  const navigate = useNavigate()
+  const location = useRouterState({
+    select: (state) => state.location,
+  })
 
-  const toggle = (key: SectionKey, firstSubItem: Screen) => {
+  const tabParse = libraryTabSchema.safeParse(location.search.tab)
+  const activeLibraryTab: LibraryTab = tabParse.success
+    ? tabParse.data
+    : 'artists'
+
+  const navigateToLibrary = (tab: LibraryTab) =>
+    void navigate({
+      to: '/library',
+      search: { tab },
+    })
+
+  const toggle = (key: SectionKey, firstSubItem: LibraryTab) => {
     setExpanded((prev) => {
       const next = new Set(prev)
       if (next.has(key)) {
         next.delete(key)
       } else {
         next.add(key)
-        onNavigate(firstSubItem)
+        navigateToLibrary(firstSubItem)
       }
       saveExpanded(next)
       return next
     })
   }
 
-  const isLibraryActive = screen.startsWith('library-')
+  const isLibraryActive = location.pathname === '/library'
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-primary border-r border-border flex flex-col h-screen">
@@ -170,7 +178,7 @@ export function Sidebar({ screen, onNavigate, counts }: Props): JSX.Element {
           label="Library"
           expanded={expanded.has('library')}
           active={isLibraryActive}
-          onToggle={() => toggle('library', 'library-artists')}
+          onToggle={() => toggle('library', 'artists')}
           icon={
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
               <path d="M2.5 3.5a.5.5 0 0 1 0-1h11a.5.5 0 0 1 0 1h-11zm2-2a.5.5 0 0 1 0-1h7a.5.5 0 0 1 0 1h-7zM0 13a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 16 13V6a1.5 1.5 0 0 0-1.5-1.5h-13A1.5 1.5 0 0 0 0 6v7zm6.258-6.437a.5.5 0 0 1 .507.013l4 2.5a.5.5 0 0 1 0 .848l-4 2.5A.5.5 0 0 1 6 12V7a.5.5 0 0 1 .258-.437z" />
@@ -179,26 +187,26 @@ export function Sidebar({ screen, onNavigate, counts }: Props): JSX.Element {
         >
           <NavSubItem
             label="Artists"
-            active={screen === 'library-artists'}
-            onClick={() => onNavigate('library-artists')}
+            active={isLibraryActive && activeLibraryTab === 'artists'}
+            onClick={() => navigateToLibrary('artists')}
           />
           <NavSubItem
             label="Albums"
-            active={screen === 'library-albums'}
-            onClick={() => onNavigate('library-albums')}
+            active={isLibraryActive && activeLibraryTab === 'albums'}
+            onClick={() => navigateToLibrary('albums')}
           />
           <NavSubItem
             label="Songs"
-            active={screen === 'library-songs'}
-            onClick={() => onNavigate('library-songs')}
+            active={isLibraryActive && activeLibraryTab === 'songs'}
+            onClick={() => navigateToLibrary('songs')}
           />
         </NavSection>
 
         <NavItem
           label="Sync"
-          active={screen === 'sync'}
+          active={location.pathname === '/sync'}
           badge={counts.inProgress}
-          onClick={() => onNavigate('sync')}
+          onClick={() => void navigate({ to: '/sync' })}
           icon={
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
               <path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z" />
@@ -212,8 +220,8 @@ export function Sidebar({ screen, onNavigate, counts }: Props): JSX.Element {
 
         <NavItem
           label="Settings"
-          active={screen === 'settings'}
-          onClick={() => onNavigate('settings')}
+          active={location.pathname === '/settings'}
+          onClick={() => void navigate({ to: '/settings' })}
           icon={
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z" />

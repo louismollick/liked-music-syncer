@@ -16,6 +16,7 @@ interface Props {
   artists: LikedArtistView[]
   selectedIds: string[]
   selectionEnabled: boolean
+  isActive?: boolean
   onArtistClick: (artist: LikedArtistView) => void
   onToggleFavorite: (artist: LikedArtistView) => void
   scrollElement?: HTMLDivElement | null
@@ -28,6 +29,7 @@ export function ArtistGrid({
   artists,
   selectedIds,
   selectionEnabled,
+  isActive = true,
   onArtistClick,
   onToggleFavorite,
   scrollElement,
@@ -55,19 +57,29 @@ export function ArtistGrid({
   })
 
   useEffect(() => {
-    if (shouldVirtualize) {
+    if (isActive && shouldVirtualize) {
       void rowHeight
       virtualizer.measure()
     }
-  }, [rowHeight, shouldVirtualize, virtualizer])
+  }, [isActive, rowHeight, shouldVirtualize, virtualizer])
 
   const virtualRows = virtualizer.getVirtualItems()
 
   useEffect(() => {
-    if (artists.length > 0 && (!shouldVirtualize || virtualRows.length > 0)) {
+    if (
+      isActive &&
+      artists.length > 0 &&
+      (!shouldVirtualize || virtualRows.length > 0)
+    ) {
       onInitialRender?.()
     }
-  }, [artists.length, onInitialRender, shouldVirtualize, virtualRows.length])
+  }, [
+    artists.length,
+    isActive,
+    onInitialRender,
+    shouldVirtualize,
+    virtualRows.length,
+  ])
 
   if (artists.length === 0) {
     return (

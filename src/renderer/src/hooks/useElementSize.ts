@@ -24,12 +24,16 @@ export function useElementSize<T extends HTMLElement>(
       const nextHeight = element.clientHeight
 
       setSize((current) =>
-        current.width === nextWidth && current.height === nextHeight
+        nextWidth === 0 &&
+        nextHeight === 0 &&
+        (current.width > 0 || current.height > 0)
           ? current
-          : {
-              width: nextWidth,
-              height: nextHeight,
-            }
+          : current.width === nextWidth && current.height === nextHeight
+            ? current
+            : {
+                width: nextWidth,
+                height: nextHeight,
+              }
       )
     }
 

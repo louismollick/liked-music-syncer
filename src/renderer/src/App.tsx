@@ -1,24 +1,35 @@
 import { buildAlbumKey } from '@shared/album-key'
 import type {
+  AuthStatus,
   CommandResult,
   LibraryIndexStatus,
   LibraryTrackView,
   LikedArtistView,
+  SyncSnapshot,
 } from '@shared/contracts'
-import { type JSX, useEffect, useState } from 'react'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
+import {
+  createContext,
+  type JSX,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 import { MainLayout } from './components/layout/MainLayout'
-import type { Screen } from './components/layout/Sidebar'
-import { AlbumsView } from './components/library/AlbumsView'
-import { ArtistsView } from './components/library/ArtistsView'
 import type { AlbumGroup } from './components/library/library-utils'
-import { SongsView } from './components/library/SongsView'
-import { SettingsView } from './components/settings/SettingsView'
-import { SyncView } from './components/sync/SyncView'
-import { useAlbumGroups } from './hooks/useAlbumGroups'
 import { useArtists } from './hooks/useArtists'
 import { useSettings } from './hooks/useSettings'
 import { useSyncSnapshot } from './hooks/useSyncSnapshot'
 import { useTracks } from './hooks/useTracks'
+import {
+  type LibrarySearch,
+  LibraryViewContainer,
+  normalizeLibrarySearchInput,
+} from './routes/library'
+import { SettingsRouteComponent } from './routes/settings'
+import { SyncRouteComponent } from './routes/sync'
 
 const EMPTY_INDEX_STATUS: LibraryIndexStatus = {
   currentLocalRootUri: null,
@@ -30,22 +41,23 @@ const EMPTY_INDEX_STATUS: LibraryIndexStatus = {
   indexVersion: null,
 }
 
-const IS_DEV = import.meta.env.DEV
-
-interface ArtistFilterState {
-  artistName: string
+interface AppStateValue {
+  artists: LikedArtistView[]
+  tracks: LibraryTrackView[]
+  tracksLoaded: boolean
+  tracksRefreshing: boolean
+  snapshot: SyncSnapshot
+  libraryIndexStatus: LibraryIndexStatus
+  authStatus: AuthStatus
+  settings: ReturnType<typeof useSettings>['settings']
+  setSettings: ReturnType<typeof useSettings>['setSettings']
+  setAuthStatus: ReturnType<typeof useSettings>['setAuthStatus']
+  saveSettings: ReturnType<typeof useSettings>['save']
+  runAction: (action: Promise<CommandResult>) => Promise<void>
+  showMessage: (message: string) => void
 }
 
-interface AlbumFilterState {
-  albumKey: string
-  albumLabel: string
-}
-
-interface PendingLibraryPerf {
-  measureName: string
-  screen: Screen
-  startMark: string
-}
+const AppStateContext = createContext<AppStateValue | null>(null)
 
 function Toast({
   message,
@@ -55,8 +67,8 @@ function Toast({
   onDismiss: () => void
 }): JSX.Element {
   useEffect(() => {
-    const t = setTimeout(onDismiss, 5000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(onDismiss, 5000)
+    return () => clearTimeout(timer)
   }, [onDismiss])
 
   return (
@@ -66,241 +78,164 @@ function Toast({
   )
 }
 
-function App(): JSX.Element {
-  const [screen, setScreen] = useState<Screen>('library-artists')
+function AppPane({
+  active,
+  children,
+  scrollable = false,
+}: {
+  active: boolean
+  children: JSX.Element
+  scrollable?: boolean
+}): JSX.Element {
+  return (
+    <section
+      className={`absolute inset-0 bg-surface-primary ${scrollable ? 'overflow-auto' : 'overflow-hidden'} ${active ? 'visible pointer-events-auto z-10' : 'invisible pointer-events-none z-0'}`}
+      aria-hidden={!active}
+    >
+      {children}
+    </section>
+  )
+}
+
+export function AppShell(): JSX.Element {
+  const navigate = useNavigate()
+  const location = useRouterState({
+    select: (state) => state.location,
+  })
   const [message, setMessage] = useState('')
+  const [lastLibrarySearch, setLastLibrarySearch] = useState<LibrarySearch>(
+    () => normalizeLibrarySearchInput(location.search)
+  )
   const [libraryIndexStatus, setLibraryIndexStatus] =
     useState<LibraryIndexStatus>(EMPTY_INDEX_STATUS)
-  const [selectionEnabled, setSelectionEnabled] = useState(false)
-  const [selectedArtistIds, setSelectedArtistIds] = useState<string[]>([])
-  const [artistFilter, setArtistFilter] = useState<ArtistFilterState | null>(
-    null
-  )
-  const [albumFilter, setAlbumFilter] = useState<AlbumFilterState | null>(null)
-  const [_pendingLibraryPerf, setPendingLibraryPerf] =
-    useState<PendingLibraryPerf | null>(null)
-
   const { artists } = useArtists()
   const {
     tracks,
     loaded: tracksLoaded,
     refreshing: tracksRefreshing,
   } = useTracks()
-  const { groups: allAlbums, filterByArtist } = useAlbumGroups(tracks)
   const snapshot = useSyncSnapshot()
   const { settings, setSettings, authStatus, setAuthStatus, save } =
     useSettings()
 
   useEffect(() => {
     void window.api.library.getIndexStatus().then(setLibraryIndexStatus)
-    const unsub = window.api.library.subscribeIndexStatus(() => {
+    const unsubscribe = window.api.library.subscribeIndexStatus(() => {
       void window.api.library.getIndexStatus().then(setLibraryIndexStatus)
     })
-    return unsub
+    return unsubscribe
   }, [])
 
-  const startLibraryPerf = (nextScreen: Screen) => {
-    if (!IS_DEV || !nextScreen.startsWith('library-')) return
+  useEffect(() => {
+    if (location.pathname !== '/library') return
+    setLastLibrarySearch(normalizeLibrarySearchInput(location.search))
+  }, [location.pathname, location.search])
 
-    const view = nextScreen.replace('library-', '')
-    const startMark = `${nextScreen}-start-${performance.now()}`
-    performance.mark(startMark)
-    setPendingLibraryPerf({
-      measureName: `library-tab-switch-${view}`,
-      screen: nextScreen,
-      startMark,
-    })
-  }
-
-  const completeLibraryPerf = (screenName: Screen) => {
-    if (!IS_DEV) return
-
-    setPendingLibraryPerf((current) => {
-      if (!current || current.screen !== screenName) return current
-
-      const endMark = `${current.measureName}-end-${performance.now()}`
-      performance.mark(endMark)
-      performance.measure(current.measureName, current.startMark, endMark)
-      const entry = performance.getEntriesByName(current.measureName).at(-1)
-
-      console.info('[perf] library view committed', {
-        view: current.measureName,
-        durationMs: Math.round(entry?.duration ?? 0),
-      })
-
-      return null
-    })
-  }
-
-  const runAction = async (action: Promise<CommandResult>) => {
-    const result: CommandResult = await action.catch((err: unknown) => ({
+  const runAction = useCallback(async (action: Promise<CommandResult>) => {
+    const result: CommandResult = await action.catch((error: unknown) => ({
       ok: false,
-      message: err instanceof Error ? err.message : String(err),
+      message: error instanceof Error ? error.message : String(error),
     }))
+
     setMessage(
       result.details ? `${result.message} ${result.details}` : result.message
     )
-  }
+  }, [])
 
-  const navigateScreen = (nextScreen: Screen) => {
-    startLibraryPerf(nextScreen)
-
-    if (nextScreen.startsWith('library-') && nextScreen === 'library-artists') {
-      setArtistFilter(null)
-      setAlbumFilter(null)
-    }
-
-    setScreen(nextScreen)
-  }
-
-  const toggleArtistSelect = (artistId: string) => {
-    setSelectedArtistIds((current) =>
-      current.includes(artistId)
-        ? current.filter((id) => id !== artistId)
-        : [...current, artistId]
-    )
-  }
-
-  const openArtistAlbums = (artist: LikedArtistView) => {
-    startLibraryPerf('library-albums')
-    setArtistFilter({ artistName: artist.name })
-    setAlbumFilter(null)
-    setScreen('library-albums')
-  }
-
-  const openAlbumSongs = (album: AlbumGroup) => {
-    startLibraryPerf('library-songs')
-    setAlbumFilter({ albumKey: album.key, albumLabel: album.album })
-    setScreen('library-songs')
-  }
-
-  const onSearchArtist = (artist: LikedArtistView) => {
-    startLibraryPerf('library-albums')
-    setArtistFilter({ artistName: artist.name })
-    setAlbumFilter(null)
-    setScreen('library-albums')
-  }
-
-  const onSearchAlbum = (album: AlbumGroup) => {
-    startLibraryPerf('library-songs')
-    setAlbumFilter({ albumKey: album.key, albumLabel: album.album })
-    setArtistFilter(null)
-    setScreen('library-songs')
-  }
-
-  const onSearchSong = (track: LibraryTrackView) => {
-    startLibraryPerf('library-songs')
-    const key = buildAlbumKey(track.album, track.albumArtist)
-    setAlbumFilter({
-      albumKey: key,
-      albumLabel: track.album ?? 'Unknown Album',
+  const onSearchArtist = (artist: LikedArtistView) =>
+    void navigate({
+      to: '/library',
+      search: {
+        tab: 'albums',
+        artist: artist.name,
+      },
     })
-    setArtistFilter(null)
-    setScreen('library-songs')
-  }
 
-  const syncLikedSongs = () => onAction(window.api.sync.startLikedSongsSync())
-  const reprocessLibrary = () =>
-    onAction(window.api.sync.startLibraryReprocess())
-  const reprocessFavoriteArtists = () =>
-    onAction(window.api.sync.refreshFavoriteArtists())
-  const syncToRemote = () => onAction(window.api.sync.syncMissingToRemote())
+  const onSearchAlbum = (album: AlbumGroup) =>
+    void navigate({
+      to: '/library',
+      search: {
+        tab: 'songs',
+        albumKey: album.key,
+        albumLabel: album.album,
+      },
+    })
 
-  const onAction = runAction
+  const onSearchSong = (track: LibraryTrackView) =>
+    void navigate({
+      to: '/library',
+      search: {
+        tab: 'songs',
+        albumKey: buildAlbumKey(track.album, track.albumArtist),
+        albumLabel: track.album ?? 'Unknown Album',
+      },
+    })
+
+  const appState = useMemo<AppStateValue>(
+    () => ({
+      artists,
+      tracks,
+      tracksLoaded,
+      tracksRefreshing,
+      snapshot,
+      libraryIndexStatus,
+      authStatus,
+      settings,
+      setSettings,
+      setAuthStatus,
+      saveSettings: save,
+      runAction,
+      showMessage: setMessage,
+    }),
+    [
+      artists,
+      tracks,
+      tracksLoaded,
+      tracksRefreshing,
+      snapshot,
+      libraryIndexStatus,
+      authStatus,
+      settings,
+      setSettings,
+      setAuthStatus,
+      save,
+      runAction,
+    ]
+  )
 
   return (
-    <MainLayout
-      screen={screen}
-      onNavigate={navigateScreen}
-      counts={snapshot.counts}
-      artists={artists}
-      tracks={tracks}
-      onSearchArtist={onSearchArtist}
-      onSearchAlbum={onSearchAlbum}
-      onSearchSong={onSearchSong}
-    >
-      {screen === 'library-artists' ? (
-        <ArtistsView
-          artists={artists}
-          selectedIds={selectedArtistIds}
-          selectionEnabled={selectionEnabled}
-          libraryIndexStatus={libraryIndexStatus}
-          authStatus={authStatus}
-          onToggleSelectionMode={() =>
-            setSelectionEnabled((current) => !current)
-          }
-          onToggleSelect={toggleArtistSelect}
-          onOpenArtist={openArtistAlbums}
-          onAction={runAction}
-          onClearSelected={() => setSelectedArtistIds([])}
-          onInitialRender={() => completeLibraryPerf('library-artists')}
-        />
-      ) : null}
-
-      {screen === 'library-albums' ? (
-        <AlbumsView
-          tracks={tracks}
-          albums={
-            artistFilter ? filterByArtist(artistFilter.artistName) : allAlbums
-          }
-          tracksLoaded={tracksLoaded}
-          tracksRefreshing={tracksRefreshing}
-          artistFilter={artistFilter}
-          onOpenAlbum={openAlbumSongs}
-          onClearArtistFilter={() => setArtistFilter(null)}
-          onSyncLikedSongs={syncLikedSongs}
-          onReprocessLibrary={reprocessLibrary}
-          onReprocessFavoriteArtists={reprocessFavoriteArtists}
-          onSyncToRemote={syncToRemote}
-          onInitialRender={() => completeLibraryPerf('library-albums')}
-        />
-      ) : null}
-
-      {screen === 'library-songs' ? (
-        <SongsView
-          tracks={tracks}
-          tracksLoaded={tracksLoaded}
-          tracksRefreshing={tracksRefreshing}
-          albumFilter={albumFilter}
-          onClearAlbumFilter={() => setAlbumFilter(null)}
-          onSyncLikedSongs={syncLikedSongs}
-          onReprocessLibrary={reprocessLibrary}
-          onReprocessFavoriteArtists={reprocessFavoriteArtists}
-          onSyncToRemote={syncToRemote}
-          onInitialRender={() => completeLibraryPerf('library-songs')}
-        />
-      ) : null}
-
-      {screen === 'sync' ? (
-        <SyncView snapshot={snapshot} onAction={runAction} />
-      ) : null}
-
-      {screen === 'settings' ? (
-        <SettingsView
-          settings={settings}
-          authStatus={authStatus}
-          onChange={(partial) =>
-            setSettings((prev) => ({ ...prev, ...partial }))
-          }
-          onSave={async () => {
-            const result = await save()
-            setMessage(
-              result.details
-                ? `${result.message} ${result.details}`
-                : result.message
-            )
-            const nextAuth = await window.api.auth.getStatus()
-            setAuthStatus(nextAuth)
-          }}
-          onAction={runAction}
-        />
-      ) : null}
-
+    <AppStateContext.Provider value={appState}>
+      <MainLayout
+        counts={snapshot.counts}
+        artists={artists}
+        tracks={tracks}
+        onSearchArtist={onSearchArtist}
+        onSearchAlbum={onSearchAlbum}
+        onSearchSong={onSearchSong}
+      >
+        <div className="relative h-full overflow-hidden isolate bg-surface-primary">
+          <AppPane active={location.pathname === '/library'}>
+            <LibraryViewContainer search={lastLibrarySearch} />
+          </AppPane>
+          <AppPane active={location.pathname === '/sync'}>
+            <SyncRouteComponent />
+          </AppPane>
+          <AppPane active={location.pathname === '/settings'} scrollable>
+            <SettingsRouteComponent />
+          </AppPane>
+        </div>
+      </MainLayout>
       {message ? (
         <Toast message={message} onDismiss={() => setMessage('')} />
       ) : null}
-    </MainLayout>
+    </AppStateContext.Provider>
   )
 }
 
-export default App
+export function useAppState(): AppStateValue {
+  const value = useContext(AppStateContext)
+  if (!value) {
+    throw new Error('useAppState must be used within AppShell')
+  }
+  return value
+}

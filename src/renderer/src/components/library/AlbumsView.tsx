@@ -26,6 +26,7 @@ interface Props {
   tracksLoaded: boolean
   tracksRefreshing: boolean
   artistFilter: ArtistFilter | null
+  isActive: boolean
   onOpenAlbum: (album: AlbumGroup) => void
   onClearArtistFilter: () => void
   onSyncLikedSongs: () => void
@@ -70,7 +71,6 @@ function AlbumCard({
               src={artworkUrl}
               alt=""
               className="h-full w-full object-cover"
-              loading="lazy"
             />
           ) : (
             <AlbumPlaceholderIcon />
@@ -99,6 +99,7 @@ export function AlbumsView({
   tracksLoaded,
   tracksRefreshing,
   artistFilter,
+  isActive,
   onOpenAlbum,
   onClearArtistFilter,
   onSyncLikedSongs,
@@ -128,11 +129,11 @@ export function AlbumsView({
   })
 
   useEffect(() => {
-    if (shouldVirtualize) {
+    if (isActive && shouldVirtualize) {
       void rowHeight
       virtualizer.measure()
     }
-  }, [rowHeight, shouldVirtualize, virtualizer])
+  }, [isActive, rowHeight, shouldVirtualize, virtualizer])
 
   const virtualRows = virtualizer.getVirtualItems()
   const visibleAlbumKeys = useMemo(
@@ -156,10 +157,20 @@ export function AlbumsView({
   } = useAlbumArtwork(visibleAlbumKeys)
 
   useEffect(() => {
-    if (albums.length > 0 && (!shouldVirtualize || virtualRows.length > 0)) {
+    if (
+      isActive &&
+      albums.length > 0 &&
+      (!shouldVirtualize || virtualRows.length > 0)
+    ) {
       onInitialRender?.()
     }
-  }, [albums.length, onInitialRender, shouldVirtualize, virtualRows.length])
+  }, [
+    albums.length,
+    isActive,
+    onInitialRender,
+    shouldVirtualize,
+    virtualRows.length,
+  ])
 
   const renderedRows = shouldVirtualize
     ? virtualRows

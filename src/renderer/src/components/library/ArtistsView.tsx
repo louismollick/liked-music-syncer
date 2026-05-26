@@ -17,6 +17,7 @@ interface Props {
   selectionEnabled: boolean
   libraryIndexStatus: LibraryIndexStatus
   authStatus: AuthStatus
+  isActive: boolean
   onToggleSelectionMode: () => void
   onToggleSelect: (id: string) => void
   onOpenArtist: (artist: LikedArtistView) => void
@@ -31,6 +32,7 @@ export function ArtistsView({
   selectionEnabled,
   libraryIndexStatus,
   authStatus,
+  isActive,
   onToggleSelectionMode,
   onToggleSelect,
   onOpenArtist,
@@ -43,6 +45,8 @@ export function ArtistsView({
   const { width, height } = useElementSize(scrollRef)
 
   useEffect(() => {
+    if (!isActive) return
+
     const withPhoto = artists.filter((artist) =>
       Boolean(artist.photoUrl)
     ).length
@@ -89,7 +93,7 @@ export function ArtistsView({
         })
         imageRefreshStarted.current = false
       })
-  }, [artists, authStatus.isAuthenticated, libraryIndexStatus.ready])
+  }, [artists, authStatus.isAuthenticated, isActive, libraryIndexStatus.ready])
 
   const toggleFavorite = (artist: LikedArtistView) => {
     onAction(
@@ -153,6 +157,7 @@ export function ArtistsView({
           artists={artists}
           selectedIds={selectedIds}
           selectionEnabled={selectionEnabled}
+          isActive={isActive}
           onArtistClick={handleArtistClick}
           onToggleFavorite={toggleFavorite}
           scrollElement={scrollRef.current}

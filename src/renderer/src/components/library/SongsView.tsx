@@ -30,6 +30,7 @@ interface Props {
   tracksLoaded: boolean
   tracksRefreshing: boolean
   albumFilter: AlbumFilter | null
+  isActive: boolean
   onClearAlbumFilter: () => void
   onSyncLikedSongs: () => void
   onReprocessLibrary: () => void
@@ -128,6 +129,7 @@ export function SongsView({
   tracksLoaded,
   tracksRefreshing,
   albumFilter,
+  isActive,
   onClearAlbumFilter,
   onSyncLikedSongs,
   onReprocessLibrary,
@@ -172,17 +174,19 @@ export function SongsView({
   })
 
   useEffect(() => {
+    if (!isActive) return
+
     void height
     virtualizer.measure()
-  }, [height, virtualizer])
+  }, [height, isActive, virtualizer])
 
   const virtualRows = virtualizer.getVirtualItems()
 
   useEffect(() => {
-    if (sorted.length > 0 && virtualRows.length > 0) {
+    if (isActive && sorted.length > 0 && virtualRows.length > 0) {
       onInitialRender?.()
     }
-  }, [onInitialRender, sorted.length, virtualRows.length])
+  }, [isActive, onInitialRender, sorted.length, virtualRows.length])
 
   return (
     <div className="flex h-full flex-col p-6">

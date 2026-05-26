@@ -263,6 +263,13 @@ Use this order:
 
 This is the fastest way to debug matching and reprocess diffs before approving updates, or to apply them immediately when approvals are disabled.
 
+## Navigation
+
+- App navigation is URL-backed with hash routes: `#/library`, `#/sync`, `#/settings`.
+- Library drill-in state also lives in the URL, eg `#/library?tab=albums&artist=Radiohead` or `#/library?tab=songs&albumKey=...`.
+- Electron back/forward now restores library tab/filter state.
+- Artists, albums, and songs keep their mounted pane instances while switching library tabs, so scroll position and virtualized state persist within the library route.
+
 ## Commands
 
 Dev:
