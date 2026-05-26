@@ -1,6 +1,8 @@
 import type { LibraryTrackView } from '@shared/contracts'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { JSX } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useElementSize } from '../../hooks/useElementSize'
 import { Badge } from '../ui/Badge'
 import { FilterPill } from './FilterPill'
 import { LibraryActionButtons } from './LibraryActionButtons'
@@ -11,8 +13,12 @@ import {
   type SongSortKey,
   songSortValue,
 } from './library-utils'
+import { SONG_ROW_HEIGHT, SONG_ROW_OVERSCAN } from './virtualization'
 
 type SortDir = 'asc' | 'desc'
+
+const SONG_GRID_TEMPLATE =
+  'minmax(220px, 2fr) minmax(180px, 1.5fr) minmax(180px, 1.5fr) minmax(72px, 0.7fr) minmax(128px, 1fr) minmax(120px, 0.9fr) minmax(132px, 1fr)'
 
 interface AlbumFilter {
   albumKey: string
@@ -29,6 +35,7 @@ interface Props {
   onReprocessLibrary: () => void
   onReprocessFavoriteArtists: () => void
   onSyncToRemote: () => void
+  onInitialRender?: () => void
 }
 
 function sortTracks(
@@ -63,7 +70,7 @@ function ColHeader({
   onClick: (key: SongSortKey) => void
 }): JSX.Element {
   return (
-    <th className="text-left px-3 py-2">
+    <div className="px-3 py-2">
       <button
         type="button"
         onClick={() => onClick(sortKey)}
@@ -78,13 +85,13 @@ function ColHeader({
           <svg
             aria-hidden="true"
             viewBox="0 0 12 12"
-            className={`w-3 h-3 fill-current transition-transform ${dir === 'desc' ? 'rotate-180' : ''}`}
+            className={`h-3 w-3 fill-current transition-transform ${dir === 'desc' ? 'rotate-180' : ''}`}
           >
             <path d="M6 2l4 6H2z" />
           </svg>
         ) : null}
       </button>
-    </th>
+    </div>
   )
 }
 
@@ -126,9 +133,12 @@ export function SongsView({
   onReprocessLibrary,
   onReprocessFavoriteArtists,
   onSyncToRemote,
+  onInitialRender,
 }: Props): JSX.Element {
   const [sortKey, setSortKey] = useState<SongSortKey>('title')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const { height } = useElementSize(scrollRef)
 
   const visibleTracks = useMemo(
     () =>
@@ -143,20 +153,40 @@ export function SongsView({
   const handleSort = (key: SongSortKey) => {
     if (key === sortKey) {
       setSortDir((direction) => (direction === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortKey(key)
-      setSortDir('asc')
+      return
     }
+
+    setSortKey(key)
+    setSortDir('asc')
   }
 
   const sorted = useMemo(
     () => sortTracks(visibleTracks, sortKey, sortDir),
     [sortDir, sortKey, visibleTracks]
   )
+  const virtualizer = useVirtualizer({
+    count: sorted.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => SONG_ROW_HEIGHT,
+    overscan: SONG_ROW_OVERSCAN,
+  })
+
+  useEffect(() => {
+    void height
+    virtualizer.measure()
+  }, [height, virtualizer])
+
+  const virtualRows = virtualizer.getVirtualItems()
+
+  useEffect(() => {
+    if (sorted.length > 0 && virtualRows.length > 0) {
+      onInitialRender?.()
+    }
+  }, [onInitialRender, sorted.length, virtualRows.length])
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="flex items-center justify-between gap-4 mb-5">
+    <div className="flex h-full flex-col p-6">
+      <div className="mb-5 flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-xl font-semibold text-text-primary">Songs</h2>
@@ -167,7 +197,7 @@ export function SongsView({
               />
             ) : null}
           </div>
-          <p className="text-xs text-text-muted mt-0.5">
+          <p className="mt-0.5 text-xs text-text-muted">
             {visibleTracks.length} tracks
             {!tracksLoaded ? ' · loading library…' : ''}
             {tracksRefreshing ? ' · refreshing library…' : ''}
@@ -181,13 +211,13 @@ export function SongsView({
         />
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 min-h-0">
         {sorted.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-text-muted">
             <svg
               aria-hidden="true"
               viewBox="0 0 24 24"
-              className="w-12 h-12 fill-current mb-3 opacity-40"
+              className="mb-3 h-12 w-12 fill-current opacity-40"
             >
               <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
             </svg>
@@ -196,100 +226,115 @@ export function SongsView({
             </p>
           </div>
         ) : (
-          <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-surface-primary border-b border-border">
-              <tr>
-                <ColHeader
-                  label="Title"
-                  sortKey="title"
-                  active={sortKey === 'title'}
-                  dir={sortDir}
-                  onClick={handleSort}
-                />
-                <ColHeader
-                  label="Artist"
-                  sortKey="artist"
-                  active={sortKey === 'artist'}
-                  dir={sortDir}
-                  onClick={handleSort}
-                />
-                <ColHeader
-                  label="Album"
-                  sortKey="album"
-                  active={sortKey === 'album'}
-                  dir={sortDir}
-                  onClick={handleSort}
-                />
-                <ColHeader
-                  label="Year"
-                  sortKey="year"
-                  active={sortKey === 'year'}
-                  dir={sortDir}
-                  onClick={handleSort}
-                />
-                <ColHeader
-                  label="Lyric Type"
-                  sortKey="lyricType"
-                  active={sortKey === 'lyricType'}
-                  dir={sortDir}
-                  onClick={handleSort}
-                />
-                <ColHeader
-                  label="Language"
-                  sortKey="language"
-                  active={sortKey === 'language'}
-                  dir={sortDir}
-                  onClick={handleSort}
-                />
-                <ColHeader
-                  label="Remote Status"
-                  sortKey="remoteStatus"
-                  active={sortKey === 'remoteStatus'}
-                  dir={sortDir}
-                  onClick={handleSort}
-                />
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((track) => {
-                const lyricType = lyricTypeLabel(track.lyricsStatus)
-                const remoteStatus = remoteStatusLabel(track)
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <div
+              className="grid shrink-0 border-b border-border bg-surface-primary"
+              style={{ gridTemplateColumns: SONG_GRID_TEMPLATE }}
+            >
+              <ColHeader
+                label="Title"
+                sortKey="title"
+                active={sortKey === 'title'}
+                dir={sortDir}
+                onClick={handleSort}
+              />
+              <ColHeader
+                label="Artist"
+                sortKey="artist"
+                active={sortKey === 'artist'}
+                dir={sortDir}
+                onClick={handleSort}
+              />
+              <ColHeader
+                label="Album"
+                sortKey="album"
+                active={sortKey === 'album'}
+                dir={sortDir}
+                onClick={handleSort}
+              />
+              <ColHeader
+                label="Year"
+                sortKey="year"
+                active={sortKey === 'year'}
+                dir={sortDir}
+                onClick={handleSort}
+              />
+              <ColHeader
+                label="Lyric Type"
+                sortKey="lyricType"
+                active={sortKey === 'lyricType'}
+                dir={sortDir}
+                onClick={handleSort}
+              />
+              <ColHeader
+                label="Language"
+                sortKey="language"
+                active={sortKey === 'language'}
+                dir={sortDir}
+                onClick={handleSort}
+              />
+              <ColHeader
+                label="Remote Status"
+                sortKey="remoteStatus"
+                active={sortKey === 'remoteStatus'}
+                dir={sortDir}
+                onClick={handleSort}
+              />
+            </div>
 
-                return (
-                  <tr
-                    key={track.id}
-                    className="border-b border-border/50 hover:bg-surface-secondary/50 transition-colors"
-                  >
-                    <td className="px-3 py-2.5 text-sm text-text-primary truncate max-w-[220px]">
-                      {track.title ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-text-secondary truncate max-w-[180px]">
-                      {track.artist ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-text-secondary truncate max-w-[180px]">
-                      {track.album ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-text-muted tabular-nums">
-                      {track.year ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-text-secondary">
-                      <Badge variant={lyricTypeVariant(lyricType)}>
-                        {lyricType}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-text-secondary">
-                      {track.language ?? '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-sm text-text-secondary">
-                      <Badge variant={remoteStatusVariant(remoteStatus)}>
-                        {remoteStatus}
-                      </Badge>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+            <div ref={scrollRef} className="flex-1 overflow-auto">
+              <div
+                className="relative min-w-[1120px]"
+                style={{ height: virtualizer.getTotalSize() }}
+              >
+                {virtualRows.map((virtualRow) => {
+                  const track = sorted[virtualRow.index]
+                  if (!track) return null
+
+                  const lyricType = lyricTypeLabel(track.lyricsStatus)
+                  const remoteStatus = remoteStatusLabel(track)
+
+                  return (
+                    <div
+                      key={track.id}
+                      className="absolute left-0 top-0 grid w-full border-b border-border/50 transition-colors hover:bg-surface-secondary/50"
+                      style={{
+                        gridTemplateColumns: SONG_GRID_TEMPLATE,
+                        height: SONG_ROW_HEIGHT,
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                    >
+                      <div className="truncate px-3 py-2.5 text-sm text-text-primary">
+                        {track.title ?? '—'}
+                      </div>
+                      <div className="truncate px-3 py-2.5 text-sm text-text-secondary">
+                        {track.artist ?? '—'}
+                      </div>
+                      <div className="truncate px-3 py-2.5 text-sm text-text-secondary">
+                        {track.album ?? '—'}
+                      </div>
+                      <div className="px-3 py-2.5 text-sm tabular-nums text-text-muted">
+                        {track.year ?? '—'}
+                      </div>
+                      <div className="px-3 py-2.5 text-sm text-text-secondary">
+                        <Badge variant={lyricTypeVariant(lyricType)}>
+                          {lyricType}
+                        </Badge>
+                      </div>
+                      <div className="px-3 py-2.5 text-sm text-text-secondary">
+                        {track.language ?? '—'}
+                      </div>
+                      <div className="px-3 py-2.5 text-sm text-text-secondary">
+                        <Badge variant={remoteStatusVariant(remoteStatus)}>
+                          {remoteStatus}
+                        </Badge>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

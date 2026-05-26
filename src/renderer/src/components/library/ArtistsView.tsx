@@ -7,6 +7,7 @@ import type {
 } from '@shared/contracts'
 import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
+import { useElementSize } from '../../hooks/useElementSize'
 import { ArtistGrid } from './ArtistGrid'
 import { LibraryActionButtons } from './LibraryActionButtons'
 
@@ -21,6 +22,7 @@ interface Props {
   onOpenArtist: (artist: LikedArtistView) => void
   onAction: (action: Promise<CommandResult>) => void
   onClearSelected: () => void
+  onInitialRender?: () => void
 }
 
 export function ArtistsView({
@@ -34,8 +36,11 @@ export function ArtistsView({
   onOpenArtist,
   onAction,
   onClearSelected,
+  onInitialRender,
 }: Props): JSX.Element {
   const imageRefreshStarted = useRef(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const { width, height } = useElementSize(scrollRef)
 
   useEffect(() => {
     const withPhoto = artists.filter((artist) =>
@@ -143,13 +148,17 @@ export function ArtistsView({
         />
       </div>
 
-      <div className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto">
         <ArtistGrid
           artists={artists}
           selectedIds={selectedIds}
           selectionEnabled={selectionEnabled}
           onArtistClick={handleArtistClick}
           onToggleFavorite={toggleFavorite}
+          scrollElement={scrollRef.current}
+          containerWidth={width}
+          containerHeight={height}
+          onInitialRender={onInitialRender}
         />
       </div>
     </div>
