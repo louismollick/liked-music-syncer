@@ -142,6 +142,7 @@ def _tag_fingerprint(metadata: dict[str, Any]) -> str:
             "soundcloud_track_id",
             "resolved_youtube_music_track_id",
             "source_origin",
+            "resolution_method",
             "catalog_release_browse_id",
             "catalog_release_title",
             "catalog_release_kind",
@@ -202,6 +203,7 @@ def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]
     spotify_track_id = getattr(media, "lms_spotify_track_id", None) or None
     soundcloud_track_id = getattr(media, "lms_soundcloud_track_id", None) or None
     source_origin = getattr(media, "lms_source_origin", None) or None
+    resolution_method = getattr(media, "lms_resolution_method", None) or None
     catalog_release_browse_id = getattr(media, "lms_catalog_release_browse_id", None) or None
     catalog_release_title = getattr(media, "lms_catalog_release_title", None) or None
     catalog_release_kind = getattr(media, "lms_catalog_release_kind", None) or None
@@ -219,6 +221,7 @@ def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]
         "soundcloud_track_id": soundcloud_track_id,
         "resolved_youtube_music_track_id": resolved_youtube_music_track_id,
         "source_origin": source_origin,
+        "resolution_method": resolution_method,
         "catalog_release_browse_id": catalog_release_browse_id,
         "catalog_release_title": catalog_release_title,
         "catalog_release_kind": catalog_release_kind,

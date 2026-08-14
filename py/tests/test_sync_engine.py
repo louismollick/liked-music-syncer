@@ -5,9 +5,11 @@ from typing import Any
 
 import pytest
 
+import liked_music_syncer.sync_engine as sync_engine_module
 from liked_music_syncer.album_identity import UNKNOWN_ALBUM_NAME
 from liked_music_syncer.models import SyncConfig, SyncItemState
 from liked_music_syncer.sync_engine import (
+    _apply_album_metadata,
     _canonicalize_track_title,
     _build_yt_dlp_options,
     _build_ytmusic_client,
@@ -15,6 +17,8 @@ from liked_music_syncer.sync_engine import (
     _dedupe_tracks,
     _discover_artist_catalog_tracks,
     _download_audio,
+    _get_watch_playlist_resilient,
+    _musicbrainz_genres,
     _musicbrainz_enrich,
     _resolve_best_lyrics,
     run_sync,
@@ -23,6 +27,15 @@ from liked_music_syncer.sync_engine import (
     _skip_reason_for_existing_signature,
     _spotify_fetch_lyrics,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_musicbrainz_test_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        sync_engine_module, "MUSICBRAINZ_REQUEST_INTERVAL_SECONDS", 0.0
+    )
+    sync_engine_module._MUSICBRAINZ_GENRE_CACHE.clear()
+    sync_engine_module._MUSICBRAINZ_LAST_REQUEST_AT = 0.0
 
 
 def _config(tmp_path: Path) -> SyncConfig:
@@ -755,7 +768,7 @@ def test_resolve_exact_catalog_promotes_omv_to_catalog_song() -> None:
         ) -> list[dict[str, object]]:
             assert query == "blackout yeti let you notice"
             assert filter == "songs"
-            assert limit == 5
+            assert limit == 20
             assert ignore_spelling is False
             return [
                 {
@@ -834,7 +847,7 @@ def test_resolve_exact_catalog_strips_omv_title_noise_and_matches_bilingual_song
         ) -> list[dict[str, object]]:
             assert query == "月光 Blurred City Lights"
             assert filter == "songs"
-            assert limit == 5
+            assert limit == 20
             assert ignore_spelling is False
             return [
                 {
@@ -961,7 +974,7 @@ def test_resolve_exact_catalog_rejects_loose_duration_match() -> None:
                     "artists": [{"name": "yeti let you notice", "id": "artist1"}],
                     "album": {"name": "blackout", "id": "album123"},
                     "videoType": "MUSIC_VIDEO_TYPE_ATV",
-                    "duration": "3:20",
+                        "duration": "4:15",
                 }
             ]
 
@@ -976,6 +989,208 @@ def test_resolve_exact_catalog_rejects_loose_duration_match() -> None:
     assert item.resolution_method == "watch_playlist"
     assert item.selected_source_url is None
     assert item.album == UNKNOWN_ALBUM_NAME
+
+
+def test_watch_playlist_falls_back_when_ytmusicapi_tab_parser_breaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            raise KeyError("endpoint")
+
+    expected = {
+        "tracks": [{"videoId": "source123", "title": "Song"}],
+        "lyrics": "MPLYt_lyrics",
+    }
+    monkeypatch.setattr(
+        sync_engine_module,
+        "_raw_watch_playlist",
+        lambda ytmusic, video_id: expected,
+    )
+
+    assert _get_watch_playlist_resilient(FakeYTMusic(), "source123") == expected
+
+
+def test_resolve_catalog_searches_label_ugc_title_artist_pair() -> None:
+    search_queries: list[str] = []
+
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            if videoId == "source123":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "source123",
+                            "title": "BETWEEN THE BURIED AND ME - Voice of Trespass (Official Music Video)",
+                            "artists": [{"name": "SUMERIAN"}],
+                            "videoType": "MUSIC_VIDEO_TYPE_UGC",
+                            "length": "7:58",
+                        }
+                    ],
+                    "lyrics": None,
+                }
+            return {
+                "tracks": [
+                    {
+                        "videoId": "catalog456",
+                        "title": "Voice Of Trespass",
+                        "artists": [{"name": "Between The Buried And Me"}],
+                        "album": {"name": "Automata II", "id": "album123"},
+                        "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                        "length": "7:57",
+                    }
+                ],
+                "lyrics": "MPLYt_catalog",
+            }
+
+        def search(self, query: str, **kwargs: object) -> list[dict[str, object]]:
+            search_queries.append(query)
+            if query == "Voice of Trespass BETWEEN THE BURIED AND ME":
+                return [
+                    {
+                        "videoId": "catalog456",
+                        "title": "Voice Of Trespass",
+                        "artists": [{"name": "Between The Buried And Me"}],
+                        "album": {"name": "Automata II", "id": "album123"},
+                        "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                        "duration": "7:57",
+                    }
+                ]
+            return []
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            return {
+                "title": "Automata II",
+                "artists": [{"name": "Between The Buried And Me"}],
+                "year": "2018",
+                "tracks": [{"videoId": "catalog456", "title": "Voice Of Trespass"}],
+            }
+
+    item = _item(
+        title="BETWEEN THE BURIED AND ME - Voice of Trespass (Official Music Video)",
+        artist="SUMERIAN",
+    )
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert "Voice of Trespass BETWEEN THE BURIED AND ME" in search_queries
+    assert lyrics_browse_id == "MPLYt_catalog"
+    assert item.resolution_method == "search_song_exact"
+    assert item.album == "Automata II"
+    assert item.artist == "Between The Buried And Me"
+
+
+def test_resolve_catalog_rejects_original_song_for_cover_upload() -> None:
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            return {
+                "tracks": [
+                    {
+                        "videoId": "source123",
+                        "title": "GLAY『誘惑』弾いてみた【そこに鳴る軽音部】（cover）",
+                        "artists": [{"name": "Sokoninaru"}],
+                        "videoType": "MUSIC_VIDEO_TYPE_UGC",
+                        "length": "4:18",
+                    }
+                ],
+                "lyrics": None,
+            }
+
+        def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "videoId": "catalog456",
+                    "title": "誘惑",
+                    "artists": [{"name": "GLAY"}],
+                    "album": {"name": "pure soul", "id": "album123"},
+                    "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                    "duration": "4:17",
+                }
+            ]
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            raise AssertionError("version mismatch must be rejected before album lookup")
+
+    item = _item(
+        title="GLAY『誘惑』弾いてみた【そこに鳴る軽音部】（cover）",
+        artist="Sokoninaru",
+    )
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert lyrics_browse_id is None
+    assert item.resolution_method == "watch_playlist"
+    assert item.album == UNKNOWN_ALBUM_NAME
+
+
+def test_album_metadata_requires_verified_track_membership() -> None:
+    class FakeYTMusic:
+        def get_album(self, browseId: str) -> dict[str, object]:
+            return {
+                "title": "Wrong Album",
+                "artists": [{"name": "Artist"}],
+                "tracks": [
+                    {"videoId": "other1", "title": "Other One"},
+                    {"videoId": "other2", "title": "Other Two"},
+                ],
+            }
+
+    item = _item(title="Song", artist="Artist")
+
+    matched = _apply_album_metadata(
+        FakeYTMusic(), item, "album123", ["catalog456"], "Song"
+    )
+
+    assert matched is False
+    assert item.album == UNKNOWN_ALBUM_NAME
+    assert item.catalog_release_browse_id is None
+
+
+def test_candidate_watch_failure_does_not_discard_search_album_metadata() -> None:
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            if videoId == "source123":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "source123",
+                            "title": "Song",
+                            "artists": [{"name": "Artist", "id": "artist1"}],
+                            "videoType": "MUSIC_VIDEO_TYPE_OMV",
+                            "length": "3:00",
+                        }
+                    ],
+                    "lyrics": None,
+                }
+            raise RuntimeError("lyrics/related watch response is unavailable")
+
+        def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            return [
+                {
+                    "videoId": "catalog456",
+                    "title": "Song",
+                    "artists": [{"name": "Artist", "id": "artist1"}],
+                    "album": {"name": "Album", "id": "album123"},
+                    "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                    "duration": "3:00",
+                }
+            ]
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            return {
+                "title": "Album",
+                "artists": [{"name": "Artist"}],
+                "tracks": [{"videoId": "catalog456", "title": "Song"}],
+            }
+
+    item = _item(title="Song", artist="Artist")
+
+    lyrics_browse_id = _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert lyrics_browse_id is None
+    assert item.resolution_method == "search_song_exact"
+    assert item.album == "Album"
+    assert item.resolved_youtube_music_track_id == "catalog456"
 
 
 def test_canonicalize_track_title_handles_unwrapped_mv_cases() -> None:
@@ -1162,9 +1377,12 @@ def test_musicbrainz_enrich_uses_title_variants_and_stable_release_selection(
             return self.payload
 
     def fake_get(url: str, *, params: dict[str, str], headers: dict[str, str], timeout: float) -> FakeResponse:
-        assert url == "https://musicbrainz.org/ws/2/recording/"
         assert headers["User-Agent"] == "liked-music-syncer/0.1.0"
         assert timeout == 10.0
+
+        if url != "https://musicbrainz.org/ws/2/recording/":
+            assert params == {"inc": "genres", "fmt": "json"}
+            return FakeResponse({"genres": []})
 
         query = params["query"]
         if query == 'recording:"ハイウェイ - highway" AND artist:"kurayamisaka"':
@@ -1223,6 +1441,86 @@ def test_musicbrainz_enrich_uses_title_variants_and_stable_release_selection(
     assert item.mb_releasegroup_id == "group123"
     assert item.date == "2025-09-10"
     assert item.isrc == "JPL542500741"
+
+
+def test_musicbrainz_enrich_adds_ranked_release_group_genres_without_overwriting_yt_album(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self.payload
+
+    urls: list[str] = []
+
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        urls.append(url)
+        if url == "https://musicbrainz.org/ws/2/recording/":
+            return FakeResponse(
+                {
+                    "recordings": [
+                        {
+                            "id": "genre-recording",
+                            "title": "evergreen",
+                            "score": 100,
+                            "artist-credit": [{"name": "kurayamisaka"}],
+                            "releases": [
+                                {
+                                    "id": "genre-release",
+                                    "title": "YT Album",
+                                    "release-group": {"id": "genre-group"},
+                                }
+                            ],
+                        }
+                    ]
+                }
+            )
+        if url == "https://musicbrainz.org/ws/2/release-group/genre-group":
+            return FakeResponse(
+                {
+                    "genres": [
+                        {"name": "indie rock", "count": 4},
+                        {"name": "shoegaze", "count": 8},
+                        {"name": "alternative rock", "count": 2},
+                        {"name": "dream pop", "count": 1},
+                        {"name": "noise", "count": -1},
+                    ]
+                }
+            )
+        raise AssertionError(url)
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.httpx.get", fake_get)
+
+    item = _item(title="evergreen", artist="kurayamisaka")
+    item.album = "YT Album"
+    item.resolution_method = "album_exact"
+
+    _musicbrainz_enrich(item)
+
+    assert item.album == "YT Album"
+    assert item.genre == "shoegaze; indie rock; alternative rock"
+    assert urls == [
+        "https://musicbrainz.org/ws/2/recording/",
+        "https://musicbrainz.org/ws/2/release-group/genre-group",
+    ]
+
+
+def test_musicbrainz_genres_ignores_unvoted_and_malformed_payload_values() -> None:
+    assert _musicbrainz_genres(
+        {
+            "genres": [
+                {"name": "rock", "count": "2"},
+                {"name": "pop", "count": 0},
+                {"name": "shoegaze", "count": 99},
+                {"name": "metal", "count": None},
+            ]
+        }
+    ) == ["shoegaze", "rock"]
 
 
 def test_resolve_best_lyrics_prefers_spotify_synced_over_yt_plain(

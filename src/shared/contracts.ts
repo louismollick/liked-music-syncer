@@ -36,10 +36,12 @@ export type YtDlpCookiesBrowser =
   | 'chromium'
   | 'edge'
   | 'firefox'
+  | 'helium'
   | 'opera'
   | 'safari'
   | 'vivaldi'
   | 'whale'
+  | 'zen'
 
 export type SyncJobKind =
   | 'liked_songs_sync'

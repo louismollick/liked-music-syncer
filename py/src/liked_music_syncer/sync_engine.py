@@ -11,6 +11,7 @@ import tempfile
 import time
 import traceback
 import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -20,9 +21,10 @@ from yt_dlp import YoutubeDL
 from yt_dlp.globals import all_plugins_loaded, plugin_dirs
 from yt_dlp.plugins import load_all_plugins
 from ytmusicapi import YTMusic
+from ytmusicapi.parsers.watch import parse_watch_playlist
 
 from .album_identity import UNKNOWN_ALBUM_NAME, canonical_album_name, is_unknown_album_value
-from .auth import build_browser_auth_client
+from .auth import build_browser_auth_client, resolve_yt_dlp_cookie_source
 from .cover_art import make_square_cover
 from .json_io import emit_event
 from .lyrics import classify_lyrics_text, is_zero_timestamp_only_lrc, lyrics_sidecar_text
@@ -51,6 +53,27 @@ _SPOTIFY_CACHE: dict[str, Any] = {
     "secret_version": None,
     "secret_bytes": None,
     "secrets_fetched_at": 0,
+}
+MUSICBRAINZ_GENRE_LIMIT = 3
+MUSICBRAINZ_REQUEST_INTERVAL_SECONDS = 1.0
+_MUSICBRAINZ_GENRE_CACHE: dict[tuple[str, str], tuple[str, ...]] = {}
+_MUSICBRAINZ_LAST_REQUEST_AT = 0.0
+CATALOG_SEARCH_RESULT_LIMIT = 20
+CATALOG_SEARCH_QUERY_LIMIT = 6
+CATALOG_MV_DURATION_TOLERANCE_SECONDS = 60
+CATALOG_DEFAULT_DURATION_TOLERANCE_SECONDS = 45
+_VERSION_MARKER_PATTERNS: dict[str, re.Pattern[str]] = {
+    "cover": re.compile(r"\bcover\b|カバー|弾いてみた|歌ってみた", re.IGNORECASE),
+    "live": re.compile(r"\blive\b|ライブ", re.IGNORECASE),
+    "remix": re.compile(r"\bremix\b|リミックス", re.IGNORECASE),
+    "edit": re.compile(r"\bedit\b", re.IGNORECASE),
+    "acoustic": re.compile(r"\bacoustic\b|アコースティック", re.IGNORECASE),
+    "instrumental": re.compile(r"\binstrumental\b|インスト(?:ゥルメンタル)?", re.IGNORECASE),
+    "demo": re.compile(r"\bdemo\b|デモ", re.IGNORECASE),
+    "karaoke": re.compile(r"\bkaraoke\b|カラオケ", re.IGNORECASE),
+    "short": re.compile(r"\bshort\s*(?:ver(?:sion)?\.?)?\b|ショート", re.IGNORECASE),
+    "sped_up": re.compile(r"\bsped\s*up\b", re.IGNORECASE),
+    "slowed": re.compile(r"\bslowed\b", re.IGNORECASE),
 }
 
 
@@ -296,9 +319,18 @@ def _strip_title_adornments(value: str) -> str:
     cleaned = value.strip()
     while True:
         updated = re.sub(
+            r"[\(\[\{（【][^)\]\}）】]*"
+            r"(?:official|music\s*video|official\s*mv|mv|pv|lyrics?|audio|"
+            r"visualizer|visualiser|hd|hq|4k|sub(?:bed|titles?)?)"
+            r"[^)\]\}）】]*[\)\]\}）】]",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        updated = re.sub(
             r"\s*[\(\[\{（【][^)\]\}）】]*(?:official|music video|official video|official mv|mv|audio|visualizer|lyrics?)[^)\]\}）】]*[\)\]\}）】]\s*$",
             "",
-            cleaned,
+            updated,
             flags=re.IGNORECASE,
         ).strip()
         updated = re.sub(
@@ -314,8 +346,8 @@ def _strip_title_adornments(value: str) -> str:
             flags=re.IGNORECASE,
         ).strip()
         if updated == cleaned:
-            return updated
-        cleaned = updated
+            return re.sub(r"\s+", " ", updated).strip()
+        cleaned = re.sub(r"\s+", " ", updated).strip()
 
 
 def _canonicalize_track_title(value: str, artist_names: list[str]) -> str:
@@ -357,6 +389,116 @@ def _title_variants(value: str, artist_names: list[str]) -> set[str]:
             variants.add(normalized)
     variants.discard("")
     return variants
+
+
+def _clean_channel_artist(value: str) -> str:
+    cleaned = re.sub(
+        r"\s*(?:official(?:\s+youtube)?(?:\s+channel)?|topic|vevo)\s*$",
+        "",
+        value.strip(),
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned or value.strip()
+
+
+def _artist_title_identities(
+    item: SyncItemState,
+    primary: dict[str, Any],
+) -> list[tuple[str, str, str]]:
+    watch_artists = _string_list_names(primary.get("artists"))
+    known_artists = [*watch_artists, item.artist]
+    identities: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(title: str, artist: str, method: str) -> None:
+        cleaned_title = title.strip(" \t-_—–:|/『』「」\"'“”")
+        cleaned_artist = _clean_channel_artist(artist)
+        key = (_normalize_text(cleaned_title), _normalize_text(cleaned_artist))
+        if not key[0] or not key[1] or key in seen:
+            return
+        seen.add(key)
+        identities.append((cleaned_title, cleaned_artist, method))
+
+    for artist in known_artists:
+        if artist:
+            add(_canonicalize_track_title(item.title, [artist]), artist, "source")
+
+    for title in (item.title,):
+        split = re.split(
+            r"\s+(?:[-–—|／/]|_{1,2})\s+|\s*[-–—|／/]\s*(?=[『「【])",
+            title,
+            maxsplit=1,
+        )
+        if len(split) == 2:
+            parsed_artist = split[0].strip()
+            parsed_title = _canonicalize_track_title(split[1], [parsed_artist])
+            add(parsed_title, parsed_artist, "parsed_separator")
+
+        quoted = re.match(r"^(.+?)[『「](.+?)[』」]", title)
+        if quoted:
+            add(quoted.group(2), quoted.group(1), "parsed_quote")
+
+        for quoted_title in re.findall(r"[\"“”『「](.+?)[\"“”』」]", title):
+            for artist in known_artists:
+                if artist:
+                    add(quoted_title, artist, "quoted_title")
+
+    return identities
+
+
+def _text_similarity(left: str | None, right: str | None) -> float:
+    normalized_left = _normalize_text(left or "")
+    normalized_right = _normalize_text(right or "")
+    if not normalized_left or not normalized_right:
+        return 0.0
+    if normalized_left == normalized_right:
+        return 1.0
+    if normalized_left in normalized_right or normalized_right in normalized_left:
+        length_ratio = min(len(normalized_left), len(normalized_right)) / max(
+            len(normalized_left), len(normalized_right)
+        )
+        return 0.9 + (0.1 * length_ratio)
+    return SequenceMatcher(None, normalized_left, normalized_right).ratio()
+
+
+def _version_markers(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {
+        marker
+        for marker, pattern in _VERSION_MARKER_PATTERNS.items()
+        if pattern.search(value)
+    }
+
+
+def _version_compatible(
+    source_title: str,
+    source_artist: str,
+    candidate: dict[str, Any],
+) -> bool:
+    source_markers = _version_markers(source_title)
+    if not source_markers:
+        return True
+
+    candidate_artists = _string_list_names(candidate.get("artists"))
+    candidate_text = " ".join(
+        [
+            str(candidate.get("title") or ""),
+            str(_album_info(candidate.get("album")).get("name") or ""),
+        ]
+    )
+    candidate_markers = _version_markers(candidate_text)
+    missing = source_markers - candidate_markers
+    if not missing:
+        return True
+
+    artist_matches = any(
+        _text_similarity(candidate_artist, source_artist) >= 0.88
+        for candidate_artist in candidate_artists
+    )
+    # Catalog releases by the same cover/remix performer often omit the version
+    # word from the title. Other version mismatches must remain unresolved.
+    return missing <= {"cover"} and artist_matches
 
 
 def _parse_duration_seconds(value: Any) -> int | None:
@@ -414,6 +556,103 @@ def _is_omv(video_type: str | None) -> bool:
     return video_type == "MUSIC_VIDEO_TYPE_OMV"
 
 
+def _walk_dicts(value: Any) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        found.append(value)
+        for child in value.values():
+            found.extend(_walk_dicts(child))
+    elif isinstance(value, list):
+        for child in value:
+            found.extend(_walk_dicts(child))
+    return found
+
+
+def _raw_watch_playlist(ytmusic: YTMusic, video_id: str) -> dict[str, Any]:
+    body = {
+        "enablePersistentPlaylistPanel": True,
+        "isAudioOnly": True,
+        "tunerSettingValue": "AUTOMIX_SETTING_NORMAL",
+        "videoId": video_id,
+        "playlistId": f"RDAMVM{video_id}",
+        "watchEndpointMusicSupportedConfigs": {
+            "watchEndpointMusicConfig": {
+                "hasPersistentPlaylistPanel": True,
+                "musicVideoType": "MUSIC_VIDEO_TYPE_ATV",
+            }
+        },
+    }
+    response = ytmusic._send_request("next", body)
+    playlist_panel = next(
+        (
+            node["playlistPanelRenderer"]
+            for node in _walk_dicts(response)
+            if isinstance(node.get("playlistPanelRenderer"), dict)
+        ),
+        None,
+    )
+    contents = playlist_panel.get("contents", []) if playlist_panel else []
+    tracks = parse_watch_playlist(contents) if isinstance(contents, list) else []
+    lyrics = next(
+        (
+            browse_id
+            for node in _walk_dicts(response)
+            if isinstance(
+                browse_id := node.get("browseEndpoint", {}).get("browseId")
+                if isinstance(node.get("browseEndpoint"), dict)
+                else None,
+                str,
+            )
+            and browse_id.startswith("MPLYt_")
+        ),
+        None,
+    )
+    return {"tracks": tracks, "lyrics": lyrics}
+
+
+def _song_metadata_track(ytmusic: YTMusic, video_id: str) -> dict[str, Any]:
+    payload = ytmusic.get_song(video_id)
+    details = payload.get("videoDetails") if isinstance(payload, dict) else None
+    if not isinstance(details, dict):
+        return {}
+    author = details.get("author")
+    thumbnails = details.get("thumbnail", {}).get("thumbnails")
+    return {
+        "videoId": details.get("videoId") or video_id,
+        "title": details.get("title"),
+        "length": details.get("lengthSeconds"),
+        "videoType": details.get("musicVideoType"),
+        "artists": [{"name": author, "id": details.get("channelId")}]
+        if isinstance(author, str) and author
+        else [],
+        "thumbnails": thumbnails if isinstance(thumbnails, list) else [],
+    }
+
+
+def _get_watch_playlist_resilient(
+    ytmusic: YTMusic,
+    video_id: str,
+) -> dict[str, Any]:
+    try:
+        watch = ytmusic.get_watch_playlist(videoId=video_id, limit=1)
+        if isinstance(watch, dict) and _extract_tracks(watch):
+            return watch
+    except (KeyError, IndexError, TypeError):
+        # ytmusicapi <=1.12 assumes every watch tab has a browse endpoint.
+        # Current responses may include Comments or Related tabs without one.
+        pass
+
+    try:
+        watch = _raw_watch_playlist(ytmusic, video_id)
+        if _extract_tracks(watch):
+            return watch
+    except Exception:  # noqa: BLE001
+        pass
+
+    track = _song_metadata_track(ytmusic, video_id)
+    return {"tracks": [track] if track else [], "lyrics": None}
+
+
 def _apply_watch_metadata(item: SyncItemState, track: dict[str, Any]) -> None:
     item.metadata_matched = True
     item.title = str(track.get("title") or item.title)
@@ -440,6 +679,34 @@ def _apply_album_metadata(
     if not isinstance(album, dict):
         return False
 
+    album_tracks = _extract_tracks(album)
+    normalized_fallback_title = _normalize_text(fallback_title)
+    matched_track: dict[str, Any] | None = None
+    matched_track_number: int | None = None
+
+    for preferred_video_id in preferred_video_ids:
+        for track_index, track in enumerate(album_tracks, start=1):
+            if str(track.get("videoId")) != preferred_video_id:
+                continue
+            matched_track = track
+            matched_track_number = track_index
+            break
+        if matched_track is not None:
+            break
+
+    if matched_track is None and len(album_tracks) == 1:
+        only_track = album_tracks[0]
+        track_title = only_track.get("title")
+        if (
+            isinstance(track_title, str)
+            and _text_similarity(track_title, normalized_fallback_title) >= 0.96
+        ):
+            matched_track = only_track
+            matched_track_number = 1
+
+    if matched_track is None:
+        return False
+
     item.album = str(album.get("title") or item.album)
     item.catalog_release_browse_id = album_id
     item.catalog_release_title = item.album
@@ -451,27 +718,11 @@ def _apply_album_metadata(
     if year is not None:
         item.year = year
 
-    album_tracks = _extract_tracks(album)
     item.track_total = len(album_tracks) or None
-    normalized_fallback_title = _normalize_text(fallback_title)
-
-    for preferred_video_id in preferred_video_ids:
-        for track_index, track in enumerate(album_tracks, start=1):
-            if str(track.get("videoId")) != preferred_video_id:
-                continue
-            item.track_number = track_index
-            track_title = track.get("title")
-            if isinstance(track_title, str) and track_title:
-                item.title = track_title
-            return True
-
-    if len(album_tracks) == 1:
-        only_track = album_tracks[0]
-        track_title = only_track.get("title")
-        if isinstance(track_title, str) and _normalize_text(track_title) == normalized_fallback_title:
-            item.track_number = 1
-            if track_title:
-                item.title = track_title
+    item.track_number = matched_track_number
+    track_title = matched_track.get("title")
+    if isinstance(track_title, str) and track_title:
+        item.title = track_title
     _refresh_normalized_fields(item)
     return True
 
@@ -485,12 +736,25 @@ def _search_song_candidate(
 ) -> dict[str, Any] | None:
     original_artist_names = _string_list_names(primary.get("artists"))
     original_artist_ids = _artist_ids(primary.get("artists"))
-    original_artist_name = _first_artist_name(primary.get("artists")) or item.artist.split(",")[0].strip()
-    search_title = _canonicalize_track_title(item.title, original_artist_names or [original_artist_name])
-    target_title_variants = _title_variants(item.title, original_artist_names or [original_artist_name])
+    identities = _artist_title_identities(item, primary)
+    if not identities:
+        identities = [(item.title, item.artist.split(",")[0].strip(), "fallback")]
     original_duration = _parse_duration_seconds(primary.get("length"))
-    query = f"{search_title} {original_artist_name}".strip()
-    duration_tolerance = 15 if _is_omv(item.video_type) else 10
+    duration_tolerance = (
+        CATALOG_MV_DURATION_TOLERANCE_SECONDS
+        if _is_omv(item.video_type)
+        else CATALOG_DEFAULT_DURATION_TOLERANCE_SECONDS
+    )
+    queries: list[str] = []
+    seen_queries: set[str] = set()
+    for title, artist, _ in identities:
+        query = f"{title} {artist}".strip()
+        normalized_query = _normalize_text(query)
+        if normalized_query and normalized_query not in seen_queries:
+            seen_queries.add(normalized_query)
+            queries.append(query)
+        if len(queries) >= CATALOG_SEARCH_QUERY_LIMIT:
+            break
 
     if run_id:
         _log(
@@ -501,27 +765,39 @@ def _search_song_candidate(
             "search-catalog-start",
             "Searching for catalog song candidate.",
             {
-                "query": query,
-                "search_title": search_title,
+                "queries": queries,
+                "identities": [
+                    {"title": title, "artist": artist, "method": method}
+                    for title, artist, method in identities
+                ],
                 "video_type": item.video_type,
                 "title": item.title,
-                "artist": original_artist_name,
+                "artist": item.artist,
             },
         )
 
-    results = ytmusic.search(query, filter="songs", limit=5, ignore_spelling=False)
-    best_candidate: dict[str, Any] | None = None
-    best_key: tuple[int, int, int] | None = None
+    results_by_video_id: dict[str, dict[str, Any]] = {}
+    for query in queries:
+        results = ytmusic.search(
+            query,
+            filter="songs",
+            limit=CATALOG_SEARCH_RESULT_LIMIT,
+            ignore_spelling=False,
+        )
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            video_id = result.get("videoId")
+            if isinstance(video_id, str) and video_id:
+                results_by_video_id[video_id] = result
+
+    ranked_candidates: list[tuple[tuple[float, ...], dict[str, Any]]] = []
     candidate_logs: list[dict[str, Any]] = []
 
-    for result in results:
-        if not isinstance(result, dict):
-            continue
-
+    for result in results_by_video_id.values():
         candidate_video_id = result.get("videoId")
         candidate_title = result.get("title")
         candidate_album_id = _album_info(result.get("album")).get("id")
-        candidate_artist_name = _first_artist_name(result.get("artists"))
         candidate_artist_ids = _artist_ids(result.get("artists"))
         candidate_artist_names = _string_list_names(result.get("artists"))
         candidate_duration = _parse_duration_seconds(result.get("duration"))
@@ -530,40 +806,58 @@ def _search_song_candidate(
             if candidate_duration is not None and original_duration is not None
             else 0
         )
-        candidate_title_variants = (
-            _title_variants(candidate_title, candidate_artist_names) if isinstance(candidate_title, str) else set()
-        )
-        title_matches = bool(target_title_variants and candidate_title_variants and target_title_variants & candidate_title_variants)
         artist_id_matches = bool(
             original_artist_ids and candidate_artist_ids and set(original_artist_ids) & set(candidate_artist_ids)
         )
-        artist_name_matches = bool(
-            not artist_id_matches
-            and candidate_artist_name
-            and _normalize_text(candidate_artist_name) == _normalize_text(original_artist_name)
-        )
-        artist_matches = artist_id_matches or artist_name_matches
+        best_identity: tuple[str, str, str] | None = None
+        best_identity_score: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        for target_title, target_artist, method in identities:
+            title_score = _text_similarity(
+                str(candidate_title) if isinstance(candidate_title, str) else None,
+                target_title,
+            )
+            artist_score = max(
+                (
+                    _text_similarity(candidate_artist, target_artist)
+                    for candidate_artist in candidate_artist_names
+                ),
+                default=0.0,
+            )
+            identity_score = (title_score + artist_score, title_score, artist_score)
+            if identity_score > best_identity_score:
+                best_identity_score = identity_score
+                best_identity = (target_title, target_artist, method)
+
+        _, title_score, artist_score = best_identity_score
+        if artist_id_matches:
+            artist_score = 1.0
         duration_matches = original_duration is None or candidate_duration is None or duration_diff <= duration_tolerance
         video_type = str(result.get("videoType")) if result.get("videoType") else None
         same_source_video = isinstance(candidate_video_id, str) and candidate_video_id == item.source_video_id
         missing_album_id = not (isinstance(candidate_album_id, str) and candidate_album_id)
+        target_title, target_artist, match_method = best_identity or (item.title, item.artist, "fallback")
+        version_matches = _version_compatible(item.title, item.artist, result)
+        identity_matches = (
+            (title_score >= 0.96 and artist_score >= 0.88)
+            or (title_score >= 0.88 and artist_score >= 0.82)
+        )
         accepted = bool(
             isinstance(candidate_video_id, str)
-            and not same_source_video
             and not missing_album_id
-            and title_matches
-            and artist_matches
+            and identity_matches
             and duration_matches
+            and version_matches
         )
 
         if run_id:
             rejection_reasons = {
-                "title_match": title_matches,
-                "artist_match": artist_matches,
+                "title_score": title_score,
+                "artist_score": artist_score,
                 "duration_match": duration_matches,
                 "duration_diff": duration_diff if original_duration is not None and candidate_duration is not None else None,
                 "same_source_video": same_source_video,
                 "missing_album_id": missing_album_id,
+                "version_match": version_matches,
             }
             candidate_logs.append(
                 {
@@ -572,7 +866,10 @@ def _search_song_candidate(
                     "album_id": candidate_album_id,
                     "video_type": video_type,
                     "accepted": accepted,
-                    "artist_match_mode": "id" if artist_id_matches else ("name" if artist_name_matches else "none"),
+                    "match_method": match_method,
+                    "target_title": target_title,
+                    "target_artist": target_artist,
+                    "artist_match_mode": "id" if artist_id_matches else "name_score",
                     "rejection": rejection_reasons,
                 }
             )
@@ -580,14 +877,15 @@ def _search_song_candidate(
         if not accepted:
             continue
 
-        sort_key = (
-            0 if video_type == "MUSIC_VIDEO_TYPE_ATV" else 1,
-            duration_diff,
-            0 if artist_id_matches else 1,
+        score = (
+            1.0 if title_score >= 0.96 else 0.0,
+            1.0 if artist_id_matches else artist_score,
+            title_score,
+            1.0 if video_type == "MUSIC_VIDEO_TYPE_ATV" else 0.0,
+            -float(duration_diff),
+            0.0 if same_source_video else 1.0,
         )
-        if best_key is None or sort_key < best_key:
-            best_key = sort_key
-            best_candidate = result
+        ranked_candidates.append((score, result))
 
     if run_id:
         _log(
@@ -600,6 +898,16 @@ def _search_song_candidate(
             {"candidates": candidate_logs},
         )
 
+    if not ranked_candidates:
+        return None
+    ranked_candidates.sort(key=lambda entry: entry[0], reverse=True)
+    best_score, best_candidate = ranked_candidates[0]
+    if len(ranked_candidates) > 1:
+        runner_up_score = ranked_candidates[1][0]
+        # Reject genuinely ambiguous fuzzy matches. Exact title matches remain
+        # deterministic and are ranked by artist identity, type, and duration.
+        if best_score[0] == 0.0 and best_score[:3] == runner_up_score[:3]:
+            return None
     return best_candidate
 
 
@@ -609,7 +917,7 @@ def _resolve_exact_catalog(
     *,
     run_id: str | None = None,
 ) -> str | None:
-    watch = ytmusic.get_watch_playlist(videoId=item.source_video_id, limit=1)
+    watch = _get_watch_playlist_resilient(ytmusic, item.source_video_id)
     if not isinstance(watch, dict):
         return None
 
@@ -631,10 +939,6 @@ def _resolve_exact_catalog(
         item.resolution_method = "album_exact"
         return lyrics_browse_id
 
-    if not _is_omv(item.video_type):
-        item.resolution_method = "watch_playlist"
-        return lyrics_browse_id
-
     candidate = _search_song_candidate(ytmusic, item, primary, run_id=run_id)
     if not candidate:
         item.resolution_method = "watch_playlist"
@@ -645,10 +949,10 @@ def _resolve_exact_catalog(
         item.resolution_method = "watch_playlist"
         return lyrics_browse_id
 
-    candidate_watch = ytmusic.get_watch_playlist(videoId=candidate_video_id, limit=1)
-    if not isinstance(candidate_watch, dict):
-        item.resolution_method = "watch_playlist"
-        return lyrics_browse_id
+    try:
+        candidate_watch = _get_watch_playlist_resilient(ytmusic, candidate_video_id)
+    except Exception:  # noqa: BLE001
+        candidate_watch = {"tracks": [], "lyrics": None}
 
     candidate_tracks = _extract_tracks(candidate_watch)
     candidate_primary = candidate_tracks[0] if candidate_tracks else candidate
@@ -656,10 +960,6 @@ def _resolve_exact_catalog(
     if not candidate_album_id:
         item.resolution_method = "watch_playlist"
         return lyrics_browse_id
-
-    item.selected_source_url = f"https://music.youtube.com/watch?v={candidate_video_id}"
-    item.resolved_youtube_music_track_id = candidate_video_id
-    _apply_watch_metadata(item, candidate_primary)
 
     candidate_lyrics_id = candidate_watch.get("lyrics")
     candidate_lyrics_browse_id = candidate_lyrics_id if isinstance(candidate_lyrics_id, str) else None
@@ -671,10 +971,16 @@ def _resolve_exact_catalog(
         [candidate_video_id, item.source_video_id],
         item.title,
     ):
-        item.selected_source_url = None
         item.resolution_method = "watch_playlist"
         return lyrics_browse_id
 
+    item.selected_source_url = (
+        f"https://music.youtube.com/watch?v={candidate_video_id}"
+        if candidate_video_id != item.source_video_id
+        else None
+    )
+    item.resolved_youtube_music_track_id = candidate_video_id
+    _apply_watch_metadata(item, candidate_primary)
     item.resolution_method = "search_song_exact"
     if run_id:
         _log(
@@ -856,7 +1162,9 @@ def _build_yt_dlp_options(config: SyncConfig, *, skip_download: bool) -> dict[st
         },
     }
     if config.yt_dlp_cookies_browser.strip():
-        options["cookiesfrombrowser"] = (config.yt_dlp_cookies_browser.strip().lower(),)
+        options["cookiesfrombrowser"] = resolve_yt_dlp_cookie_source(
+            config.yt_dlp_cookies_browser
+        )
     if config.yt_dlp_po_token_base_url.strip():
         options["extractor_args"]["youtubepot-bgutilhttp"] = {
             "base_url": [config.yt_dlp_po_token_base_url.strip()],
@@ -975,6 +1283,23 @@ def _select_musicbrainz_recording(
         if not target_title_variants & candidate_title_variants:
             continue
 
+        artist_credit = recording.get("artist-credit")
+        candidate_artist_names = _string_list_names(artist_credit)
+        if candidate_artist_names and not any(
+            _normalize_text(candidate) == _normalize_text(target)
+            for candidate in candidate_artist_names
+            for target in artist_names
+        ):
+            continue
+
+        candidate_isrcs = recording.get("isrcs")
+        if item.isrc and isinstance(candidate_isrcs, list) and candidate_isrcs:
+            normalized_isrc = item.isrc.replace("-", "").upper()
+            if normalized_isrc not in {
+                str(value).replace("-", "").upper() for value in candidate_isrcs
+            }:
+                continue
+
         selected_release = _select_musicbrainz_release(item, recording.get("releases"))
         selected_release_title = selected_release.get("title") if isinstance(selected_release, dict) else None
         album_match_rank = 1
@@ -992,17 +1317,129 @@ def _select_musicbrainz_recording(
     return best_recording
 
 
+def _musicbrainz_genres(payload: Any) -> list[str]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("genres"), list):
+        return []
+
+    ranked: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for genre in payload["genres"]:
+        if not isinstance(genre, dict):
+            continue
+        name = genre.get("name")
+        count = genre.get("count")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if isinstance(count, bool) or not isinstance(count, int | str):
+            continue
+        try:
+            vote_count = int(count)
+        except (TypeError, ValueError):
+            continue
+        normalized_name = name.strip().casefold()
+        if vote_count <= 0 or normalized_name in seen:
+            continue
+        seen.add(normalized_name)
+        ranked.append((vote_count, name.strip()))
+
+    ranked.sort(key=lambda entry: (-entry[0], entry[1].casefold()))
+    return [name for _, name in ranked[:MUSICBRAINZ_GENRE_LIMIT]]
+
+
+def _musicbrainz_lookup_genres(entity_type: str, entity_id: str) -> list[str]:
+    cache_key = (entity_type, entity_id)
+    cached = _MUSICBRAINZ_GENRE_CACHE.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
+    response = _musicbrainz_get(
+        f"https://musicbrainz.org/ws/2/{entity_type}/{entity_id}",
+        params={"inc": "genres", "fmt": "json"},
+        headers={"User-Agent": "liked-music-syncer/0.1.0"},
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    genres = _musicbrainz_genres(response.json())
+    _MUSICBRAINZ_GENRE_CACHE[cache_key] = tuple(genres)
+    return genres
+
+
+def _musicbrainz_get(
+    url: str,
+    *,
+    params: dict[str, str],
+    headers: dict[str, str],
+    timeout: float,
+) -> httpx.Response:
+    global _MUSICBRAINZ_LAST_REQUEST_AT
+
+    elapsed = time.monotonic() - _MUSICBRAINZ_LAST_REQUEST_AT
+    remaining = MUSICBRAINZ_REQUEST_INTERVAL_SECONDS - elapsed
+    if remaining > 0:
+        time.sleep(remaining)
+    _MUSICBRAINZ_LAST_REQUEST_AT = time.monotonic()
+    return httpx.get(url, params=params, headers=headers, timeout=timeout)
+
+
+def _musicbrainz_artist_id(
+    recording: dict[str, Any], primary_artist: str
+) -> str | None:
+    artist_credit = recording.get("artist-credit")
+    if not isinstance(artist_credit, list):
+        return None
+    for credit in artist_credit:
+        if not isinstance(credit, dict):
+            continue
+        name = credit.get("name")
+        artist = credit.get("artist")
+        if (
+            isinstance(name, str)
+            and _normalize_text(name) == _normalize_text(primary_artist)
+            and isinstance(artist, dict)
+            and isinstance(artist.get("id"), str)
+        ):
+            return str(artist["id"])
+    return None
+
+
+def _musicbrainz_fill_genre(
+    item: SyncItemState, artist_id: str | None = None
+) -> None:
+    if item.genre:
+        return
+
+    genres: list[str] = []
+    if item.mb_releasegroup_id:
+        genres = _musicbrainz_lookup_genres(
+            "release-group", item.mb_releasegroup_id
+        )
+    if not genres and item.mb_track_id:
+        genres = _musicbrainz_lookup_genres("recording", item.mb_track_id)
+    if not genres and artist_id:
+        genres = _musicbrainz_lookup_genres("artist", artist_id)
+    if genres:
+        item.genre = "; ".join(genres)
+
+
 def _musicbrainz_enrich(item: SyncItemState) -> None:
     primary_artist = item.artist.split(",")[0].strip()
     recording: dict[str, Any] | None = None
 
-    for title_query in _ordered_title_search_queries(item.title, [primary_artist]):
+    queries: list[str] = []
+    if item.isrc:
+        queries.append(f'isrc:"{item.isrc.replace("-", "")}"')
+    queries.extend(
+        f'recording:"{title_query}" AND artist:"{primary_artist}"'
+        for title_query in _ordered_title_search_queries(item.title, [primary_artist])
+    )
+
+    for recording_query in queries:
         query = {
-            "query": f'recording:"{title_query}" AND artist:"{primary_artist}"',
+            "query": recording_query,
             "fmt": "json",
             "limit": "5",
         }
-        response = httpx.get(
+        response = _musicbrainz_get(
             "https://musicbrainz.org/ws/2/recording/",
             params=query,
             headers={"User-Agent": "liked-music-syncer/0.1.0"},
@@ -1025,23 +1462,27 @@ def _musicbrainz_enrich(item: SyncItemState) -> None:
         return
 
     item.musicbrainz_matched = True
+    artist_id = _musicbrainz_artist_id(recording, primary_artist)
     recording_id = recording.get("id")
-    if isinstance(recording_id, str) and recording_id and not item.mb_track_id:
+    if isinstance(recording_id, str) and recording_id:
         item.mb_track_id = recording_id
+        item.mb_album_id = None
+        item.mb_releasegroup_id = None
     first_isrc = recording.get("isrcs")
     if isinstance(first_isrc, list) and first_isrc and isinstance(first_isrc[0], str) and first_isrc[0]:
         item.isrc = item.isrc or first_isrc[0]
     release = _select_musicbrainz_release(item, recording.get("releases"))
     if release is None:
+        _musicbrainz_fill_genre(item, artist_id)
         return
 
     release_id = release.get("id")
-    if isinstance(release_id, str) and release_id and not item.mb_album_id:
+    if isinstance(release_id, str) and release_id:
         item.mb_album_id = release_id
     release_group = release.get("release-group")
     if isinstance(release_group, dict):
         release_group_id = release_group.get("id")
-        if isinstance(release_group_id, str) and release_group_id and not item.mb_releasegroup_id:
+        if isinstance(release_group_id, str) and release_group_id:
             item.mb_releasegroup_id = release_group_id
     date = release.get("date")
     if isinstance(date, str) and date and not item.date:
@@ -1051,6 +1492,7 @@ def _musicbrainz_enrich(item: SyncItemState) -> None:
     title = release.get("title")
     if isinstance(title, str) and title and is_unknown_album_value(item.album):
         item.album = title
+    _musicbrainz_fill_genre(item, artist_id)
     _refresh_normalized_fields(item)
 
 
@@ -1178,11 +1620,7 @@ def _sync_release_item_metadata(item: SyncItemState, track: dict[str, Any]) -> N
 
 
 def _should_run_musicbrainz(item: SyncItemState) -> bool:
-    return item.resolution_method not in {
-        "favorite_artist_release_exact",
-        "album_exact",
-        "search_song_exact",
-    }
+    return True
 
 
 def _matches_release_signature(item: SyncItemState, signature: dict[str, Any]) -> bool:

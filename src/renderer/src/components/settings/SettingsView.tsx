@@ -17,10 +17,12 @@ const BROWSERS: YtDlpCookiesBrowser[] = [
   'chromium',
   'edge',
   'firefox',
+  'helium',
   'opera',
   'safari',
   'vivaldi',
   'whale',
+  'zen',
 ]
 
 interface Props {

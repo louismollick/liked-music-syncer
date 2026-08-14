@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from http.cookiejar import CookieJar
+from pathlib import Path
 from typing import Any, Iterator
 from urllib.request import Request
 
@@ -14,6 +17,71 @@ from .models import AuthStatusResult
 AUTH_CHECK_BROWSE_ID = "FEmusic_history"
 YTMUSIC_ORIGIN = "https://music.youtube.com"
 SIGN_IN_PROMPT_MESSAGE = "YT Music rejected the provided browser auth headers and returned a sign-in prompt."
+HELIUM_BACKENDS = ("chromium", "chrome", "brave", "vivaldi", "edge", "opera")
+
+
+def _custom_browser_profile(browser_name: str) -> Path | None:
+    home = Path.home()
+    if sys.platform == "darwin":
+        app_support = home / "Library" / "Application Support"
+        profiles = {
+            "zen": app_support / "zen" / "Profiles",
+            "helium": app_support / "net.imput.helium" / "Default",
+        }
+    elif sys.platform in ("cygwin", "win32"):
+        appdata = Path(os.environ.get("APPDATA", home))
+        local_appdata = Path(os.environ.get("LOCALAPPDATA", home))
+        profiles = {
+            "zen": appdata / "zen" / "Profiles",
+            "helium": local_appdata / "net.imput.helium" / "Default",
+        }
+    else:
+        config_home = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
+        profiles = {
+            "zen": home / ".zen",
+            "helium": config_home / "net.imput.helium" / "Default",
+        }
+    return profiles.get(browser_name)
+
+
+def _extract_browser_cookies(browser_name: str) -> tuple[CookieJar, tuple[str, ...]]:
+    normalized = browser_name.strip().lower()
+    profile = _custom_browser_profile(normalized)
+    if normalized == "zen":
+        assert profile is not None
+        return extract_cookies_from_browser("firefox", profile=str(profile)), (
+            "firefox",
+            str(profile),
+        )
+    if normalized == "helium":
+        assert profile is not None
+        errors: list[str] = []
+        for backend in HELIUM_BACKENDS:
+            try:
+                jar = extract_cookies_from_browser(backend, profile=str(profile))
+                _get_cookie_header(jar, YTMUSIC_ORIGIN)
+                return jar, (backend, str(profile))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{backend}: {exc}")
+        raise ValueError(
+            "Could not decrypt YouTube Music cookies from Helium. "
+            "Make sure you are signed in at music.youtube.com and fully quit Helium. "
+            f"Tried compatible Chromium keychains ({'; '.join(errors)})."
+        )
+    return extract_cookies_from_browser(normalized), (normalized,)
+
+
+def resolve_yt_dlp_cookie_source(browser_name: str) -> tuple[str, ...]:
+    """Return yt-dlp's cookies-from-browser tuple for built-in and custom browsers."""
+    normalized = browser_name.strip().lower()
+    profile = _custom_browser_profile(normalized)
+    if normalized == "zen":
+        assert profile is not None
+        return ("firefox", str(profile))
+    if normalized == "helium":
+        _, source = _extract_browser_cookies(normalized)
+        return source
+    return (normalized,)
 
 
 def normalize_browser_auth_input(browser_auth_input: str) -> str:
@@ -124,7 +192,7 @@ def _get_cookie_header(cookie_jar: CookieJar, url: str) -> str:
 
 
 def build_browser_auth_from_browser_cookies(browser_name: str) -> str:
-    cookie_jar = extract_cookies_from_browser(browser_name)
+    cookie_jar, _ = _extract_browser_cookies(browser_name)
     cookie_header = _get_cookie_header(cookie_jar, YTMUSIC_ORIGIN)
     try:
         sapisid = sapisid_from_cookie(cookie_header)

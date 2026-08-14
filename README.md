@@ -8,7 +8,7 @@ It can:
 - pull liked videos
 - optionally keep only `categoryId === "10"`
 - try to match each track to a better YouTube Music source
-- try MusicBrainz metadata matching
+- enrich every confidently matched song with MusicBrainz IDs and genre
 - try synced lyrics via Spotify-match + lyrics API
 - download audio with `yt-dlp`
 - convert/tag output with `ffmpeg`
@@ -19,7 +19,8 @@ It can:
 - import favorite artists from exact YT Music `albums` + `singles` release tracklists
 - preserve separate album/single release variants instead of collapsing them
 - skip liked-video duplicates against existing managed songs by normalized title + primary artist
-- use MusicBrainz only as fallback metadata fill when YT Music resolution failed
+- keep trusted YT Music title/artist/album metadata while using MusicBrainz to
+  fill genre in all resolution paths and release metadata only as fallback
 
 ## Library index behavior
 
@@ -206,7 +207,7 @@ If you package without the bgutil plugin/provider bundle, `yt-dlp` will fall bac
 
 `yt-dlp` playback/download auth is separate. The app now handles that through the bundled bgutil PO-token plugin/provider automatically. You do not need to paste a manual PO token into the UI.
 
-In `Browser headers` mode, the app can now derive YT Music auth from the selected `yt-dlp cookies browser` using the same browser-cookie extraction path as `yt-dlp`. Manual header paste remains available as fallback.
+In `Browser headers` mode, the app can derive YT Music auth from the selected `yt-dlp cookies browser` using the same browser-cookie extraction path as `yt-dlp`. The browser selector includes Zen and Helium in addition to yt-dlp's built-in browsers. Sign in at `music.youtube.com` in the selected browser and fully quit it before capturing auth if its cookie database is locked. Manual header paste remains available as fallback.
 
 ## Install
 

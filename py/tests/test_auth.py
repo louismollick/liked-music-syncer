@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from http.cookiejar import Cookie, CookieJar
+from pathlib import Path
 
 import liked_music_syncer.auth as auth_module
 from liked_music_syncer.auth import normalize_browser_auth_input
@@ -188,3 +189,72 @@ def test_capture_browser_auth_from_browser_validates_before_returning(monkeypatc
     assert result.ok is True
     assert result.is_authenticated is True
     assert result.credential_json is not None
+
+
+def test_zen_uses_firefox_extraction_with_zen_profile(monkeypatch) -> None:
+    jar = CookieJar()
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        auth_module,
+        "_custom_browser_profile",
+        lambda browser_name: Path("/profiles/zen"),
+    )
+    monkeypatch.setattr(
+        auth_module,
+        "extract_cookies_from_browser",
+        lambda browser_name, profile=None: calls.append((browser_name, profile)) or jar,
+    )
+
+    extracted, source = auth_module._extract_browser_cookies("zen")
+
+    assert extracted is jar
+    assert calls == [("firefox", "/profiles/zen")]
+    assert source == ("firefox", "/profiles/zen")
+
+
+def test_helium_tries_chromium_keychains_until_youtube_cookies_work(monkeypatch) -> None:
+    empty_jar = CookieJar()
+    youtube_jar = CookieJar()
+    youtube_jar.set_cookie(
+        Cookie(
+            version=0,
+            name="__Secure-3PAPISID",
+            value="secure-cookie",
+            port=None,
+            port_specified=False,
+            domain=".youtube.com",
+            domain_specified=True,
+            domain_initial_dot=True,
+            path="/",
+            path_specified=True,
+            secure=True,
+            expires=None,
+            discard=True,
+            comment=None,
+            comment_url=None,
+            rest={},
+            rfc2109=False,
+        )
+    )
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(auth_module, "HELIUM_BACKENDS", ("chromium", "vivaldi"))
+    monkeypatch.setattr(
+        auth_module,
+        "_custom_browser_profile",
+        lambda browser_name: Path("/profiles/helium/Default"),
+    )
+
+    def extract(browser_name: str, profile: str | None = None) -> CookieJar:
+        calls.append((browser_name, profile))
+        return youtube_jar if browser_name == "vivaldi" else empty_jar
+
+    monkeypatch.setattr(auth_module, "extract_cookies_from_browser", extract)
+
+    extracted, source = auth_module._extract_browser_cookies("helium")
+
+    assert extracted is youtube_jar
+    assert calls == [
+        ("chromium", "/profiles/helium/Default"),
+        ("vivaldi", "/profiles/helium/Default"),
+    ]
+    assert source == ("vivaldi", "/profiles/helium/Default")

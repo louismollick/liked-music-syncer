@@ -326,10 +326,12 @@ export class SettingsService {
       case 'chromium':
       case 'edge':
       case 'firefox':
+      case 'helium':
       case 'opera':
       case 'safari':
       case 'vivaldi':
       case 'whale':
+      case 'zen':
         return value
       default:
         return DEFAULT_SETTINGS.ytDlpCookiesBrowser

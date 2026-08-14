@@ -70,6 +70,7 @@ def test_m4a_standard_and_custom_tag_round_trip(tmp_path: Path) -> None:
     item.mb_track_id = "mb-track"
     item.mb_album_id = "mb-album"
     item.mb_releasegroup_id = "mb-release-group"
+    item.resolution_method = "search_song_exact"
 
     write_media_tags(audio_path, item, _cover_bytes(), "[00:01.00]line one\n")
     scan = scan_root({"transport": "filesystem", "kind": "local", "uri": str(tmp_path)})
@@ -93,6 +94,8 @@ def test_m4a_standard_and_custom_tag_round_trip(tmp_path: Path) -> None:
     assert file_data["mb_releasegroup_id"] == "mb-release-group"
     assert file_data["youtube_music_track_id"] == "liked123"
     assert file_data["resolved_youtube_music_track_id"] == "catalog456"
+    assert file_data["tag_schema_version"] == 3
+    assert file_data["resolution_method"] == "search_song_exact"
     assert file_data["lyrics_status"] == "synced"
     assert file_data["cover_art_present"] is True
 
