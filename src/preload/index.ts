@@ -25,6 +25,8 @@ const api: ElectronApi = {
       ipcRenderer.invoke('sync:reprocessArtists', artistIds),
     refreshFavoriteArtists: (artistIds) =>
       ipcRenderer.invoke('sync:refreshFavoriteArtists', artistIds),
+    retryFailedTracks: (jobId) =>
+      ipcRenderer.invoke('sync:retryFailedTracks', jobId),
     clearFailures: () => ipcRenderer.invoke('sync:clearFailures'),
     cancel: (jobId) => ipcRenderer.invoke('sync:cancel', jobId),
     clearSyncData: () => ipcRenderer.invoke('sync:clearSyncData'),
@@ -42,8 +44,6 @@ const api: ElectronApi = {
     },
   },
   library: {
-    scanRoots: () => ipcRenderer.invoke('library:scanRoots'),
-    getIndexStatus: () => ipcRenderer.invoke('library:getIndexStatus'),
     refreshIndex: () => ipcRenderer.invoke('library:refreshIndex'),
     refreshArtists: () => ipcRenderer.invoke('library:refreshArtists'),
     listArtists: () => ipcRenderer.invoke('library:listArtists'),
@@ -76,13 +76,13 @@ const api: ElectronApi = {
         ipcRenderer.removeListener('library:albumArtworkUpdated', wrapped)
       }
     },
-    subscribeIndexStatus: (listener) => {
+    subscribeInventory: (listener) => {
       const wrapped = () => {
         listener()
       }
-      ipcRenderer.on('library:indexStatusUpdated', wrapped)
+      ipcRenderer.on('library:inventoryUpdated', wrapped)
       return () => {
-        ipcRenderer.removeListener('library:indexStatusUpdated', wrapped)
+        ipcRenderer.removeListener('library:inventoryUpdated', wrapped)
       }
     },
     setArtistFavorite: (artistId, isFavorite) =>

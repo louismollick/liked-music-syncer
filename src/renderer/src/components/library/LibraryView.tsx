@@ -1,7 +1,6 @@
 import type {
   AuthStatus,
   CommandResult,
-  LibraryIndexStatus,
   LikedArtistView,
 } from '@shared/contracts'
 import type { JSX } from 'react'
@@ -11,14 +10,12 @@ import { ArtistGrid } from './ArtistGrid'
 
 interface Props {
   artists: LikedArtistView[]
-  libraryIndexStatus: LibraryIndexStatus
   authStatus: AuthStatus
   onAction: (action: Promise<CommandResult>) => void
 }
 
 export function LibraryView({
   artists,
-  libraryIndexStatus,
   authStatus,
   onAction,
 }: Props): JSX.Element {
@@ -36,9 +33,6 @@ export function LibraryView({
     )
   }
 
-  const statusText = libraryIndexStatus.ready
-    ? 'ready'
-    : libraryIndexStatus.reason
   const authText = authStatus.isAuthenticated
     ? 'authenticated'
     : 'not authenticated'
@@ -49,7 +43,7 @@ export function LibraryView({
         <div>
           <h2 className="text-xl font-semibold text-text-primary">Library</h2>
           <p className="text-xs text-text-muted mt-0.5">
-            Index: {statusText} · Auth: {authText}
+            Auth: {authText}
             {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
           </p>
         </div>

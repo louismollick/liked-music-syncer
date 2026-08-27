@@ -23,18 +23,31 @@ interface Props {
   job: SyncJobView
   tracks?: SyncTrackWorkView[]
   onCancel?: (jobId: string) => void
+  onRetry?: (jobId: string) => void
+  retrying?: boolean
   defaultExpanded?: boolean
+}
+
+export function canRetryFailedTracks(
+  job: Pick<SyncJobView, 'status' | 'failedTracks'>
+) {
+  return (
+    job.status !== 'running' && job.status !== 'queued' && job.failedTracks > 0
+  )
 }
 
 export function JobCard({
   job,
   tracks,
   onCancel,
+  onRetry,
+  retrying = false,
   defaultExpanded = false,
 }: Props): JSX.Element {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const canCancel =
     onCancel && (job.status === 'running' || job.status === 'queued')
+  const canRetry = onRetry && canRetryFailedTracks(job)
   const visibleTracks = useMemo(
     () => tracks ?? job.tracks,
     [tracks, job.tracks]
@@ -77,6 +90,19 @@ export function JobCard({
           <Badge variant={jobStatusVariant(job.displayStatus)}>
             {jobStatusLabel(job.displayStatus)}
           </Badge>
+          {canRetry ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={retrying}
+              onClick={(e) => {
+                e.stopPropagation()
+                onRetry?.(job.id)
+              }}
+            >
+              {retrying ? 'Retrying...' : 'Retry Failed'}
+            </Button>
+          ) : null}
           {canCancel ? (
             <Button
               size="sm"

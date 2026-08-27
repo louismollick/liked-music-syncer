@@ -6,6 +6,7 @@ import { logMain } from './logger'
 
 export const APP_MEDIA_SCHEME = 'app-media'
 const ARTWORK_CACHE_SEGMENT = 'artwork'
+const ARTIST_PHOTO_CACHE_SEGMENT = 'artist-photo'
 
 export const ARTWORK_FILENAME_PATTERN = /^[a-f0-9]{64}\.jpg$/u
 
@@ -22,6 +23,10 @@ function logProtocolOnce(
 
 export function buildArtworkMediaUrl(cacheFileName: string): string {
   return `${APP_MEDIA_SCHEME}://${ARTWORK_CACHE_SEGMENT}/${cacheFileName}`
+}
+
+export function buildArtistPhotoMediaUrl(cacheFileName: string): string {
+  return `${APP_MEDIA_SCHEME}://${ARTIST_PHOTO_CACHE_SEGMENT}/${cacheFileName}`
 }
 
 export function resolveArtworkCacheFileName(
@@ -60,9 +65,46 @@ export function resolveArtworkCacheFileName(
   return fileName
 }
 
-export function registerArtworkProtocol(cacheDirectory: string) {
+export function resolveArtistPhotoCacheFileName(
+  requestUrl: string,
+  cacheDirectory: string
+): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(requestUrl)
+  } catch {
+    return null
+  }
+  if (
+    parsed.protocol !== `${APP_MEDIA_SCHEME}:` ||
+    parsed.hostname !== ARTIST_PHOTO_CACHE_SEGMENT
+  ) {
+    return null
+  }
+  const fileName = path.basename(parsed.pathname)
+  if (!ARTWORK_FILENAME_PATTERN.test(fileName)) return null
+  const resolvedCacheDirectory = path.resolve(cacheDirectory)
+  const resolvedFilePath = path.resolve(resolvedCacheDirectory, fileName)
+  return resolvedFilePath.startsWith(`${resolvedCacheDirectory}${path.sep}`)
+    ? fileName
+    : null
+}
+
+export function registerArtworkProtocol(
+  cacheDirectory: string,
+  artistPhotoCacheDirectory?: string
+) {
   protocol.handle(APP_MEDIA_SCHEME, async (request) => {
-    const fileName = resolveArtworkCacheFileName(request.url, cacheDirectory)
+    const artistPhotoFileName = artistPhotoCacheDirectory
+      ? resolveArtistPhotoCacheFileName(request.url, artistPhotoCacheDirectory)
+      : null
+    const fileName =
+      artistPhotoFileName ??
+      resolveArtworkCacheFileName(request.url, cacheDirectory)
+    const selectedCacheDirectory =
+      artistPhotoFileName && artistPhotoCacheDirectory
+        ? artistPhotoCacheDirectory
+        : cacheDirectory
     if (!fileName) {
       logProtocolOnce(`reject:${request.url}`, {
         level: 'debug',
@@ -73,7 +115,7 @@ export function registerArtworkProtocol(cacheDirectory: string) {
       return new Response(null, { status: 404 })
     }
 
-    const filePath = path.join(path.resolve(cacheDirectory), fileName)
+    const filePath = path.join(path.resolve(selectedCacheDirectory), fileName)
     if (!fs.existsSync(filePath)) {
       logProtocolOnce(`miss:${fileName}`, {
         level: 'debug',

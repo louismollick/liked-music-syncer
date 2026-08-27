@@ -1,16 +1,17 @@
-import { existsSync } from 'node:fs'
 import path, { join } from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { app, BrowserWindow, shell } from 'electron'
 import icon from '../../resources/icon.png?asset'
 import { createDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc'
+import { ArtistPhotoCache } from './services/artist-photo-cache'
 import {
   registerArtworkProtocol,
   registerArtworkSchemePrivileges,
 } from './services/artwork-protocol'
 import { ArtworkService } from './services/artwork-service'
 import { AuthService } from './services/auth-service'
+import { resolveFfmpegPath } from './services/ffmpeg-path'
 import { LibraryService } from './services/library-service'
 import { LikedArtistsService } from './services/liked-artists-service'
 import { logMain, setTempLogMirror } from './services/logger'
@@ -29,11 +30,11 @@ let tempLogMirror: TempLogMirror | null = null
 registerArtworkSchemePrivileges()
 
 function getBundledFfmpegPath() {
-  const candidate = is.dev
-    ? path.join(process.cwd(), 'resources/bin', 'ffmpeg')
-    : path.join(process.resourcesPath, 'bin', 'ffmpeg')
-
-  return existsSync(candidate) ? candidate : 'ffmpeg'
+  return resolveFfmpegPath({
+    isDev: is.dev,
+    cwd: process.cwd(),
+    resourcesPath: process.resourcesPath,
+  })
 }
 
 function createWindow(): void {
@@ -67,7 +68,7 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.electron')
   const mirror = createTempLogMirror(app.getPath('temp'))
   tempLogMirror = mirror
@@ -98,12 +99,17 @@ app.whenReady().then(() => {
     app.getPath('userData'),
     'artwork-cache'
   )
+  const artistPhotoCacheDirectory = path.join(
+    app.getPath('userData'),
+    'artist-photo-cache'
+  )
   const artworkService = new ArtworkService(
     db,
     pythonWorkerService,
     artworkCacheDirectory
   )
-  registerArtworkProtocol(artworkCacheDirectory)
+  const artistPhotoCache = new ArtistPhotoCache(artistPhotoCacheDirectory)
+  registerArtworkProtocol(artworkCacheDirectory, artistPhotoCacheDirectory)
   const libraryService = new LibraryService(
     db,
     settingsService,
@@ -113,7 +119,8 @@ app.whenReady().then(() => {
   const likedArtistsService = new LikedArtistsService(
     db,
     settingsService,
-    pythonWorkerService
+    pythonWorkerService,
+    artistPhotoCache
   )
   const poTokenService = new PoTokenService()
   const authService = new AuthService(settingsService, pythonWorkerService)
@@ -126,6 +133,7 @@ app.whenReady().then(() => {
     poTokenService,
     getBundledFfmpegPath
   )
+  await syncService.recoverInterruptedJobs()
 
   createWindow()
   registerIpcHandlers(
@@ -138,8 +146,16 @@ app.whenReady().then(() => {
     artworkService,
     getBundledFfmpegPath
   )
-  void libraryService.bootstrapLocalIndexIfNeeded().then(async (result) => {
-    if (!result?.ok) return
+  void libraryService.reconcileLocalLibrary().then(async (result) => {
+    if (!result.ok) {
+      logMain({
+        level: 'error',
+        source: 'startup',
+        message: 'Startup library reconcile failed',
+        context: { error: result.message },
+      })
+      return
+    }
     await likedArtistsService.refreshArtists()
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('library:artistsUpdated')

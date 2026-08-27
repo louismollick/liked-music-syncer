@@ -2,7 +2,6 @@ import { isLowResArtistPhotoUrl } from '@shared/artist-photo-url'
 import type {
   AuthStatus,
   CommandResult,
-  LibraryIndexStatus,
   LikedArtistView,
 } from '@shared/contracts'
 import type { JSX } from 'react'
@@ -15,7 +14,6 @@ interface Props {
   artists: LikedArtistView[]
   selectedIds: string[]
   selectionEnabled: boolean
-  libraryIndexStatus: LibraryIndexStatus
   authStatus: AuthStatus
   isActive: boolean
   onToggleSelectionMode: () => void
@@ -30,7 +28,6 @@ export function ArtistsView({
   artists,
   selectedIds,
   selectionEnabled,
-  libraryIndexStatus,
   authStatus,
   isActive,
   onToggleSelectionMode,
@@ -58,7 +55,6 @@ export function ArtistsView({
       totalArtists: artists.length,
       withPhotoUrl: withPhoto,
       needsImageRefresh: needsRefresh,
-      indexReady: libraryIndexStatus.ready,
       authenticated: authStatus.isAuthenticated,
     })
 
@@ -93,7 +89,7 @@ export function ArtistsView({
         })
         imageRefreshStarted.current = false
       })
-  }, [artists, authStatus.isAuthenticated, isActive, libraryIndexStatus.ready])
+  }, [artists, authStatus.isAuthenticated, isActive])
 
   const toggleFavorite = (artist: LikedArtistView) => {
     onAction(
@@ -109,9 +105,6 @@ export function ArtistsView({
     onOpenArtist(artist)
   }
 
-  const statusText = libraryIndexStatus.ready
-    ? 'ready'
-    : libraryIndexStatus.reason
   const authText = authStatus.isAuthenticated
     ? 'authenticated'
     : 'not authenticated'
@@ -122,7 +115,7 @@ export function ArtistsView({
         <div>
           <h2 className="text-xl font-semibold text-text-primary">Artists</h2>
           <p className="text-xs text-text-muted mt-0.5">
-            Index: {statusText} · Auth: {authText}
+            Auth: {authText}
             {selectionEnabled ? ' · select on' : ''}
             {selectedIds.length > 0 ? ` · ${selectedIds.length} selected` : ''}
           </p>

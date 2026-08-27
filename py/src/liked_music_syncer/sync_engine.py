@@ -217,12 +217,15 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
         album_info = {}
     album = canonical_album_name(str(album_info.get("name") or ""))
     item = SyncItemState(
-        id=_slug("item"),
+        id=str(track.get("trackWorkId") or _slug("item")),
         source_video_id=video_id,
         youtube_music_track_id=video_id,
-        spotify_track_id=None,
-        soundcloud_track_id=None,
-        resolved_youtube_music_track_id=video_id,
+        spotify_track_id=_signature_str(track.get("spotifyTrackId")),
+        soundcloud_track_id=_signature_str(track.get("soundcloudTrackId")),
+        resolved_youtube_music_track_id=_signature_str(
+            track.get("resolvedYoutubeMusicTrackId")
+        )
+        or video_id,
         source_origin=str(track.get("sourceOrigin")) if track.get("sourceOrigin") else None,
         catalog_release_browse_id=str(track.get("catalogReleaseBrowseId"))
         if track.get("catalogReleaseBrowseId")
@@ -236,8 +239,11 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
         title=title,
         artist=artist,
         album=album,
-        album_artist=artist,
-        source_url=f"https://music.youtube.com/watch?v={video_id}",
+        album_artist=str(track.get("albumArtist") or artist),
+        source_url=str(
+            track.get("sourceUrl")
+            or f"https://music.youtube.com/watch?v={video_id}"
+        ),
         cover_art_url=_pick_thumbnail(track.get("thumbnails")),
         source_kind=str(track.get("sourceKind") or track.get("likeStatus") or "liked_song"),
         video_type=str(track.get("videoType")) if track.get("videoType") else None,
@@ -247,7 +253,13 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
         disc_total=_signature_int(track.get("discTotal")),
         year=_parse_year(track.get("year")),
         date=_signature_str(track.get("date")),
+        genre=_signature_str(track.get("genre")),
+        language=_signature_str(track.get("language")),
         isrc=_signature_str(track.get("isrc")),
+        mb_track_id=_signature_str(track.get("mbTrackId")),
+        mb_album_id=_signature_str(track.get("mbAlbumId")),
+        mb_releasegroup_id=_signature_str(track.get("mbReleaseGroupId")),
+        selected_source_url=_signature_str(track.get("selectedSourceUrl")),
     )
     if item.catalog_release_title and is_unknown_album_value(item.album):
         item.album = item.catalog_release_title
@@ -1154,6 +1166,7 @@ def _build_yt_dlp_options(config: SyncConfig, *, skip_download: bool) -> dict[st
         "no_warnings": True,
         "noprogress": True,
         "skip_download": skip_download,
+        "js_runtimes": {"node": {}},
         "remote_components": ["ejs:github"],
         "extractor_args": {
             "youtube": {
@@ -2100,7 +2113,18 @@ def run_sync(config: SyncConfig) -> None:
 
         stage = "liked_songs_fetch"
         favorite_catalog_counts: dict[str, int] = {}
-        if config.favorite_artist_catalogs:
+        if config.retry_items:
+            tracks = config.retry_items
+            raw_count = len(tracks)
+            _run_log(
+                config.job_id,
+                stage,
+                "info",
+                "retry-items-ready",
+                "Retry items loaded.",
+                {"total_count": len(tracks)},
+            )
+        elif config.favorite_artist_catalogs:
             _run_log(
                 config.job_id,
                 stage,
@@ -2155,9 +2179,13 @@ def run_sync(config: SyncConfig) -> None:
             config.job_id,
             "started",
             stage,
-            "Favorite artist catalog fetch complete."
-            if config.favorite_artist_catalogs
-            else "Liked songs fetch complete.",
+            "Retry items ready."
+            if config.retry_items
+            else (
+                "Favorite artist catalog fetch complete."
+                if config.favorite_artist_catalogs
+                else "Liked songs fetch complete."
+            ),
             total_count=len(tracks),
         )
 

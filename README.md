@@ -24,14 +24,21 @@ It can:
 
 ## Library index behavior
 
-- the app keeps a persisted local library index for the configured output root
-- sync, favorite-artist refresh, artist reprocess, and `Sync Missing to Remote` now use that persisted index instead of rescanning the full local library on every start
-- on app launch, if the current output root has no ready index, the app starts a background local bootstrap automatically
-- while bootstrap/manual refresh is running, sync actions stay disabled
-- `Refresh library` is now the explicit manual reconcile action:
-  - full local scan when the index is missing/stale
-  - incremental local reconcile when the index is already current
-- out-of-band filesystem changes are picked up on manual `Refresh library`
+- The app opens with the last committed local inventory and starts a background
+  filesystem reconcile on every launch.
+- Local files and matching `.lrc` sidecars are the authority for existence and
+  paths. The database is a rebuildable inventory.
+- Sync, reprocess, and remote-copy work waits for a reconcile immediately before
+  it reads local paths.
+- Download and reprocess workers request another background reconcile when they
+  finish, including after partial failure or cancellation.
+- Concurrent requests share one active reconcile. A request received during that
+  pass adds at most one trailing pass.
+- A failed filesystem walk leaves the last committed inventory intact. The app
+  reports the error and retries on the next launch or `Refresh Library` request.
+
+See [`docs/local-library-index.md`](docs/local-library-index.md) for the
+implementation contract.
 
 ## Current setup model
 
@@ -61,9 +68,11 @@ Local dev:
 
 Needed tools:
 
-- `ffmpeg`
 - `npm` for `pnpm tools:fetch`
 - optional `rclone` if using remote copy
+
+`pnpm install` installs the app's pinned `ffmpeg` binary. A system installation is
+not required.
 
 App/runtime services:
 
@@ -180,21 +189,15 @@ That now fetches/builds:
 - `resources/bin/bgutil-ytdlp-pot-provider/server/build/main.js`
 - `resources/bin/README.txt`
 
-Then add `ffmpeg` manually:
-
-- `resources/bin/ffmpeg`
-
 The app starts the local bgutil provider automatically on sync start and points `yt-dlp` at `mweb` + the bundled PO-token plugin.
 
 ### Packaged app
 
-Packaged builds expect these exact bundled files:
+Packaged builds include `ffmpeg` from the pinned `ffmpeg-static` dependency and
+expect these bundled files:
 
-- `resources/bin/ffmpeg`
 - `resources/bin/yt-dlp-plugins/bgutil-ytdlp-pot-provider.zip`
 - `resources/bin/bgutil-ytdlp-pot-provider/server/build/main.js`
-
-If you package without it, packaged audio fixup/convert will fail.
 
 If you package without the bgutil plugin/provider bundle, `yt-dlp` will fall back to the old behavior and YouTube may reject playback requests with bot-check errors.
 
@@ -359,4 +362,4 @@ Logging format:
 - Google OAuth login requires valid desktop-app credentials, not web-app creds.
 - The app currently depends on a separate lyrics API; it does not ship one.
 - Remote copy currently assumes `rclone` is already configured outside the app.
-- Packaged builds need bundled `ffmpeg`.
+- Packaging must preserve the unpacked `ffmpeg-static` binary configured in `electron-builder.yml`.

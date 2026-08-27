@@ -34,6 +34,7 @@ class SyncConfig:
     artist_filter_channel_ids: list[str] = field(default_factory=list)
     artist_filter_names_normalized: list[str] = field(default_factory=list)
     favorite_artist_catalogs: list[dict[str, str | None]] = field(default_factory=list)
+    retry_items: list[dict[str, Any]] = field(default_factory=list)
     force_reprocess: bool = False
     existing_local_youtube_music_track_ids: list[str] = field(default_factory=list)
     existing_local_resolved_youtube_music_track_ids: list[str] = field(
@@ -79,6 +80,11 @@ class SyncConfig:
                 }
                 for value in payload.get("favorite_artist_catalogs", [])
                 if isinstance(value, dict) and str(value.get("id", "")).strip()
+            ],
+            retry_items=[
+                value
+                for value in payload.get("retry_items", [])
+                if isinstance(value, dict)
             ],
             force_reprocess=bool(payload.get("force_reprocess", False)),
             existing_local_youtube_music_track_ids=[

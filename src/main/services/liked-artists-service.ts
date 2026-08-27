@@ -7,6 +7,7 @@ import type {
 import { asc, eq } from 'drizzle-orm'
 import type { AppDatabase } from '../db/database'
 import { libraryTracksTable, likedArtistsTable } from '../db/schema'
+import type { ArtistPhotoCache } from './artist-photo-cache'
 import { logMain } from './logger'
 import type { PythonWorkerService } from './python-worker'
 import type { SettingsService } from './settings-service'
@@ -72,7 +73,8 @@ export class LikedArtistsService {
   constructor(
     private readonly db: AppDatabase,
     private readonly settingsService?: SettingsService,
-    private readonly pythonWorker?: PythonWorkerService
+    private readonly pythonWorker?: PythonWorkerService,
+    private readonly artistPhotoCache?: ArtistPhotoCache
   ) {}
 
   subscribeArtistPhotoUpdates(listener: (update: ArtistPhotoUpdate) => void) {
@@ -98,7 +100,7 @@ export class LikedArtistsService {
       channelId: row.channelId,
       name: row.name,
       normalizedName: row.normalizedName,
-      photoUrl: decodeStoredArtistPhotoUrl(row.photoUrl),
+      photoUrl: this.resolveStoredArtistPhotoUrl(row.photoUrl),
       likedTrackCount: row.likedTrackCount,
       lastRefreshedAt: row.lastRefreshedAt,
       isFavorite: row.isFavorite,
@@ -124,6 +126,35 @@ export class LikedArtistsService {
     }
 
     return artists
+  }
+
+  private resolveStoredArtistPhotoUrl(photoUrl: string | null): string | null {
+    const remoteUrl = decodeStoredArtistPhotoUrl(photoUrl)
+    return remoteUrl && this.artistPhotoCache
+      ? this.artistPhotoCache.resolvePhotoUrl(remoteUrl)
+      : remoteUrl
+  }
+
+  private async cacheArtistPhoto(
+    artist: { id: string; name: string },
+    remoteUrl: string
+  ): Promise<string> {
+    if (!this.artistPhotoCache) return remoteUrl
+    try {
+      return await this.artistPhotoCache.cacheRemotePhoto(remoteUrl)
+    } catch (error) {
+      logMain({
+        level: 'warn',
+        source: 'liked-artists',
+        message: 'Failed to cache artist photo locally',
+        context: {
+          artistId: artist.id,
+          artistName: artist.name,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      })
+      return remoteUrl
+    }
   }
 
   async listArtistsByIds(ids: string[]): Promise<LikedArtistView[]> {
@@ -355,6 +386,25 @@ export class LikedArtistsService {
     const startedAt = Date.now()
     const catalog = await this.listArtists({ logSnapshot: true })
     const storedArtists = await this.db.select().from(likedArtistsTable)
+    const artistsWithRemotePhotos = storedArtists.filter((artist) =>
+      Boolean(decodeStoredArtistPhotoUrl(artist.photoUrl))
+    )
+    await runWithConcurrency(
+      artistsWithRemotePhotos,
+      ARTIST_IMAGE_FETCH_CONCURRENCY,
+      async (artist) => {
+        const remoteUrl = decodeStoredArtistPhotoUrl(artist.photoUrl)
+        if (!remoteUrl) return
+        const photoUrl = await this.cacheArtistPhoto(artist, remoteUrl)
+        if (photoUrl !== remoteUrl) {
+          this.emitArtistPhotoUpdate({
+            artistId: artist.id,
+            photoUrl,
+            channelId: artist.channelId,
+          })
+        }
+      }
+    )
     const artists = storedArtists
       .filter(
         (artist) =>
@@ -527,9 +577,13 @@ export class LikedArtistsService {
             })
             .where(eq(likedArtistsTable.id, artist.id))
 
+          const displayPhotoUrl = await this.cacheArtistPhoto(
+            artist,
+            payload.artist.photo_url
+          )
           this.emitArtistPhotoUpdate({
             artistId: artist.id,
-            photoUrl: payload.artist.photo_url,
+            photoUrl: displayPhotoUrl,
             channelId: payload.artist.channel_id,
           })
           stats.fetched++

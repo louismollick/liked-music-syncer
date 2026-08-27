@@ -24,6 +24,20 @@ _Avoid_: Needs review, low confidence, attention state
 The set of songs a user has liked on a source platform such as YouTube Music, Spotify, or SoundCloud.
 _Avoid_: Playlist, remote library
 
+### Authentication
+
+**Auth Source**:
+The installed browser and browser profile that provide a signed-in session for a source platform.
+_Avoid_: Credential, account, browser
+
+**Google Session**:
+A signed-in Google identity available through an Auth Source. One Google Session can expose several YouTube Music Accounts.
+_Avoid_: YouTube account, browser account
+
+**YouTube Music Account**:
+A selectable personal or Brand Account identity used to access YouTube Music. This is the account the app shows and switches.
+_Avoid_: Google Session, email account, channel
+
 **Source Contribution**:
 A relationship showing that a liked music library contributed to a library item. A library item can have many source contributions.
 _Avoid_: Original source, single source
@@ -67,6 +81,10 @@ _Avoid_: State, phase
 **Sync Job**:
 A user-visible unit of async sync work such as a Liked Songs Sync, Favorite Artist catalog refresh, or Copy Missing to Remote operation. A Sync Job can expand into many track work items.
 _Avoid_: Run, background task
+
+**Retry Failed**:
+Another attempt at the failed track work inside a finished Sync Job. Successful tracks and the Sync Job's original total remain part of that same job.
+_Avoid_: Retry job, new job
 
 **Sync View**:
 The single user-visible Sync screen for pending, running, completed, and failed Sync Jobs and track work items. It stays job-first with expandable track rows and uses in-page filters rather than separate subviews.

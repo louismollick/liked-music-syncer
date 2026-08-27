@@ -1,9 +1,9 @@
 import type { AlbumArtworkEntry } from '@shared/contracts'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   filterArtworkState,
-  normalizeAlbumArtworkKeys,
   readAlbumArtworkCache,
+  stabilizeAlbumArtworkKeys,
   writeAlbumArtworkCache,
 } from './album-artwork-store'
 
@@ -26,10 +26,9 @@ function logRendererArtwork(
 }
 
 export function useAlbumArtwork(albumKeys: string[]) {
-  const stableKeys = useMemo(
-    () => normalizeAlbumArtworkKeys(albumKeys),
-    [albumKeys]
-  )
+  const stableKeysRef = useRef<string[]>([])
+  const stableKeys = stabilizeAlbumArtworkKeys(stableKeysRef.current, albumKeys)
+  stableKeysRef.current = stableKeys
   const [artworkByKey, setArtworkByKey] = useState<
     Record<string, string | null>
   >(() => readAlbumArtworkCache(stableKeys))

@@ -3,20 +3,18 @@ import type {
   CommandResult,
   DriftSummary,
   LibraryFileView,
-  LibraryIndexStatus,
   LibraryRootView,
   LibraryTrackFilter,
   LibraryTrackView,
   LyricsStatus,
 } from '@shared/contracts'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { canonicalAlbumName } from '../../shared/album-key'
 import type { AppDatabase } from '../db/database'
 import {
   libraryFilesTable,
   libraryRootsTable,
   libraryTracksTable,
-  metaTable,
 } from '../db/schema'
 import type { ArtworkService } from './artwork-service'
 import { logMain } from './logger'
@@ -27,10 +25,6 @@ import { createId, nowIso } from './utils'
 type RootKind = 'local' | 'remote'
 type RootTransport = 'filesystem' | 'rclone'
 type DiscoveredVia = 'lms_tags' | 'mb_track' | 'isrc' | 'heuristic' | 'path'
-type LocalIndexJobMode = 'bootstrap' | 'refresh'
-
-const LIBRARY_INDEX_VERSION = 1
-
 interface RootDescriptor {
   id: string
   kind: RootKind
@@ -84,6 +78,7 @@ interface ScannedFilePayload {
   size_bytes: number | null
   modified_at: string | null
   sidecar_modified_at: string | null
+  sidecar_sha256: string | null
   audio_sha256: string | null
   tag_fingerprint: string | null
   last_scanned_at: string
@@ -95,7 +90,6 @@ interface ScannedFilePayload {
 interface RootScanResult {
   scanned_at: string
   files: ScannedFilePayload[]
-  deleted_relative_paths?: string[]
 }
 
 interface ScanRootsOptions {
@@ -143,9 +137,9 @@ interface TrackAggregate {
 }
 
 export class LibraryService {
-  private readonly indexStatusListeners = new Set<() => void>()
-  private localIndexJob: Promise<CommandResult> | null = null
-  private startupBootstrapAttempted = false
+  private readonly inventoryListeners = new Set<() => void>()
+  private localReconcileJob: Promise<CommandResult> | null = null
+  private reconcileAgain = false
 
   constructor(
     private readonly db: AppDatabase,
@@ -154,204 +148,37 @@ export class LibraryService {
     private readonly artworkService?: ArtworkService
   ) {}
 
-  subscribeIndexStatus(listener: () => void) {
-    this.indexStatusListeners.add(listener)
-    return () => this.indexStatusListeners.delete(listener)
+  subscribeInventory(listener: () => void) {
+    this.inventoryListeners.add(listener)
+    return () => this.inventoryListeners.delete(listener)
   }
 
-  async getIndexStatus(): Promise<LibraryIndexStatus> {
-    const localRoot = await this.resolveCurrentLocalRoot()
-    if (!localRoot) {
-      return {
-        currentLocalRootUri: null,
-        ready: false,
-        inProgress: false,
-        reason: 'missing_root',
-        lastScannedAt: null,
-        lastScanStatus: null,
-        indexVersion: null,
+  reconcileLocalLibrary(): Promise<CommandResult> {
+    if (this.localReconcileJob) {
+      this.reconcileAgain = true
+      return this.localReconcileJob
+    }
+
+    const job = (async () => {
+      let result = await this.runLocalReconcilePass()
+      if (result.ok && this.reconcileAgain) {
+        this.reconcileAgain = false
+        result = await this.runLocalReconcilePass()
       }
-    }
-
-    const [rootRow, indexVersion, indexedRootUri] = await Promise.all([
-      this.getRootRowByUri(localRoot.uri),
-      this.readIndexVersion(),
-      this.readMetaValue('library_index_local_root_uri'),
-    ])
-
-    if (this.localIndexJob) {
-      return {
-        currentLocalRootUri: localRoot.uri,
-        ready: false,
-        inProgress: true,
-        reason: 'bootstrapping',
-        lastScannedAt: rootRow?.lastScannedAt ?? null,
-        lastScanStatus: rootRow?.lastScanStatus ?? null,
-        indexVersion,
-      }
-    }
-
-    if (rootRow?.lastScanStatus?.startsWith('error:')) {
-      return {
-        currentLocalRootUri: localRoot.uri,
-        ready: false,
-        inProgress: false,
-        reason: 'scan_failed',
-        lastScannedAt: rootRow.lastScannedAt,
-        lastScanStatus: rootRow.lastScanStatus,
-        indexVersion,
-      }
-    }
-
-    if (!rootRow?.lastScannedAt || !rootRow.lastScanStatus) {
-      return {
-        currentLocalRootUri: localRoot.uri,
-        ready: false,
-        inProgress: false,
-        reason: 'never_scanned',
-        lastScannedAt: rootRow?.lastScannedAt ?? null,
-        lastScanStatus: rootRow?.lastScanStatus ?? null,
-        indexVersion,
-      }
-    }
-
-    if (rootRow.lastScanStatus !== 'ok') {
-      return {
-        currentLocalRootUri: localRoot.uri,
-        ready: false,
-        inProgress: false,
-        reason: 'scan_failed',
-        lastScannedAt: rootRow.lastScannedAt,
-        lastScanStatus: rootRow.lastScanStatus,
-        indexVersion,
-      }
-    }
-
-    if (
-      indexVersion !== LIBRARY_INDEX_VERSION ||
-      indexedRootUri !== localRoot.uri
-    ) {
-      return {
-        currentLocalRootUri: localRoot.uri,
-        ready: false,
-        inProgress: false,
-        reason: 'stale_version',
-        lastScannedAt: rootRow.lastScannedAt,
-        lastScanStatus: rootRow.lastScanStatus,
-        indexVersion,
-      }
-    }
-
-    return {
-      currentLocalRootUri: localRoot.uri,
-      ready: true,
-      inProgress: false,
-      reason: 'ready',
-      lastScannedAt: rootRow.lastScannedAt,
-      lastScanStatus: rootRow.lastScanStatus,
-      indexVersion,
-    }
-  }
-
-  async ensureLocalIndexReady(): Promise<LibraryIndexStatus> {
-    return this.getIndexStatus()
-  }
-
-  getIndexNotReadyResult(status: LibraryIndexStatus): CommandResult {
-    if (status.inProgress) {
-      return {
-        ok: false,
-        message:
-          'Library indexing still in progress. Wait for refresh to finish.',
-      }
-    }
-
-    if (status.reason === 'missing_root') {
-      return {
-        ok: false,
-        message: 'Output directory must be configured first.',
-      }
-    }
-
-    return {
-      ok: false,
-      message: 'Library index is not ready. Retry Refresh library.',
-    }
-  }
-
-  async bootstrapLocalIndexIfNeeded(): Promise<CommandResult | null> {
-    if (this.startupBootstrapAttempted) return null
-    this.startupBootstrapAttempted = true
-
-    const status = await this.getIndexStatus()
-    if (
-      status.ready ||
-      status.inProgress ||
-      status.reason === 'missing_root' ||
-      status.reason === 'scan_failed'
-    ) {
-      return null
-    }
-
-    return this.runLocalIndexJob('bootstrap', {
-      fullScan: true,
-      successMessage: 'Library indexing complete.',
+      return result
+    })().finally(() => {
+      this.localReconcileJob = null
+      this.reconcileAgain = false
     })
+
+    this.localReconcileJob = job
+    return job
   }
 
-  async refreshIndex(): Promise<CommandResult> {
-    const status = await this.getIndexStatus()
-    if (status.inProgress) {
-      return {
-        ok: false,
-        message: 'Library indexing already in progress.',
-      }
-    }
-
-    const localRoot = await this.resolveCurrentLocalRoot()
-    if (!localRoot) {
-      return {
-        ok: false,
-        message: 'Output directory must be configured first.',
-      }
-    }
-
-    const fullScan =
-      !status.ready ||
-      status.reason === 'never_scanned' ||
-      status.reason === 'stale_version' ||
-      status.reason === 'scan_failed'
-
-    return this.runLocalIndexJob('refresh', {
-      fullScan,
-      successMessage: fullScan
-        ? 'Library refresh complete.'
-        : 'Library reconcile complete.',
-    })
-  }
-
-  async upsertLocalOutputs(outputPaths: string[]): Promise<void> {
-    const root = await this.resolveCurrentLocalRoot()
-    if (!root || outputPaths.length === 0) return
-
-    const normalizedPaths = [...new Set(outputPaths)]
-      .map((value) => path.resolve(value))
-      .filter((value) => this.isPathInsideRoot(root.uri, value))
-
-    if (normalizedPaths.length === 0) return
-
-    await this.upsertRoot(root)
-    const scan = await this.pythonWorker.runJsonCommand<RootScanResult>(
-      'library-inspect-local-files',
-      {
-        uri: root.uri,
-        absolute_paths: normalizedPaths,
-      }
-    )
-    await this.persistIncrementalRootChanges(root, scan)
-  }
-
-  async upsertRemoteCopyFromLocalPath(outputPath: string): Promise<void> {
+  async upsertRemoteCopyFromLocalPath(
+    outputPath: string,
+    remoteRelativePath?: string
+  ): Promise<void> {
     const settings = await this.settingsService.getRuntimeSettings()
     const localRootUri = settings.outputDirectory.trim()
     const remoteRootUri =
@@ -381,9 +208,10 @@ export class LibraryService {
     })
     if (!localFile) return
 
-    const remoteAbsolutePath = `${remoteRoot.uri.replace(/\/$/, '')}/${relativePath}`
+    const persistedRelativePath = remoteRelativePath || relativePath
+    const remoteAbsolutePath = `${remoteRoot.uri.replace(/\/$/, '')}/${persistedRelativePath}`
     const remoteLrcPath = localFile.lrcPath
-      ? `${remoteRoot.uri.replace(/\/$/, '')}/${relativePath.replace(/\.[^/.]+$/, '.lrc')}`
+      ? `${remoteRoot.uri.replace(/\/$/, '')}/${persistedRelativePath.replace(/\.[^/.]+$/, '.lrc')}`
       : null
     const timestamp = nowIso()
 
@@ -393,7 +221,7 @@ export class LibraryService {
         id: createId('file'),
         trackId: localFile.trackId,
         rootId: remoteRoot.id,
-        relativePath,
+        relativePath: persistedRelativePath,
         absolutePathSnapshot: remoteAbsolutePath,
         lrcPath: remoteLrcPath,
         format: localFile.format,
@@ -402,6 +230,7 @@ export class LibraryService {
         bitrate: localFile.bitrate,
         modifiedAt: localFile.modifiedAt,
         sidecarModifiedAt: localFile.sidecarModifiedAt,
+        sidecarSha256: localFile.sidecarSha256,
         audioSha256: localFile.audioSha256,
         tagFingerprint: localFile.tagFingerprint,
         embeddedLyricsStatus: localFile.embeddedLyricsStatus,
@@ -424,6 +253,7 @@ export class LibraryService {
           bitrate: localFile.bitrate,
           modifiedAt: localFile.modifiedAt,
           sidecarModifiedAt: localFile.sidecarModifiedAt,
+          sidecarSha256: localFile.sidecarSha256,
           audioSha256: localFile.audioSha256,
           tagFingerprint: localFile.tagFingerprint,
           embeddedLyricsStatus: localFile.embeddedLyricsStatus,
@@ -436,9 +266,9 @@ export class LibraryService {
       })
   }
 
-  async pruneIndexedFile(rootUri: string, relativePath: string): Promise<void> {
+  async removeRemoteCopy(rootUri: string, relativePath: string): Promise<void> {
     const rootRow = await this.getRootRowByUri(rootUri)
-    if (!rootRow) return
+    if (!rootRow || rootRow.kind !== 'remote') return
 
     const existing = await this.db.query.libraryFilesTable.findFirst({
       where: and(
@@ -495,8 +325,6 @@ export class LibraryService {
           managedOutput: root.managedOutput,
           createdAt: timestamp,
           updatedAt: timestamp,
-          lastScannedAt: null,
-          lastScanStatus: null,
         })
         .onConflictDoUpdate({
           target: libraryRootsTable.id,
@@ -526,43 +354,38 @@ export class LibraryService {
     }
 
     for (const root of roots) {
-      try {
-        const scan = await this.pythonWorker.runJsonCommand<RootScanResult>(
-          'library-scan-root',
-          {
-            kind: root.kind,
-            transport: root.transport,
-            uri: root.uri,
-          }
-        )
-        await this.persistRootScan(
-          root,
-          scan,
-          trackByIdentity,
-          aggregateByTrackId
-        )
-        await this.db
-          .update(libraryRootsTable)
-          .set({
-            updatedAt: nowIso(),
-            lastScannedAt: scan.scanned_at,
-            lastScanStatus: 'ok',
-          })
-          .where(eq(libraryRootsTable.id, root.id))
-        if (root.kind === 'local') {
-          await this.persistLocalIndexMeta(root.uri)
+      const scan = await this.pythonWorker.runJsonCommand<RootScanResult>(
+        'library-scan-root',
+        {
+          kind: root.kind,
+          transport: root.transport,
+          uri: root.uri,
         }
-      } catch (error) {
+      )
+      await this.persistRootScan(
+        root,
+        scan,
+        trackByIdentity,
+        aggregateByTrackId
+      )
+    }
+
+    if (kindFilter?.has('local')) {
+      const currentLocalRootIds = new Set(
+        roots.filter((root) => root.kind === 'local').map((root) => root.id)
+      )
+      const storedLocalRoots = await this.db
+        .select()
+        .from(libraryRootsTable)
+        .where(eq(libraryRootsTable.kind, 'local'))
+      for (const staleRoot of storedLocalRoots) {
+        if (currentLocalRootIds.has(staleRoot.id)) continue
         await this.db
-          .update(libraryRootsTable)
-          .set({
-            updatedAt: nowIso(),
-            lastScannedAt: nowIso(),
-            lastScanStatus:
-              error instanceof Error ? `error:${error.message}` : 'error',
-          })
-          .where(eq(libraryRootsTable.id, root.id))
-        throw error
+          .delete(libraryFilesTable)
+          .where(eq(libraryFilesTable.rootId, staleRoot.id))
+        await this.db
+          .delete(libraryRootsTable)
+          .where(eq(libraryRootsTable.id, staleRoot.id))
       }
     }
 
@@ -594,8 +417,6 @@ export class LibraryService {
       managedOutput: row.managedOutput,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-      lastScannedAt: row.lastScannedAt,
-      lastScanStatus: row.lastScanStatus,
     }))
   }
 
@@ -837,20 +658,7 @@ export class LibraryService {
     return { sourceIds, resolvedIds, trackSignatures, releaseSignatures }
   }
 
-  private async runLocalIndexJob(
-    _mode: LocalIndexJobMode,
-    options: {
-      fullScan: boolean
-      successMessage: string
-    }
-  ): Promise<CommandResult> {
-    if (this.localIndexJob) {
-      return {
-        ok: false,
-        message: 'Library indexing already in progress.',
-      }
-    }
-
+  private async runLocalReconcilePass(): Promise<CommandResult> {
     const root = await this.resolveCurrentLocalRoot()
     if (!root) {
       return {
@@ -859,81 +667,43 @@ export class LibraryService {
       }
     }
 
-    const job = (async (): Promise<CommandResult> => {
-      try {
-        await this.upsertRoot(root)
-        const result = options.fullScan
-          ? await this.scanLocalRoots()
-          : await this.reconcileLocalRoot(root)
-        if (!result.ok) return result
-        await this.persistLocalIndexMeta(root.uri)
-        if (this.artworkService) {
-          void this.artworkService.pruneStaleCache().catch((error) => {
-            logMain({
-              level: 'warn',
-              source: 'artwork',
-              message:
-                'Failed to prune stale artwork cache after library index',
-              context: {
-                error: error instanceof Error ? error.message : String(error),
-              },
-            })
-          })
-        }
-        return {
-          ok: true,
-          message: options.successMessage,
-        }
-      } finally {
-        this.localIndexJob = null
-        this.emitIndexStatusChanged()
-      }
-    })()
-
-    this.localIndexJob = job
-    this.emitIndexStatusChanged()
-    return job
-  }
-
-  private async reconcileLocalRoot(
-    root: RootDescriptor
-  ): Promise<CommandResult> {
     try {
-      const knownFiles = await this.db
-        .select({
-          relative_path: libraryFilesTable.relativePath,
-          modified_at: libraryFilesTable.modifiedAt,
-          size_bytes: libraryFilesTable.sizeBytes,
-          lrc_path: libraryFilesTable.lrcPath,
-          sidecar_modified_at: libraryFilesTable.sidecarModifiedAt,
-        })
-        .from(libraryFilesTable)
-        .where(eq(libraryFilesTable.rootId, root.id))
-
       const scan = await this.pythonWorker.runJsonCommand<RootScanResult>(
-        'library-reconcile-local-root',
+        'library-scan-root',
         {
+          kind: root.kind,
+          transport: root.transport,
           uri: root.uri,
-          known_files: knownFiles,
         }
       )
-
-      await this.persistIncrementalRootChanges(root, scan)
-      await this.db
-        .update(libraryRootsTable)
-        .set({
-          updatedAt: nowIso(),
-          lastScannedAt: scan.scanned_at,
-          lastScanStatus: 'ok',
+      await this.persistLocalSnapshot(root, scan)
+      this.emitInventoryChanged()
+      if (this.artworkService) {
+        void this.artworkService.pruneStaleCache().catch((error) => {
+          logMain({
+            level: 'warn',
+            source: 'artwork',
+            message: 'Failed to prune stale artwork cache after library scan',
+            context: {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
         })
-        .where(eq(libraryRootsTable.id, root.id))
-
+      }
       return {
         ok: true,
-        message: 'Library reconcile complete.',
+        message: 'Library refresh complete.',
       }
     } catch (error) {
-      await this.markRootScanFailure(root.id, error)
+      logMain({
+        level: 'error',
+        source: 'library',
+        message: 'Local library reconcile failed',
+        context: {
+          rootUri: root.uri,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      })
       return {
         ok: false,
         message:
@@ -942,303 +712,54 @@ export class LibraryService {
     }
   }
 
-  private async persistIncrementalRootChanges(
+  private async persistLocalSnapshot(
     root: RootDescriptor,
     scan: RootScanResult
-  ) {
-    const existingFiles = await this.db
-      .select()
-      .from(libraryFilesTable)
-      .where(eq(libraryFilesTable.rootId, root.id))
-    const fileByPath = new Map(
-      existingFiles.map((file) => [file.relativePath, file] as const)
+  ): Promise<void> {
+    const existingTracks = await this.db.select().from(libraryTracksTable)
+    const trackByIdentity = new Map(
+      existingTracks.map((track) => [
+        `${track.identityKind}:${track.identityValue}`,
+        track,
+      ])
     )
-    const trackByIdentity = await this.loadTrackByIdentity()
-    const affectedTrackIds = new Set<string>()
+    const aggregateByTrackId = new Map<string, TrackAggregate>()
 
-    for (const payload of scan.files) {
-      const identityKey = `${payload.identity_kind}:${payload.identity_value}`
-      const existingTrack = trackByIdentity.get(identityKey)
-      const trackId = existingTrack?.id ?? createId('track')
-      const existingFile = fileByPath.get(payload.relative_path)
-      const fileId = existingFile?.id ?? createId('file')
-      const firstSeenAt = existingFile?.firstSeenAt ?? payload.last_scanned_at
-
-      await this.db
-        .insert(libraryFilesTable)
-        .values({
-          id: fileId,
-          trackId,
-          rootId: root.id,
-          relativePath: payload.relative_path,
-          absolutePathSnapshot: payload.absolute_path_snapshot,
-          lrcPath: payload.lrc_path,
-          format: payload.format,
-          sizeBytes: payload.size_bytes,
-          durationSeconds: payload.duration_seconds,
-          bitrate: payload.bitrate,
-          modifiedAt: payload.modified_at,
-          sidecarModifiedAt: payload.sidecar_modified_at,
-          audioSha256: payload.audio_sha256,
-          tagFingerprint: payload.tag_fingerprint,
-          embeddedLyricsStatus: payload.embedded_lyrics_status,
-          sidecarLyricsStatus: payload.sidecar_lyrics_status,
-          missingFieldsJson: JSON.stringify(payload.missing_fields),
-          discoveredVia: payload.discovered_via,
-          lastScannedAt: payload.last_scanned_at,
-          firstSeenAt,
-          updatedAt: nowIso(),
-        })
-        .onConflictDoUpdate({
-          target: [libraryFilesTable.rootId, libraryFilesTable.relativePath],
-          set: {
-            trackId,
-            absolutePathSnapshot: payload.absolute_path_snapshot,
-            lrcPath: payload.lrc_path,
-            format: payload.format,
-            sizeBytes: payload.size_bytes,
-            durationSeconds: payload.duration_seconds,
-            bitrate: payload.bitrate,
-            modifiedAt: payload.modified_at,
-            sidecarModifiedAt: payload.sidecar_modified_at,
-            audioSha256: payload.audio_sha256,
-            tagFingerprint: payload.tag_fingerprint,
-            embeddedLyricsStatus: payload.embedded_lyrics_status,
-            sidecarLyricsStatus: payload.sidecar_lyrics_status,
-            missingFieldsJson: JSON.stringify(payload.missing_fields),
-            discoveredVia: payload.discovered_via,
-            lastScannedAt: payload.last_scanned_at,
-            updatedAt: nowIso(),
-          },
-        })
-
-      await this.upsertTrackFromPayload(
-        trackId,
-        existingTrack ?? null,
-        payload,
-        root.kind,
-        fileId
+    this.db.run(sql.raw('SAVEPOINT local_library_reconcile'))
+    try {
+      await this.upsertRoot(root)
+      await this.persistRootScan(
+        root,
+        scan,
+        trackByIdentity,
+        aggregateByTrackId
       )
-      trackByIdentity.set(identityKey, {
-        ...(existingTrack ?? {
-          id: trackId,
-          firstSeenAt: payload.last_scanned_at,
-          lastSeenAt: payload.last_scanned_at,
-          updatedAt: nowIso(),
-        }),
-        id: trackId,
-      } as typeof libraryTracksTable.$inferSelect)
-      affectedTrackIds.add(trackId)
-      if (existingFile && existingFile.trackId !== trackId) {
-        affectedTrackIds.add(existingFile.trackId)
+
+      const staleRoots = await this.db
+        .select()
+        .from(libraryRootsTable)
+        .where(eq(libraryRootsTable.kind, 'local'))
+      for (const staleRoot of staleRoots) {
+        if (staleRoot.id === root.id) continue
+        await this.db
+          .delete(libraryFilesTable)
+          .where(eq(libraryFilesTable.rootId, staleRoot.id))
+        await this.db
+          .delete(libraryRootsTable)
+          .where(eq(libraryRootsTable.id, staleRoot.id))
       }
-    }
 
-    const deletedPaths = scan.deleted_relative_paths ?? []
-    if (deletedPaths.length > 0) {
-      const deletedRows = deletedPaths
-        .map((relativePath) => fileByPath.get(relativePath))
-        .filter((value): value is typeof libraryFilesTable.$inferSelect =>
-          Boolean(value)
-        )
-      if (deletedRows.length > 0) {
-        await this.db.delete(libraryFilesTable).where(
-          and(
-            eq(libraryFilesTable.rootId, root.id),
-            inArray(
-              libraryFilesTable.relativePath,
-              deletedRows.map((row) => row.relativePath)
-            )
-          )
-        )
-        for (const row of deletedRows) {
-          affectedTrackIds.add(row.trackId)
-        }
-      }
-    }
-
-    await this.deleteOrphanTracks()
-    await this.reassignPreferredFileIds([...affectedTrackIds])
-  }
-
-  private async upsertTrackFromPayload(
-    trackId: string,
-    existingTrack: typeof libraryTracksTable.$inferSelect | null,
-    payload: ScannedFilePayload,
-    rootKind: RootKind,
-    fileId: string
-  ) {
-    const timestamp = nowIso()
-    const preferredFileId =
-      rootKind === 'local' ? fileId : (existingTrack?.preferredFileId ?? fileId)
-    const firstSeenAt = existingTrack?.firstSeenAt ?? payload.last_scanned_at
-    const lastSeenAt =
-      existingTrack && existingTrack.lastSeenAt > payload.last_scanned_at
-        ? existingTrack.lastSeenAt
-        : payload.last_scanned_at
-
-    await this.db
-      .insert(libraryTracksTable)
-      .values({
-        id: trackId,
-        identityKind: payload.identity_kind,
-        identityValue: payload.identity_value,
-        managedByApp: existingTrack?.managedByApp ?? payload.managed_by_app,
-        tagSchemaVersion: this.pickNumber(
-          existingTrack?.tagSchemaVersion ?? null,
-          payload.tag_schema_version
-        ),
-        youtubeMusicTrackId:
-          payload.youtube_music_track_id ??
-          existingTrack?.youtubeMusicTrackId ??
-          null,
-        spotifyTrackId:
-          payload.spotify_track_id ?? existingTrack?.spotifyTrackId ?? null,
-        soundcloudTrackId:
-          payload.soundcloud_track_id ??
-          existingTrack?.soundcloudTrackId ??
-          null,
-        resolvedYoutubeMusicTrackId:
-          payload.resolved_youtube_music_track_id ??
-          existingTrack?.resolvedYoutubeMusicTrackId ??
-          null,
-        sourceOrigin:
-          payload.source_origin ?? existingTrack?.sourceOrigin ?? null,
-        catalogReleaseBrowseId:
-          payload.catalog_release_browse_id ??
-          existingTrack?.catalogReleaseBrowseId ??
-          null,
-        catalogReleaseTitle:
-          payload.catalog_release_title ??
-          existingTrack?.catalogReleaseTitle ??
-          null,
-        catalogReleaseKind:
-          payload.catalog_release_kind ??
-          existingTrack?.catalogReleaseKind ??
-          null,
-        title: payload.title,
-        artist: payload.artist,
-        album: payload.album,
-        albumArtist: payload.album_artist,
-        trackNumber: payload.track_number,
-        trackTotal: payload.track_total,
-        discNumber: payload.disc_number,
-        discTotal: payload.disc_total,
-        year: payload.year,
-        date: payload.date,
-        genre: payload.genre,
-        language: payload.language,
-        isrc: payload.isrc,
-        mbTrackId: payload.mb_track_id,
-        mbAlbumId: payload.mb_album_id,
-        mbReleaseGroupId: payload.mb_releasegroup_id,
-        lyricsStatus: existingTrack
-          ? this.bestLyricsStatus(
-              existingTrack.lyricsStatus as LyricsStatus,
-              payload.lyrics_status
-            )
-          : payload.lyrics_status,
-        hasEmbeddedLyrics:
-          (existingTrack?.hasEmbeddedLyrics ?? false) ||
-          payload.has_embedded_lyrics,
-        hasSidecarLyrics:
-          (existingTrack?.hasSidecarLyrics ?? false) ||
-          payload.has_sidecar_lyrics,
-        coverArtPresent:
-          (existingTrack?.coverArtPresent ?? false) ||
-          payload.cover_art_present,
-        missingFieldsJson: JSON.stringify(payload.missing_fields),
-        preferredFileId,
-        firstSeenAt,
-        lastSeenAt,
-        updatedAt: timestamp,
-      })
-      .onConflictDoUpdate({
-        target: libraryTracksTable.id,
-        set: {
-          identityKind: payload.identity_kind,
-          identityValue: payload.identity_value,
-          managedByApp: existingTrack?.managedByApp ?? payload.managed_by_app,
-          tagSchemaVersion: this.pickNumber(
-            existingTrack?.tagSchemaVersion ?? null,
-            payload.tag_schema_version
-          ),
-          youtubeMusicTrackId:
-            payload.youtube_music_track_id ??
-            existingTrack?.youtubeMusicTrackId ??
-            null,
-          spotifyTrackId:
-            payload.spotify_track_id ?? existingTrack?.spotifyTrackId ?? null,
-          soundcloudTrackId:
-            payload.soundcloud_track_id ??
-            existingTrack?.soundcloudTrackId ??
-            null,
-          resolvedYoutubeMusicTrackId:
-            payload.resolved_youtube_music_track_id ??
-            existingTrack?.resolvedYoutubeMusicTrackId ??
-            null,
-          sourceOrigin:
-            payload.source_origin ?? existingTrack?.sourceOrigin ?? null,
-          catalogReleaseBrowseId:
-            payload.catalog_release_browse_id ??
-            existingTrack?.catalogReleaseBrowseId ??
-            null,
-          catalogReleaseTitle:
-            payload.catalog_release_title ??
-            existingTrack?.catalogReleaseTitle ??
-            null,
-          catalogReleaseKind:
-            payload.catalog_release_kind ??
-            existingTrack?.catalogReleaseKind ??
-            null,
-          title: payload.title,
-          artist: payload.artist,
-          album: payload.album,
-          albumArtist: payload.album_artist,
-          trackNumber: payload.track_number,
-          trackTotal: payload.track_total,
-          discNumber: payload.disc_number,
-          discTotal: payload.disc_total,
-          year: payload.year,
-          date: payload.date,
-          genre: payload.genre,
-          language: payload.language,
-          isrc: payload.isrc,
-          mbTrackId: payload.mb_track_id,
-          mbAlbumId: payload.mb_album_id,
-          mbReleaseGroupId: payload.mb_releasegroup_id,
-          lyricsStatus: existingTrack
-            ? this.bestLyricsStatus(
-                existingTrack.lyricsStatus as LyricsStatus,
-                payload.lyrics_status
-              )
-            : payload.lyrics_status,
-          hasEmbeddedLyrics:
-            (existingTrack?.hasEmbeddedLyrics ?? false) ||
-            payload.has_embedded_lyrics,
-          hasSidecarLyrics:
-            (existingTrack?.hasSidecarLyrics ?? false) ||
-            payload.has_sidecar_lyrics,
-          coverArtPresent:
-            (existingTrack?.coverArtPresent ?? false) ||
-            payload.cover_art_present,
-          missingFieldsJson: JSON.stringify(payload.missing_fields),
-          preferredFileId,
-          firstSeenAt,
-          lastSeenAt,
-          updatedAt: timestamp,
-        },
-      })
-  }
-
-  private async loadTrackByIdentity() {
-    const tracks = await this.db.select().from(libraryTracksTable)
-    return new Map<string, typeof libraryTracksTable.$inferSelect>(
-      tracks.map(
-        (track) =>
-          [`${track.identityKind}:${track.identityValue}`, track] as const
+      await this.rebuildTrackAggregates(aggregateByTrackId)
+      await this.deleteOrphanTracks()
+      await this.reassignPreferredFileIds(
+        existingTracks.map((track) => track.id)
       )
-    )
+      this.db.run(sql.raw('RELEASE SAVEPOINT local_library_reconcile'))
+    } catch (error) {
+      this.db.run(sql.raw('ROLLBACK TO SAVEPOINT local_library_reconcile'))
+      this.db.run(sql.raw('RELEASE SAVEPOINT local_library_reconcile'))
+      throw error
+    }
   }
 
   private async reassignPreferredFileIds(trackIds: string[]) {
@@ -1309,8 +830,6 @@ export class LibraryService {
         managedOutput: root.managedOutput,
         createdAt: timestamp,
         updatedAt: timestamp,
-        lastScannedAt: null,
-        lastScanStatus: null,
       })
       .onConflictDoUpdate({
         target: libraryRootsTable.id,
@@ -1331,62 +850,10 @@ export class LibraryService {
     return roots.find((root) => root.uri === uri) ?? null
   }
 
-  private async readMetaValue(key: string): Promise<string | null> {
-    const row = await this.db.query.metaTable.findFirst({
-      where: eq(metaTable.key, key),
-    })
-    return row?.value ?? null
-  }
-
-  private async writeMetaValue(key: string, value: string) {
-    await this.db.insert(metaTable).values({ key, value }).onConflictDoUpdate({
-      target: metaTable.key,
-      set: { value },
-    })
-  }
-
-  private async readIndexVersion(): Promise<number | null> {
-    const value = await this.readMetaValue('library_index_version')
-    if (!value) return null
-    const parsed = Number.parseInt(value, 10)
-    return Number.isFinite(parsed) ? parsed : null
-  }
-
-  private async persistLocalIndexMeta(rootUri: string) {
-    await Promise.all([
-      this.writeMetaValue(
-        'library_index_version',
-        String(LIBRARY_INDEX_VERSION)
-      ),
-      this.writeMetaValue('library_index_local_root_uri', rootUri),
-    ])
-  }
-
-  private async markRootScanFailure(rootId: string, error: unknown) {
-    await this.db
-      .update(libraryRootsTable)
-      .set({
-        updatedAt: nowIso(),
-        lastScannedAt: nowIso(),
-        lastScanStatus:
-          error instanceof Error ? `error:${error.message}` : 'error',
-      })
-      .where(eq(libraryRootsTable.id, rootId))
-  }
-
-  private emitIndexStatusChanged() {
-    for (const listener of this.indexStatusListeners) {
+  private emitInventoryChanged() {
+    for (const listener of this.inventoryListeners) {
       listener()
     }
-  }
-
-  private isPathInsideRoot(rootUri: string, candidatePath: string) {
-    const relative = path.relative(rootUri, candidatePath)
-    return (
-      relative !== '' &&
-      !relative.startsWith('..') &&
-      !path.isAbsolute(relative)
-    )
   }
 
   private toRelativePath(
@@ -1524,6 +991,7 @@ export class LibraryService {
           bitrate: payload.bitrate,
           modifiedAt: payload.modified_at,
           sidecarModifiedAt: payload.sidecar_modified_at,
+          sidecarSha256: payload.sidecar_sha256,
           audioSha256: payload.audio_sha256,
           tagFingerprint: payload.tag_fingerprint,
           embeddedLyricsStatus: payload.embedded_lyrics_status,
@@ -1546,6 +1014,7 @@ export class LibraryService {
             bitrate: payload.bitrate,
             modifiedAt: payload.modified_at,
             sidecarModifiedAt: payload.sidecar_modified_at,
+            sidecarSha256: payload.sidecar_sha256,
             audioSha256: payload.audio_sha256,
             tagFingerprint: payload.tag_fingerprint,
             embeddedLyricsStatus: payload.embedded_lyrics_status,
@@ -1893,6 +1362,7 @@ export class LibraryService {
       bitrate: file.bitrate,
       modifiedAt: file.modifiedAt,
       sidecarModifiedAt: file.sidecarModifiedAt,
+      sidecarSha256: file.sidecarSha256,
       audioSha256: file.audioSha256,
       tagFingerprint: file.tagFingerprint,
       embeddedLyricsStatus: file.embeddedLyricsStatus as LyricsStatus,

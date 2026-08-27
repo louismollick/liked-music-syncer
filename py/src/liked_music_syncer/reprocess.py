@@ -153,6 +153,7 @@ def _item_from_payload(item_payload: dict[str, Any]) -> SyncItemState:
         }
     )
     item.cover_art_url = _string_or_none(item_payload.get("cover_art_url"))
+    item.selected_source_url = _string_or_none(item_payload.get("selected_source_url"))
     return item
 
 
@@ -444,6 +445,17 @@ def _path_state(path: Path | None) -> str:
     return f"{path} (exists={path.exists()})"
 
 
+def _same_filesystem_entry(left: Path | None, right: Path | None) -> bool:
+    if left is None or right is None:
+        return False
+    if left == right:
+        return True
+    try:
+        return left.samefile(right)
+    except OSError:
+        return False
+
+
 def _wrap_file_operation_error(
     exc: OSError,
     *,
@@ -603,14 +615,21 @@ def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) 
             )
         try:
             target_output_path.parent.mkdir(parents=True, exist_ok=True)
-            if old_output != target_output_path:
+            if not _same_filesystem_entry(old_output, target_output_path):
                 if target_output_path.exists():
                     target_output_path.unlink()
                 shutil.move(str(old_output), str(target_output_path))
             write_media_tags(target_output_path, item, cover_bytes, embedded_lyrics)
             if target_lrc_path and sidecar_text:
                 target_lrc_path.write_text(sidecar_text, encoding="utf-8")
-            if old_lrc and old_lrc.exists() and (not target_lrc_path or old_lrc != target_lrc_path):
+            if (
+                old_lrc
+                and old_lrc.exists()
+                and (
+                    target_lrc_path is None
+                    or not _same_filesystem_entry(old_lrc, target_lrc_path)
+                )
+            ):
                 old_lrc.unlink()
             if target_lrc_path is None:
                 stale_lrc = target_output_path.with_suffix(".lrc")
@@ -657,9 +676,20 @@ def _apply_reprocess_payload(config: SyncConfig, apply_payload: dict[str, Any]) 
                 same_video=False,
             ) from exc
 
-    if old_output and old_output.exists() and old_output != target_output_path:
+    if (
+        old_output
+        and old_output.exists()
+        and not _same_filesystem_entry(old_output, target_output_path)
+    ):
         old_output.unlink()
-    if old_lrc and old_lrc.exists() and (not target_lrc_path or old_lrc != target_lrc_path):
+    if (
+        old_lrc
+        and old_lrc.exists()
+        and (
+            target_lrc_path is None
+            or not _same_filesystem_entry(old_lrc, target_lrc_path)
+        )
+    ):
         old_lrc.unlink()
     _sync_remote_artifacts(config, target_output_path, target_lrc_path, old_output, old_lrc)
     return {
@@ -749,16 +779,31 @@ def run_reprocess_stream(payload: dict[str, Any]) -> None:
             item.stage = "source_resolve"
             _emit_reprocess_track(config.job_id, item)
 
-            preview = _preview_one(config, ytmusic, candidate, index)
-            apply_payload = preview["payload"]
-            if not isinstance(apply_payload, dict):
-                raise ValueError("Missing preview apply payload")
+            try:
+                preview = _preview_one(config, ytmusic, candidate, index)
+                apply_payload = preview["payload"]
+                if not isinstance(apply_payload, dict):
+                    raise ValueError("Missing preview apply payload")
 
-            item_payload = apply_payload.get("item")
-            if not isinstance(item_payload, dict):
-                raise ValueError("Missing preview item payload")
+                item_payload = apply_payload.get("item")
+                if not isinstance(item_payload, dict):
+                    raise ValueError("Missing preview item payload")
 
-            item = _item_from_payload(item_payload)
+                item = _item_from_payload(item_payload)
+            except Exception as exc:
+                item.status = "failed_terminal"
+                item.stage = "finalize"
+                item.reason_code = "reprocess_preview_failed"
+                item.reason_detail = str(exc)
+                _emit_reprocess_log(
+                    config.job_id,
+                    item,
+                    "error",
+                    "reprocess-preview-failed",
+                    str(exc),
+                )
+                _emit_reprocess_track(config.job_id, item)
+                continue
 
             if preview["action_kind"] == "noop" or not preview["diff"]:
                 item.status = "completed"
@@ -809,3 +854,4 @@ def run_reprocess_stream(payload: dict[str, Any]) -> None:
                 "total_count": total_count,
             }
         )
+        raise

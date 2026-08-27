@@ -122,8 +122,6 @@ export const libraryRootsTable = sqliteTable('library_roots', {
   managedOutput: integer('managed_output', { mode: 'boolean' }).notNull(),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
-  lastScannedAt: text('last_scanned_at'),
-  lastScanStatus: text('last_scan_status'),
 })
 
 export const libraryTracksTable = sqliteTable(
@@ -197,6 +195,7 @@ export const libraryFilesTable = sqliteTable(
     bitrate: integer('bitrate'),
     modifiedAt: text('modified_at'),
     sidecarModifiedAt: text('sidecar_modified_at'),
+    sidecarSha256: text('sidecar_sha256'),
     audioSha256: text('audio_sha256'),
     tagFingerprint: text('tag_fingerprint'),
     embeddedLyricsStatus: text('embedded_lyrics_status').notNull(),

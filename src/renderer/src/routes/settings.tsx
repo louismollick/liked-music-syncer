@@ -39,6 +39,7 @@ export function SettingsRouteComponent(): JSX.Element {
         setAuthStatus(nextAuth)
       }}
       onAction={runAction}
+      onAuthStatusChange={setAuthStatus}
     />
   )
 }

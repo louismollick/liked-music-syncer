@@ -170,12 +170,82 @@ def test_build_yt_dlp_options_enables_mweb_and_bgutil(monkeypatch: pytest.Monkey
     assert options["logtostderr"] is True
     assert options["noprogress"] is True
     assert options["skip_download"] is True
+    assert options["js_runtimes"] == {"node": {}}
     assert options["remote_components"] == ["ejs:github"]
     assert options["cookiesfrombrowser"] == ("firefox",)
     assert options["extractor_args"]["youtube"]["player_client"] == ["mweb", "default"]
     assert options["extractor_args"]["youtubepot-bgutilhttp"]["base_url"] == [
         "http://127.0.0.1:4416"
     ]
+
+
+def test_run_sync_processes_explicit_retry_items_without_refetching_likes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[dict[str, Any]] = []
+    config = _config(tmp_path)
+    config.force_reprocess = True
+    config.retry_items = [
+        {
+            "trackWorkId": "track_retry_1",
+            "videoId": "failed123",
+            "resolvedYoutubeMusicTrackId": "resolved123",
+            "title": "Failed Song",
+            "artists": [{"name": "Artist"}],
+            "album": {"name": "Album"},
+            "albumArtist": "Album Artist",
+            "sourceKind": "liked_song",
+            "selectedSourceUrl": "https://music.youtube.com/watch?v=resolved123",
+            "thumbnails": [],
+        }
+    ]
+
+    class FakeYTMusic:
+        def get_liked_songs(self, limit: int = 5000) -> dict[str, object]:
+            raise AssertionError("retry must not refetch liked songs")
+
+    monkeypatch.setattr(sync_engine_module, "emit_event", events.append)
+    monkeypatch.setattr(
+        sync_engine_module, "_build_ytmusic_client", lambda *_args: FakeYTMusic()
+    )
+    monkeypatch.setattr(
+        sync_engine_module, "_resolve_exact_catalog", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(sync_engine_module, "_musicbrainz_enrich", lambda *_args: None)
+    monkeypatch.setattr(
+        sync_engine_module,
+        "_resolve_best_lyrics",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    monkeypatch.setattr(
+        sync_engine_module,
+        "_download_audio",
+        lambda *_args, **_kwargs: (tmp_path / "downloaded.m4a", {"acodec": "aac"}),
+    )
+    monkeypatch.setattr(
+        sync_engine_module,
+        "_normalize_audio",
+        lambda _downloaded, output_path, *_args: (
+            output_path.parent.mkdir(parents=True, exist_ok=True),
+            output_path.write_bytes(b"audio"),
+        ),
+    )
+    monkeypatch.setattr(sync_engine_module, "_copy_remote", lambda *_args: None)
+    monkeypatch.setattr(sync_engine_module, "write_media_tags", lambda *_args: None)
+
+    run_sync(config)
+
+    final_items = [
+        event["item"]
+        for event in events
+        if event.get("type") == "track"
+        and event["item"].get("status") == "completed"
+    ]
+    assert len(final_items) == 1
+    assert final_items[0]["id"] == "track_retry_1"
+    assert final_items[0]["youtube_music_track_id"] == "failed123"
+    assert final_items[0]["resolved_youtube_music_track_id"] == "resolved123"
+    assert final_items[0]["selected_source_url"].endswith("resolved123")
 
 
 def test_build_yt_dlp_options_uses_selected_cookie_browser(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

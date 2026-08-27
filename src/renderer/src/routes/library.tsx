@@ -132,7 +132,6 @@ export function LibraryViewContainer({
     tracks,
     tracksLoaded,
     tracksRefreshing,
-    libraryIndexStatus,
     authStatus,
     runAction,
   } = useAppState()
@@ -222,7 +221,6 @@ export function LibraryViewContainer({
           artists={artists}
           selectedIds={selectedArtistIds}
           selectionEnabled={selectionEnabled}
-          libraryIndexStatus={libraryIndexStatus}
           authStatus={authStatus}
           isActive={activeTab === 'artists'}
           onToggleSelectionMode={() =>

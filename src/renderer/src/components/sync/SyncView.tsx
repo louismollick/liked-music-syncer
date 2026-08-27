@@ -12,7 +12,7 @@ import { JobCard } from './JobCard'
 
 interface Props {
   snapshot: SyncSnapshot
-  onAction: (action: Promise<CommandResult>) => void
+  onAction: (action: Promise<CommandResult>) => Promise<void>
 }
 
 function EmptyState({ label }: { label: string }): JSX.Element {
@@ -62,10 +62,21 @@ function filterJobs(jobs: SyncJobView[], filter: SyncFilter) {
 
 export function SyncView({ snapshot, onAction }: Props): JSX.Element {
   const [filter, setFilter] = useState<SyncFilter>('all')
+  const [retryingJobId, setRetryingJobId] = useState<string | null>(null)
   const filtered = useMemo(
     () => filterJobs(snapshot.jobs, filter),
     [snapshot.jobs, filter]
   )
+
+  const retryFailedTracks = async (jobId: string) => {
+    if (retryingJobId) return
+    setRetryingJobId(jobId)
+    try {
+      await onAction(window.api.sync.retryFailedTracks(jobId))
+    } finally {
+      setRetryingJobId(null)
+    }
+  }
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -115,6 +126,8 @@ export function SyncView({ snapshot, onAction }: Props): JSX.Element {
                 job={job}
                 tracks={tracks}
                 onCancel={(id) => onAction(window.api.sync.cancel(id))}
+                onRetry={(id) => void retryFailedTracks(id)}
+                retrying={retryingJobId === job.id}
                 defaultExpanded={
                   filter === 'failed' || snapshot.jobs.length === 1
                 }

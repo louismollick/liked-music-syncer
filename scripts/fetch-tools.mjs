@@ -103,7 +103,7 @@ runOrThrow('npm', ['prune', '--omit=dev'], providerServerDirectory)
 
 const readmeContents = `Bundled tooling for liked-music-syncer.
 
-- ffmpeg -> resources/bin/ffmpeg
+- ffmpeg -> installed by pnpm through the pinned ffmpeg-static dependency
 - yt-dlp plugin zip -> resources/bin/yt-dlp-plugins/bgutil-ytdlp-pot-provider.zip
 - bgutil provider server -> resources/bin/bgutil-ytdlp-pot-provider/server/build/main.js
 
@@ -114,4 +114,4 @@ Packaged builds bundle these exact paths.
 
 await writeFile(path.join(binDirectory, 'README.txt'), readmeContents, 'utf8')
 
-console.log(`Prepared ${binDirectory}. Add ffmpeg before packaging.`)
+console.log(`Prepared ${binDirectory}. pnpm provides ffmpeg-static separately.`)

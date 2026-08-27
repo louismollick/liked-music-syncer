@@ -30,9 +30,9 @@ export function registerIpcHandlers(
       window.webContents.send(eventChannel, snapshot)
     }
   })
-  libraryService.subscribeIndexStatus(() => {
+  libraryService.subscribeInventory(() => {
     if (!window.isDestroyed()) {
-      window.webContents.send('library:indexStatusUpdated')
+      window.webContents.send('library:inventoryUpdated')
     }
   })
   likedArtistsService.subscribeArtistPhotoUpdates((update) => {
@@ -51,7 +51,11 @@ export function registerIpcHandlers(
   ipcMain.handle(
     'settings:save',
     async (_event, input): Promise<SettingsSaveResult> => {
+      const previous = await settingsService.getRuntimeSettings()
       const saveResult = await settingsService.save(input)
+      if (previous.outputDirectory !== input.outputDirectory.trim()) {
+        void libraryService.reconcileLocalLibrary()
+      }
       const shouldValidateAuth = Boolean(input.ytmusicBrowserAuth?.trim())
 
       if (!shouldValidateAuth) {
@@ -99,6 +103,9 @@ export function registerIpcHandlers(
     (_event, artistIds?: string[]) =>
       syncService.refreshFavoriteArtists(artistIds)
   )
+  ipcMain.handle('sync:retryFailedTracks', (_event, jobId: string) =>
+    syncService.retryFailedTracks(jobId)
+  )
   ipcMain.handle('sync:clearFailures', () => syncService.clearFailures())
   ipcMain.handle('sync:cancel', (_event, jobId: string) =>
     syncService.cancel(jobId)
@@ -109,12 +116,8 @@ export function registerIpcHandlers(
   )
   ipcMain.handle('sync:doctor', () => syncService.doctor())
   ipcMain.handle('sync:getSnapshot', () => syncService.getSnapshot())
-  ipcMain.handle('library:scanRoots', () => libraryService.scanRoots())
-  ipcMain.handle('library:getIndexStatus', () =>
-    libraryService.getIndexStatus()
-  )
   const refreshLibrary = async () => {
-    const scanResult = await libraryService.refreshIndex()
+    const scanResult = await libraryService.reconcileLocalLibrary()
     if (!scanResult.ok) return scanResult
 
     const refreshResult = await likedArtistsService.refreshArtists()

@@ -163,6 +163,7 @@ interface ReprocessCandidatePayload {
 interface WorkerLaunchOptions {
   onCompleted?: () => Promise<void>
   onFinally?: () => void
+  preservePlannedCount?: boolean
 }
 
 interface ManagedFileRow {
@@ -211,18 +212,40 @@ interface RemoteBackfillCandidate {
   localAudioPath: string
   localLrcPath: string | null
   remoteTarget: string
+  remoteRelativePath: string
+  replacing: boolean
+  copyAudio: boolean
+  sortIndex?: number
 }
 
 export interface RemoteShellTrackIdentity {
   relativePath: string
   youtubeMusicTrackId: string | null
   resolvedYoutubeMusicTrackId: string | null
+  tagFingerprint: string | null
+  sidecarSha256: string | null
 }
 
 export interface RemoteShellScanResult {
   scannedAt: string
   filesScanned: number
   identities: RemoteShellTrackIdentity[]
+}
+
+export function classifyRemoteTrack(
+  remoteMatch: RemoteShellTrackIdentity | undefined,
+  localTagFingerprint: string | null,
+  localSidecarSha256: string | null
+): 'copy' | 'skip' | 'replace' | 'sidecar' {
+  if (!remoteMatch) return 'copy'
+  if (
+    !remoteMatch.tagFingerprint ||
+    remoteMatch.tagFingerprint !== localTagFingerprint
+  )
+    return 'replace'
+  if (localSidecarSha256 === null) return 'skip'
+  if (remoteMatch.sidecarSha256 !== localSidecarSha256) return 'sidecar'
+  return 'skip'
 }
 
 export interface RcloneSftpConfig {
@@ -236,6 +259,8 @@ interface ExiftoolJsonRow {
   SourceFile?: unknown
   LMS_YOUTUBE_MUSIC_TRACK_ID?: unknown
   LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID?: unknown
+  ManagedMetadataFingerprint?: unknown
+  SidecarSHA256?: unknown
 }
 
 const REMOTE_EXIFTOOL_MISSING_MESSAGE =
@@ -293,6 +318,8 @@ export function normalizeExiftoolJson(
       resolvedYoutubeMusicTrackId: stringOrNull(
         row.LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID
       ),
+      tagFingerprint: stringOrNull(row.ManagedMetadataFingerprint),
+      sidecarSha256: stringOrNull(row.SidecarSHA256),
     }
   })
 
@@ -313,12 +340,15 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
-function buildRemoteScannerCommand(shellRoot: string) {
+export function buildRemoteScannerCommand(shellRoot: string) {
   return `cd ${shellQuote(shellRoot)} || { echo "__LMS_REMOTE_ROOT_MISSING__" >&2; exit 44; }
 command -v exiftool >/dev/null 2>&1 || { echo "__LMS_EXIFTOOL_MISSING__" >&2; exit 45; }
 python3 - <<'PY'
+import base64
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -330,6 +360,36 @@ for current, _, files in os.walk(root):
             paths.append(os.path.join(current, name))
 
 rows = []
+def value(row, *names):
+    for name in names:
+        current = row.get(name)
+        if current not in (None, ""):
+            return current
+    return None
+
+def integer(row, *names):
+    current = value(row, *names)
+    if current is None:
+        return None
+    match = re.match(r"^\\s*(\\d+)", str(current))
+    parsed = int(match.group(1)) if match else None
+    return parsed if parsed else None
+
+def text(row, *names):
+    current = value(row, *names)
+    return str(current) if current is not None else None
+
+def binary_hash(current):
+    if not isinstance(current, str):
+        return None
+    raw = base64.b64decode(current[7:]) if current.startswith("base64:") else current.encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+def lyrics_status(current):
+    if not current:
+        return "missing"
+    return "synced" if re.search(r"(?m)^\\[\\d{1,3}:\\d{2}(?:[.:]\\d{1,3})?\\]", str(current)) else "plain"
+
 for index in range(0, len(paths), 100):
     batch = paths[index:index + 100]
     if not batch:
@@ -338,10 +398,25 @@ for index in range(0, len(paths), 100):
         [
             "exiftool",
             "-json",
+            "-b",
+            "-n",
             "-charset",
             "filename=UTF8",
+            "-LMS_TAG_SCHEMA_VERSION",
             "-LMS_YOUTUBE_MUSIC_TRACK_ID",
+            "-LMS_SPOTIFY_TRACK_ID",
+            "-LMS_SOUNDCLOUD_TRACK_ID",
             "-LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID",
+            "-LMS_SOURCE_ORIGIN",
+            "-LMS_RESOLUTION_METHOD",
+            "-LMS_CATALOG_RELEASE_BROWSE_ID",
+            "-LMS_CATALOG_RELEASE_TITLE",
+            "-LMS_CATALOG_RELEASE_KIND",
+            "-Title", "-Artist", "-Album", "-AlbumArtist",
+            "-TrackNumber", "-TrackTotal", "-DiscNumber", "-DiscTotal", "-DiskNumber", "-DiskTotal",
+            "-Year", "-ContentCreateDate", "-Genre", "-Language", "-ISRC",
+            "-MusicBrainzTrackId", "-MusicBrainzAlbumId", "-MusicBrainzReleaseGroupId",
+            "-Lyrics", "-CoverArt",
             *batch,
         ],
         text=True,
@@ -350,7 +425,50 @@ for index in range(0, len(paths), 100):
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
         sys.exit(proc.returncode)
-    rows.extend(json.loads(proc.stdout or "[]"))
+    for row in json.loads(proc.stdout or "[]"):
+        lyrics = text(row, "Lyrics")
+        date_value = text(row, "ContentCreateDate")
+        if date_value:
+            date_value = date_value[:10].replace(":", "-")
+        year = integer(row, "Year")
+        if year is None and date_value and re.match(r"^\\d{4}", date_value):
+            year = int(date_value[:4])
+        canonical = {
+            "tag_schema_version": integer(row, "LMS_TAG_SCHEMA_VERSION"),
+            "youtube_music_track_id": text(row, "LMS_YOUTUBE_MUSIC_TRACK_ID"),
+            "spotify_track_id": text(row, "LMS_SPOTIFY_TRACK_ID"),
+            "soundcloud_track_id": text(row, "LMS_SOUNDCLOUD_TRACK_ID"),
+            "resolved_youtube_music_track_id": text(row, "LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID") or text(row, "LMS_YOUTUBE_MUSIC_TRACK_ID"),
+            "source_origin": text(row, "LMS_SOURCE_ORIGIN"),
+            "resolution_method": text(row, "LMS_RESOLUTION_METHOD"),
+            "catalog_release_browse_id": text(row, "LMS_CATALOG_RELEASE_BROWSE_ID"),
+            "catalog_release_title": text(row, "LMS_CATALOG_RELEASE_TITLE"),
+            "catalog_release_kind": text(row, "LMS_CATALOG_RELEASE_KIND"),
+            "title": text(row, "Title"), "artist": text(row, "Artist"),
+            "album": text(row, "Album"), "album_artist": text(row, "AlbumArtist"),
+            "track_number": integer(row, "TrackNumber"), "track_total": integer(row, "TrackTotal"),
+            "disc_number": integer(row, "DiscNumber", "DiskNumber"), "disc_total": integer(row, "DiscTotal", "DiskTotal"),
+            "year": year, "date": date_value,
+            "genre": text(row, "Genre"), "language": text(row, "Language", "LANGUAGE"), "isrc": text(row, "ISRC"),
+            "mb_track_id": text(row, "MusicBrainzTrackId"), "mb_album_id": text(row, "MusicBrainzAlbumId"),
+            "mb_releasegroup_id": text(row, "MusicBrainzReleaseGroupId"),
+            "embedded_lyrics_status": lyrics_status(lyrics),
+            "embedded_lyrics_sha256": hashlib.sha256(lyrics.encode("utf-8")).hexdigest() if lyrics is not None else None,
+            "artwork_sha256": binary_hash(row.get("CoverArt")),
+        }
+        source_file = str(row.get("SourceFile") or "")
+        lrc_path = os.path.splitext(source_file)[0] + ".lrc"
+        sidecar_hash = None
+        if os.path.isfile(lrc_path):
+            with open(lrc_path, "rb") as sidecar:
+                sidecar_hash = hashlib.sha256(sidecar.read()).hexdigest()
+        rows.append({
+            "SourceFile": source_file,
+            "LMS_YOUTUBE_MUSIC_TRACK_ID": canonical["youtube_music_track_id"],
+            "LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID": canonical["resolved_youtube_music_track_id"],
+            "ManagedMetadataFingerprint": hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest(),
+            "SidecarSHA256": sidecar_hash,
+        })
 
 print(json.dumps(rows))
 PY`
@@ -387,8 +505,10 @@ export class SyncService {
     string,
     () => Promise<void>
   >()
+  private readonly retryPreparingJobIds = new Set<string>()
   private activeJobId: string | null = null
   private activeProcess: ChildProcessWithoutNullStreams | null = null
+  private activeRemoteAbortController: AbortController | null = null
   private cancelKillTimer: NodeJS.Timeout | null = null
   private cancelRequestedJobId: string | null = null
   private schedulerRunning = false
@@ -426,12 +546,89 @@ export class SyncService {
     return () => this.listeners.delete(listener)
   }
 
+  async recoverInterruptedJobs() {
+    const interruptedJobs = await this.db
+      .select({ id: syncJobsTable.id })
+      .from(syncJobsTable)
+      .where(inArray(syncJobsTable.status, ['queued', 'running']))
+
+    for (const job of interruptedJobs) {
+      await this.failUnfinishedTracks(
+        job.id,
+        'app_restarted',
+        'The app restarted before the worker finished.'
+      )
+      await this.recomputeJob(job.id, 'failed')
+    }
+
+    if (interruptedJobs.length > 0) {
+      logMain({
+        level: 'warn',
+        source: 'sync',
+        message: 'Recovered interrupted sync jobs from the previous launch',
+        context: { recoveredJobCount: interruptedJobs.length },
+      })
+      await this.emitSnapshot()
+    }
+  }
+
   async startLikedSongsSync(): Promise<CommandResult> {
     return this.startWorkerJob({
       kind: 'liked_songs_sync',
       scope: null,
       label: 'Liked Songs Sync',
     })
+  }
+
+  async retryFailedTracks(jobId: string): Promise<CommandResult> {
+    if (this.retryPreparingJobIds.has(jobId)) {
+      return { ok: false, message: 'That job is already being retried.' }
+    }
+    this.retryPreparingJobIds.add(jobId)
+    try {
+      const sourceJob = await this.db.query.syncJobsTable.findFirst({
+        where: eq(syncJobsTable.id, jobId),
+      })
+      if (!sourceJob) {
+        return { ok: false, message: 'That job does not exist.' }
+      }
+      if (sourceJob.status === 'queued' || sourceJob.status === 'running') {
+        return {
+          ok: false,
+          message: 'Wait for the job to finish before retrying.',
+        }
+      }
+
+      const failedTracks = await this.db
+        .select()
+        .from(syncJobTracksTable)
+        .where(eq(syncJobTracksTable.jobId, jobId))
+      const retryableTracks = failedTracks.filter(
+        (track) => track.visible && track.status.startsWith('failed')
+      )
+      if (retryableTracks.length === 0) {
+        return { ok: false, message: 'That job has no failed tracks to retry.' }
+      }
+
+      if (
+        sourceJob.kind === 'liked_songs_sync' ||
+        sourceJob.kind === 'favorite_artist_catalog_refresh'
+      ) {
+        return await this.retrySyncWorkerTracks(sourceJob, retryableTracks)
+      }
+      if (sourceJob.kind === 'reprocess') {
+        return await this.retryReprocessTracks(sourceJob, retryableTracks)
+      }
+      if (sourceJob.kind === 'sync_missing_to_remote') {
+        return await this.retryRemoteCopyTracks(sourceJob, retryableTracks)
+      }
+      return {
+        ok: false,
+        message: 'Retry is not available for this job type yet.',
+      }
+    } finally {
+      this.retryPreparingJobIds.delete(jobId)
+    }
   }
 
   async startLibraryReprocess(): Promise<CommandResult> {
@@ -491,8 +688,11 @@ export class SyncService {
       return { ok: false, message: 'That job does not exist.' }
     }
 
+    this.pendingWorkerLaunches.delete(jobId)
+
     if (this.activeJobId === jobId) {
       this.cancelRequestedJobId = jobId
+      this.activeRemoteAbortController?.abort()
       if (this.activeProcess) {
         const child = this.activeProcess
         const killed = this.killActiveProcess('SIGTERM')
@@ -599,11 +799,6 @@ export class SyncService {
       !settings.remoteMusicRoot.trim()
     ) {
       return { ok: false, message: 'Remote copy settings are incomplete.' }
-    }
-
-    const indexStatus = await this.libraryService.ensureLocalIndexReady()
-    if (!indexStatus.ready) {
-      return this.libraryService.getIndexNotReadyResult(indexStatus)
     }
 
     const jobId = await this.createJob({
@@ -810,15 +1005,18 @@ export class SyncService {
       }
     }
 
-    const indexStatus = await this.libraryService.ensureLocalIndexReady()
-    if (!indexStatus.ready) {
-      return this.libraryService.getIndexNotReadyResult(indexStatus)
+    const queuedBehindActiveJob = Boolean(this.activeJobId)
+    let existingLocalIds: Awaited<
+      ReturnType<LibraryService['getManagedLocalSignatures']>
+    > | null = null
+    if (!queuedBehindActiveJob) {
+      const reconcileResult = await this.libraryService.reconcileLocalLibrary()
+      if (!reconcileResult.ok) return reconcileResult
+      existingLocalIds = await this.libraryService.getManagedLocalSignatures()
     }
 
     await this.poTokenService.ensureReady()
     const poTokenBundle = this.getPoTokenBundle()
-    const existingLocalIds =
-      await this.libraryService.getManagedLocalSignatures()
     const browserAuthInput =
       authResult.credential_json ?? runtime.ytmusicBrowserAuth
     if (authResult.credential_json) {
@@ -836,6 +1034,15 @@ export class SyncService {
       this.jobSelectedArtists.set(jobId, selectedArtists)
     }
     const launch = async () => {
+      if (!existingLocalIds) {
+        const reconcileResult =
+          await this.libraryService.reconcileLocalLibrary()
+        if (!reconcileResult.ok) {
+          await this.failPreparingJob(jobId)
+          return
+        }
+        existingLocalIds = await this.libraryService.getManagedLocalSignatures()
+      }
       await this.launchWorkerJob(
         jobId,
         runtime,
@@ -851,7 +1058,7 @@ export class SyncService {
       )
     }
 
-    if (this.activeJobId) {
+    if (queuedBehindActiveJob) {
       this.pendingWorkerLaunches.set(jobId, launch)
       await this.emitSnapshot()
       return {
@@ -870,6 +1077,553 @@ export class SyncService {
         input.kind === 'favorite_artist_catalog_refresh'
           ? 'Favorite artist catalog refresh started.'
           : 'Sync started.',
+    }
+  }
+
+  private async retrySyncWorkerTracks(
+    sourceJob: typeof syncJobsTable.$inferSelect,
+    failedTracks: (typeof syncJobTracksTable.$inferSelect)[]
+  ): Promise<CommandResult> {
+    const runtime =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    if (!runtime.outputDirectory) {
+      return {
+        ok: false,
+        message: 'Output directory must be configured first.',
+      }
+    }
+    if (!runtime.ytmusicBrowserAuth) {
+      return {
+        ok: false,
+        message: 'Pull YT Music auth from your browser first.',
+      }
+    }
+
+    const authResult =
+      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+        'auth-status',
+        { browser_auth_input: runtime.ytmusicBrowserAuth }
+      )
+    if (!authResult.ok || !authResult.is_authenticated) {
+      return {
+        ok: false,
+        message: authResult.message || 'YT Music auth check failed.',
+      }
+    }
+
+    const reconcileResult = await this.libraryService.reconcileLocalLibrary()
+    if (!reconcileResult.ok) return reconcileResult
+
+    await this.poTokenService.ensureReady()
+    const poTokenBundle = this.getPoTokenBundle()
+    const browserAuthInput =
+      authResult.credential_json ?? runtime.ytmusicBrowserAuth
+    if (authResult.credential_json) {
+      await this.settingsService.saveYtMusicBrowserAuth(
+        authResult.credential_json
+      )
+    }
+
+    const jobId = sourceJob.id
+    const retryItems = failedTracks.map((track, index) => {
+      const trackWorkId = track.id
+      const item = this.toRetryWorkerTrack(track, trackWorkId)
+      return {
+        item,
+        persisted: track,
+        sortIndex: track.sortIndex ?? index + 1,
+      }
+    })
+    await this.reopenJobForRetry(jobId, failedTracks, 'idle', 'retry')
+    for (const retry of retryItems) {
+      await this.upsertJobTrack(jobId, retry.item, {
+        id: retry.item.id,
+        libraryTrackId: retry.persisted.libraryTrackId,
+        visible: true,
+        sortIndex: retry.sortIndex,
+        status: 'pending',
+        stage: 'idle',
+        reasonCode: '',
+        reasonDetail: '',
+        jobPhase: retry.persisted.jobPhase ?? 'retry',
+        currentOutputPath: retry.persisted.currentOutputPath,
+        outputPath: retry.persisted.outputPath,
+        lrcPath: retry.persisted.lrcPath,
+      })
+    }
+
+    const launch = async () => {
+      await this.launchNdjsonWorkerJob(
+        jobId,
+        'sync-job',
+        {
+          job_id: jobId,
+          output_directory: runtime.outputDirectory,
+          remote_copy_enabled: runtime.remoteCopyEnabled,
+          rclone_remote: runtime.rcloneRemote,
+          remote_music_root: runtime.remoteMusicRoot,
+          ytmusic_browser_auth: browserAuthInput,
+          yt_dlp_cookies_browser: runtime.ytDlpCookiesBrowser,
+          folder_template: runtime.folderTemplate,
+          file_template: runtime.fileTemplate,
+          embed_unsynced_lyrics: runtime.embedUnsyncedLyrics,
+          write_lrc_sidecar: runtime.writeLrcSidecar,
+          lyrics_api_base_url: runtime.lyricsApiBaseUrl,
+          spotify_match_enabled: Boolean(runtime.lyricsApiBaseUrl.trim()),
+          existing_local_youtube_music_track_ids: [],
+          existing_local_resolved_youtube_music_track_ids: [],
+          existing_local_track_signatures: [],
+          existing_local_release_signatures: [],
+          favorite_artist_catalogs: [],
+          force_reprocess: true,
+          retry_items: retryItems.map(({ item }) =>
+            this.toRetryWorkerInput(item)
+          ),
+          ffmpeg_path: this.getBundledFfmpegPath(),
+          yt_dlp_plugin_dir: poTokenBundle.pluginDirectory,
+          yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
+        },
+        {
+          preservePlannedCount: true,
+          onFinally: () => void this.refreshIndexedOutputsForJob(jobId),
+        }
+      )
+    }
+
+    await this.emitSnapshot()
+    if (this.activeJobId) {
+      this.pendingWorkerLaunches.set(jobId, launch)
+      return { ok: true, message: 'Retry queued.' }
+    }
+    await launch()
+    return { ok: true, message: 'Retry started.' }
+  }
+
+  private async reopenJobForRetry(
+    jobId: string,
+    failedTracks: (typeof syncJobTracksTable.$inferSelect)[],
+    stage: SyncStage,
+    jobPhase: string
+  ) {
+    const trackIds = failedTracks.map((track) => track.id)
+    const timestamp = nowIso()
+    this.db.transaction((tx) => {
+      const job = tx.query.syncJobsTable
+        .findFirst({
+          where: eq(syncJobsTable.id, jobId),
+        })
+        .sync()
+      if (!job || job.status === 'queued' || job.status === 'running') {
+        throw new Error('Wait for the job to finish before retrying.')
+      }
+
+      tx.update(syncJobTracksTable)
+        .set({
+          status: 'pending',
+          stage,
+          reasonCode: '',
+          reasonDetail: '',
+          terminalOutcome: null,
+          jobPhase,
+          updatedAt: timestamp,
+        })
+        .where(
+          and(
+            eq(syncJobTracksTable.jobId, jobId),
+            inArray(syncJobTracksTable.id, trackIds)
+          )
+        )
+        .run()
+      tx.update(syncJobsTable)
+        .set({
+          status: 'queued',
+          queueBucket: 'queue',
+          endedAt: null,
+          updatedAt: timestamp,
+        })
+        .where(eq(syncJobsTable.id, jobId))
+        .run()
+    })
+  }
+
+  private async retryReprocessTracks(
+    sourceJob: typeof syncJobsTable.$inferSelect,
+    failedTracks: (typeof syncJobTracksTable.$inferSelect)[]
+  ): Promise<CommandResult> {
+    const runtime =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    if (!runtime.outputDirectory) {
+      return {
+        ok: false,
+        message: 'Output directory must be configured first.',
+      }
+    }
+    if (!runtime.ytmusicBrowserAuth) {
+      return {
+        ok: false,
+        message: 'Pull YT Music auth from your browser first.',
+      }
+    }
+    const reconcileResult = await this.libraryService.reconcileLocalLibrary()
+    if (!reconcileResult.ok) return reconcileResult
+    const authResult =
+      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+        'auth-status',
+        { browser_auth_input: runtime.ytmusicBrowserAuth }
+      )
+    if (!authResult.ok || !authResult.is_authenticated) {
+      return {
+        ok: false,
+        message: authResult.message || 'YT Music auth check failed.',
+      }
+    }
+
+    await this.poTokenService.ensureReady()
+    const poTokenBundle = this.getPoTokenBundle()
+    const browserAuthInput =
+      authResult.credential_json ?? runtime.ytmusicBrowserAuth
+    if (authResult.credential_json) {
+      await this.settingsService.saveYtMusicBrowserAuth(
+        authResult.credential_json
+      )
+    }
+    const candidates = failedTracks.map((track) => ({
+      track_work_id: track.id,
+      library_track_id: track.libraryTrackId ?? '',
+      youtube_music_track_id: track.youtubeMusicTrackId,
+      spotify_track_id: track.spotifyTrackId,
+      soundcloud_track_id: track.soundcloudTrackId,
+      resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      source_origin: track.sourceOrigin,
+      catalog_release_browse_id: track.catalogReleaseBrowseId,
+      catalog_release_title: track.catalogReleaseTitle,
+      catalog_release_kind: track.catalogReleaseKind,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      album_artist: track.albumArtist,
+      track_number: track.trackNumber,
+      track_total: track.trackTotal,
+      disc_number: track.discNumber,
+      disc_total: track.discTotal,
+      year: track.year,
+      date: track.date,
+      genre: track.genre,
+      language: track.language,
+      isrc: track.isrc,
+      mb_track_id: track.mbTrackId,
+      mb_album_id: track.mbAlbumId,
+      mb_releasegroup_id: track.mbReleaseGroupId,
+      lyrics_status: track.lyricsStatus,
+      current_output_path: track.currentOutputPath ?? track.outputPath ?? '',
+      current_lrc_path: track.lrcPath,
+      cover_art_present: Boolean(track.coverArtUrl),
+    }))
+    const jobId = sourceJob.id
+    await this.reopenJobForRetry(jobId, failedTracks, 'idle', 'reprocess_apply')
+    return this.startDirectReprocessJob(
+      jobId,
+      'library',
+      runtime,
+      browserAuthInput,
+      poTokenBundle,
+      candidates,
+      { preservePlannedCount: true }
+    ).then((result) => ({
+      ...result,
+      message:
+        result.message === 'Reprocess queued.'
+          ? 'Retry queued.'
+          : 'Retry started.',
+    }))
+  }
+
+  private async retryRemoteCopyTracks(
+    sourceJob: typeof syncJobsTable.$inferSelect,
+    failedTracks: (typeof syncJobTracksTable.$inferSelect)[]
+  ): Promise<CommandResult> {
+    const runtime =
+      (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
+    if (
+      !runtime.remoteCopyEnabled ||
+      !runtime.rcloneRemote?.trim() ||
+      !runtime.remoteMusicRoot?.trim()
+    ) {
+      return { ok: false, message: 'Remote copy settings are incomplete.' }
+    }
+
+    const reconcileResult = await this.libraryService.reconcileLocalLibrary()
+    if (!reconcileResult.ok) return reconcileResult
+
+    const jobId = sourceJob.id
+    const candidates: RemoteBackfillCandidate[] = failedTracks.map(
+      (track, index) => {
+        const trackWorkId = track.id
+        return {
+          trackId: track.libraryTrackId ?? track.id,
+          trackWorkId,
+          payload: this.toRetryWorkerTrack(track, trackWorkId),
+          localAudioPath: track.outputPath ?? track.currentOutputPath ?? '',
+          localLrcPath: track.lrcPath,
+          remoteTarget: track.remoteTarget ?? '',
+          remoteRelativePath: '',
+          replacing: true,
+          copyAudio: true,
+          sortIndex: track.sortIndex ?? index + 1,
+        }
+      }
+    )
+    await this.reopenJobForRetry(
+      jobId,
+      failedTracks,
+      'remote_copy',
+      'remote_retry'
+    )
+    for (const candidate of candidates) {
+      await this.upsertJobTrack(jobId, candidate.payload, {
+        id: candidate.trackWorkId,
+        libraryTrackId: candidate.trackId,
+        visible: true,
+        sortIndex: candidate.sortIndex,
+        status: 'pending',
+        stage: 'remote_copy',
+        reasonCode: '',
+        reasonDetail: '',
+        jobPhase: 'remote_retry',
+        remoteTarget: candidate.remoteTarget,
+        outputPath: candidate.localAudioPath,
+        lrcPath: candidate.localLrcPath,
+      })
+    }
+    await this.emitSnapshot()
+
+    const launch = async () => {
+      await this.runRemoteRetryJob(jobId, candidates)
+    }
+    if (this.activeJobId) {
+      this.pendingWorkerLaunches.set(jobId, launch)
+      return { ok: true, message: 'Retry queued.' }
+    }
+    await launch()
+    return { ok: true, message: 'Retry complete.' }
+  }
+
+  private async runRemoteRetryJob(
+    jobId: string,
+    candidates: RemoteBackfillCandidate[]
+  ) {
+    this.pendingWorkerLaunches.delete(jobId)
+    this.activeJobId = jobId
+    const abortController = new AbortController()
+    this.activeRemoteAbortController = abortController
+    await this.db
+      .update(syncJobsTable)
+      .set({ status: 'running', queueBucket: 'queue', updatedAt: nowIso() })
+      .where(eq(syncJobsTable.id, jobId))
+    await this.emitSnapshot()
+
+    try {
+      for (const candidate of candidates) {
+        if (this.cancelRequestedJobId === jobId) break
+        await this.db
+          .update(syncJobTracksTable)
+          .set({
+            status: 'processing',
+            stage: 'remote_copy',
+            updatedAt: nowIso(),
+          })
+          .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+        await this.emitSnapshot()
+
+        let localAudioExists = false
+        if (candidate.localAudioPath) {
+          try {
+            await access(candidate.localAudioPath)
+            localAudioExists = true
+          } catch {
+            void this.libraryService.reconcileLocalLibrary()
+          }
+        }
+        if (!localAudioExists || !candidate.remoteTarget) {
+          await this.db
+            .update(syncJobTracksTable)
+            .set({
+              status: 'failed_terminal',
+              stage: 'finalize',
+              reasonCode: 'retry_source_missing',
+              reasonDetail: 'The saved local or remote path is missing.',
+              terminalOutcome: 'retry_source_missing',
+              updatedAt: nowIso(),
+            })
+            .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+          continue
+        }
+
+        const audioCopy = await execa(
+          'rclone',
+          ['copyto', candidate.localAudioPath, candidate.remoteTarget],
+          { reject: false, cancelSignal: abortController.signal }
+        )
+        if (this.cancelRequestedJobId === jobId) break
+        if (audioCopy.exitCode !== 0) {
+          await this.db
+            .update(syncJobTracksTable)
+            .set({
+              status: 'failed_retryable',
+              stage: 'finalize',
+              reasonCode: 'remote_audio_copy_failed',
+              reasonDetail: audioCopy.stderr || 'rclone audio copy failed.',
+              terminalOutcome: 'failed_remote_copy',
+              updatedAt: nowIso(),
+            })
+            .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+          continue
+        }
+
+        if (candidate.localLrcPath) {
+          const remoteLrcPath = candidate.remoteTarget.replace(
+            /\.[^/.]+$/,
+            '.lrc'
+          )
+          const lrcCopy = await execa(
+            'rclone',
+            ['copyto', candidate.localLrcPath, remoteLrcPath],
+            { reject: false, cancelSignal: abortController.signal }
+          )
+          if (this.cancelRequestedJobId === jobId) break
+          if (lrcCopy.exitCode !== 0) {
+            await this.db
+              .update(syncJobTracksTable)
+              .set({
+                status: 'failed_retryable',
+                stage: 'finalize',
+                reasonCode: 'remote_lrc_copy_failed',
+                reasonDetail: lrcCopy.stderr || 'rclone lrc copy failed.',
+                terminalOutcome: 'failed_remote_copy',
+                updatedAt: nowIso(),
+              })
+              .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+            continue
+          }
+        }
+
+        await this.libraryService.upsertRemoteCopyFromLocalPath(
+          candidate.localAudioPath
+        )
+        await this.db
+          .update(syncJobTracksTable)
+          .set({
+            status: 'completed',
+            stage: 'finalize',
+            reasonCode: 'remote_copied',
+            reasonDetail: 'Copied local file to remote.',
+            terminalOutcome: 'remote_copied',
+            updatedAt: nowIso(),
+          })
+          .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
+      }
+    } catch (error) {
+      if (this.cancelRequestedJobId !== jobId) {
+        await this.failUnfinishedTracks(
+          jobId,
+          'remote_retry_failed',
+          error instanceof Error ? error.message : 'Remote retry failed.'
+        )
+      }
+    } finally {
+      const cancelled = this.cancelRequestedJobId === jobId
+      if (cancelled) await this.failPendingTracksForCancellation(jobId)
+      if (this.activeRemoteAbortController === abortController) {
+        this.activeRemoteAbortController = null
+      }
+      await this.finalizeActiveJobStatus(
+        jobId,
+        cancelled ? 'cancelled' : undefined
+      )
+      await this.emitSnapshot()
+      void this.runScheduler()
+    }
+  }
+
+  private toRetryWorkerTrack(
+    track: typeof syncJobTracksTable.$inferSelect,
+    id: string
+  ): WorkerTrackPayload {
+    return {
+      id,
+      youtube_music_track_id: track.youtubeMusicTrackId,
+      spotify_track_id: track.spotifyTrackId,
+      soundcloud_track_id: track.soundcloudTrackId,
+      resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      album_artist: track.albumArtist,
+      source_url: track.sourceUrl,
+      cover_art_url: track.coverArtUrl,
+      status: 'pending',
+      stage: 'idle',
+      source_kind: track.sourceKind,
+      source_origin: track.sourceOrigin,
+      catalog_release_browse_id: track.catalogReleaseBrowseId,
+      catalog_release_title: track.catalogReleaseTitle,
+      catalog_release_kind: track.catalogReleaseKind,
+      video_type: track.videoType,
+      resolution_method: track.resolutionMethod,
+      track_number: track.trackNumber,
+      track_total: track.trackTotal,
+      disc_number: track.discNumber,
+      disc_total: track.discTotal,
+      year: track.year,
+      date: track.date,
+      genre: track.genre,
+      language: track.language,
+      isrc: track.isrc,
+      mb_track_id: track.mbTrackId,
+      mb_album_id: track.mbAlbumId,
+      mb_releasegroup_id: track.mbReleaseGroupId,
+      lyrics_status: track.lyricsStatus as 'missing' | 'plain' | 'synced',
+      selected_source_url: track.selectedSourceUrl,
+      output_path: track.outputPath,
+      lrc_path: track.lrcPath,
+    }
+  }
+
+  private toRetryWorkerInput(item: WorkerTrackPayload) {
+    return {
+      trackWorkId: item.id,
+      videoId: item.youtube_music_track_id,
+      resolvedYoutubeMusicTrackId: item.resolved_youtube_music_track_id,
+      spotifyTrackId: item.spotify_track_id,
+      soundcloudTrackId: item.soundcloud_track_id,
+      title: item.title,
+      artist: item.artist,
+      artists: [{ name: item.artist }],
+      album: { name: item.album },
+      albumArtist: item.album_artist,
+      sourceUrl: item.source_url,
+      thumbnails: item.cover_art_url
+        ? [{ url: item.cover_art_url, width: 1, height: 1 }]
+        : [],
+      sourceKind: item.source_kind,
+      sourceOrigin: item.source_origin,
+      catalogReleaseBrowseId: item.catalog_release_browse_id,
+      catalogReleaseTitle: item.catalog_release_title,
+      catalogReleaseKind: item.catalog_release_kind,
+      videoType: item.video_type,
+      trackNumber: item.track_number,
+      trackTotal: item.track_total,
+      discNumber: item.disc_number,
+      discTotal: item.disc_total,
+      year: item.year,
+      date: item.date,
+      genre: item.genre,
+      language: item.language,
+      isrc: item.isrc,
+      mbTrackId: item.mb_track_id,
+      mbAlbumId: item.mb_album_id,
+      mbReleaseGroupId: item.mb_releasegroup_id,
+      selectedSourceUrl: item.selected_source_url,
     }
   }
 
@@ -915,9 +1669,7 @@ export class SyncService {
         yt_dlp_po_token_base_url: poTokenBundle.baseUrl,
       },
       {
-        onCompleted: async () => {
-          await this.refreshIndexedOutputsForJob(jobId)
-        },
+        onFinally: () => void this.refreshIndexedOutputsForJob(jobId),
       }
     )
   }
@@ -946,6 +1698,7 @@ export class SyncService {
     let stdoutBuffer = ''
     let stderrBuffer = ''
     let finalized = false
+    let workerEventChain: Promise<void> = Promise.resolve()
 
     const finalize = async (
       status: 'completed' | 'failed' | 'cancelled',
@@ -957,6 +1710,7 @@ export class SyncService {
     ) => {
       if (finalized) return
       finalized = true
+      await workerEventChain
       if (this.cancelKillTimer) {
         clearTimeout(this.cancelKillTimer)
         this.cancelKillTimer = null
@@ -965,10 +1719,20 @@ export class SyncService {
       const cancelled =
         this.cancelRequestedJobId === jobId || status === 'cancelled'
       this.activeProcess = null
-      if (this.activeJobId === jobId) this.activeJobId = null
-      if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
 
-      await this.recomputeJob(jobId, cancelled ? 'cancelled' : undefined)
+      if (cancelled) {
+        await this.failPendingTracksForCancellation(jobId)
+      } else if (status === 'failed') {
+        const errorMessage =
+          details?.errorMessage ??
+          stderrBuffer.trim().split('\n').filter(Boolean).at(-1) ??
+          'Worker exited before finishing the job.'
+        await this.failUnfinishedTracks(jobId, 'worker_exited', errorMessage)
+      }
+      await this.finalizeActiveJobStatus(
+        jobId,
+        cancelled ? 'cancelled' : undefined
+      )
       const job = await this.db.query.syncJobsTable.findFirst({
         where: eq(syncJobsTable.id, jobId),
       })
@@ -1004,7 +1768,26 @@ export class SyncService {
         const line = stdoutBuffer.slice(0, nextNewline).trim()
         stdoutBuffer = stdoutBuffer.slice(nextNewline + 1)
         if (line.startsWith('{')) {
-          void this.handleWorkerEvent(jobId, line)
+          workerEventChain = workerEventChain
+            .then(() =>
+              this.handleWorkerEvent(
+                jobId,
+                line,
+                options.preservePlannedCount ?? false
+              )
+            )
+            .catch((error) => {
+              this.logSync({
+                level: 'error',
+                jobId,
+                stage: 'finalize',
+                event: 'worker-event-handler-failed',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : 'Worker event handler failed.',
+              })
+            })
         }
         nextNewline = stdoutBuffer.indexOf('\n')
       }
@@ -1068,7 +1851,8 @@ export class SyncService {
     runtime: RuntimeSettingsLike,
     browserAuthInput: string,
     poTokenBundle: PoTokenBundle,
-    candidates: ReprocessCandidatePayload[]
+    candidates: ReprocessCandidatePayload[],
+    launchOptions: Pick<WorkerLaunchOptions, 'preservePlannedCount'> = {}
   ) {
     const launch = async () => {
       await this.launchNdjsonWorkerJob(
@@ -1082,15 +1866,17 @@ export class SyncService {
           candidates
         ),
         {
+          ...launchOptions,
           onCompleted: async () => {
             if (scope === 'artist') {
               await this.cleanupArtistReprocessFiles(jobId)
             }
-            await this.refreshIndexedOutputsForJob(jobId)
           },
           onFinally: () => {
-            if (scope !== 'artist') return
-            this.reprocessPreexistingManagedFiles.delete(jobId)
+            if (scope === 'artist') {
+              this.reprocessPreexistingManagedFiles.delete(jobId)
+            }
+            void this.refreshIndexedOutputsForJob(jobId)
           },
         }
       )
@@ -1223,10 +2009,10 @@ export class SyncService {
     await this.emitSnapshot()
 
     try {
-      const indexStatus = await this.libraryService.ensureLocalIndexReady()
-      if (!indexStatus.ready) {
+      const reconcileResult = await this.libraryService.reconcileLocalLibrary()
+      if (!reconcileResult.ok) {
         await this.failPreparingJob(jobId)
-        return this.libraryService.getIndexNotReadyResult(indexStatus)
+        return reconcileResult
       }
 
       const authResult =
@@ -1349,6 +2135,8 @@ export class SyncService {
     const settings =
       (await this.settingsService.getRuntimeSettings()) as RuntimeSettingsLike
     let copied = 0
+    let updated = 0
+    let sidecarsUpdated = 0
     let skippedExisting = 0
     let skippedNoLocal = 0
     let skippedMissingIdentity = 0
@@ -1361,6 +2149,8 @@ export class SyncService {
     }
 
     try {
+      const reconcileResult = await this.libraryService.reconcileLocalLibrary()
+      if (!reconcileResult.ok) throw new Error(reconcileResult.message)
       await this.db
         .update(syncJobsTable)
         .set({ status: 'running', queueBucket: 'queue', updatedAt: nowIso() })
@@ -1391,13 +2181,15 @@ export class SyncService {
         filesByTrackId.set(file.trackId, current)
       }
 
-      const remoteSourceIds = new Set<string>()
-      const remoteResolvedIds = new Set<string>()
+      const remoteBySourceId = new Map<string, RemoteShellTrackIdentity>()
+      const remoteByResolvedId = new Map<string, RemoteShellTrackIdentity>()
+      const remoteByRelativePath = new Map<string, RemoteShellTrackIdentity>()
       for (const identity of remoteScan.identities) {
+        remoteByRelativePath.set(identity.relativePath, identity)
         if (identity.youtubeMusicTrackId)
-          remoteSourceIds.add(identity.youtubeMusicTrackId)
+          remoteBySourceId.set(identity.youtubeMusicTrackId, identity)
         if (identity.resolvedYoutubeMusicTrackId) {
-          remoteResolvedIds.add(identity.resolvedYoutubeMusicTrackId)
+          remoteByResolvedId.set(identity.resolvedYoutubeMusicTrackId, identity)
         }
       }
 
@@ -1406,13 +2198,6 @@ export class SyncService {
         const payload = this.toRemoteBackfillTrackPayload(track)
         const sourceId = track.youtubeMusicTrackId
         const resolvedId = track.resolvedYoutubeMusicTrackId
-        if (
-          (sourceId && remoteSourceIds.has(sourceId)) ||
-          (resolvedId && remoteResolvedIds.has(resolvedId))
-        ) {
-          skippedExisting += 1
-          continue
-        }
         if (!sourceId && !resolvedId) {
           skippedMissingIdentity += 1
           continue
@@ -1438,9 +2223,31 @@ export class SyncService {
           continue
         }
 
-        const localAudioPath =
-          selected.absolutePathSnapshot ||
-          path.join(localRoot.uri, selected.relativePath)
+        const remoteMatch =
+          (sourceId ? remoteBySourceId.get(sourceId) : undefined) ??
+          (resolvedId ? remoteByResolvedId.get(resolvedId) : undefined) ??
+          remoteByRelativePath.get(selected.relativePath)
+        const reconciliation = classifyRemoteTrack(
+          remoteMatch,
+          selected.tagFingerprint,
+          selected.sidecarSha256
+        )
+        if (reconciliation === 'skip') {
+          skippedExisting += 1
+          continue
+        }
+
+        const localAudioPath = path.resolve(
+          localRoot.uri,
+          selected.relativePath
+        )
+        try {
+          await access(localAudioPath)
+        } catch {
+          skippedNoLocal += 1
+          void this.libraryService.reconcileLocalLibrary()
+          continue
+        }
         const lrcCandidates = [
           selected.lrcPath,
           localAudioPath.replace(/\.[^/.]+$/, '.lrc'),
@@ -1456,7 +2263,9 @@ export class SyncService {
           }
         }
 
-        const remoteTarget = `${remoteRootUri.replace(/\/$/, '')}/${selected.relativePath}`
+        const remoteRelativePath =
+          remoteMatch?.relativePath || selected.relativePath
+        const remoteTarget = `${remoteRootUri.replace(/\/$/, '')}/${remoteRelativePath}`
         const trackWorkId = `${jobId}:${track.id}`
         actionable.push({
           trackId: track.id,
@@ -1465,6 +2274,9 @@ export class SyncService {
           localAudioPath,
           localLrcPath,
           remoteTarget,
+          remoteRelativePath,
+          replacing: reconciliation === 'replace',
+          copyAudio: reconciliation !== 'sidecar',
         })
         await this.upsertJobTrack(jobId, payload, {
           id: trackWorkId,
@@ -1501,11 +2313,13 @@ export class SyncService {
           .where(eq(syncJobTracksTable.id, candidate.trackWorkId))
         await this.emitSnapshot()
 
-        const audioCopy = await execa(
-          'rclone',
-          ['copyto', candidate.localAudioPath, candidate.remoteTarget],
-          { reject: false }
-        )
+        const audioCopy = candidate.copyAudio
+          ? await execa(
+              'rclone',
+              ['copyto', candidate.localAudioPath, candidate.remoteTarget],
+              { reject: false }
+            )
+          : { exitCode: 0, stderr: '' }
         if (audioCopy.exitCode !== 0) {
           failed += 1
           await this.db
@@ -1552,16 +2366,21 @@ export class SyncService {
         }
 
         await this.libraryService.upsertRemoteCopyFromLocalPath(
-          candidate.localAudioPath
+          candidate.localAudioPath,
+          candidate.remoteRelativePath
         )
-        copied += 1
+        if (candidate.copyAudio) copied += 1
+        else sidecarsUpdated += 1
+        if (candidate.replacing) updated += 1
         await this.db
           .update(syncJobTracksTable)
           .set({
             status: 'completed',
             stage: 'finalize',
             reasonCode: 'remote_copied',
-            reasonDetail: 'Copied local file to remote.',
+            reasonDetail: candidate.copyAudio
+              ? 'Copied local file to remote.'
+              : 'Copied local lyrics sidecar to remote.',
             terminalOutcome: 'remote_copied',
             updatedAt: nowIso(),
           })
@@ -1574,7 +2393,7 @@ export class SyncService {
           failed === 0
             ? 'Remote backfill complete.'
             : 'Remote backfill completed with failures.',
-        details: `Copied ${copied}; skipped existing ${skippedExisting}; skipped no local ${skippedNoLocal}; skipped missing identity ${skippedMissingIdentity}; failed ${failed}.`,
+        details: `Copied ${copied - updated}; updated ${updated}; lyrics updated ${sidecarsUpdated}; skipped matching ${skippedExisting}; skipped no local ${skippedNoLocal}; skipped missing identity ${skippedMissingIdentity}; failed ${failed}.`,
       }
     } catch (error) {
       await this.db
@@ -1589,6 +2408,7 @@ export class SyncService {
       this.activeJobId = null
       if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
       await this.emitSnapshot()
+      void this.runScheduler()
       return {
         ok: false,
         message:
@@ -1596,13 +2416,13 @@ export class SyncService {
       }
     }
 
-    await this.recomputeJob(
+    const cancelled = this.cancelRequestedJobId === jobId
+    await this.finalizeActiveJobStatus(
       jobId,
-      this.cancelRequestedJobId === jobId ? 'cancelled' : undefined
+      cancelled ? 'cancelled' : undefined
     )
-    this.activeJobId = null
-    if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
     await this.emitSnapshot()
+    void this.runScheduler()
     logMain({
       level: failed === 0 ? 'info' : 'error',
       source: 'sync',
@@ -1614,7 +2434,11 @@ export class SyncService {
     return result
   }
 
-  private async handleWorkerEvent(jobId: string, line: string) {
+  private async handleWorkerEvent(
+    jobId: string,
+    line: string,
+    preservePlannedCount = false
+  ) {
     let event: WorkerEvent
     try {
       event = JSON.parse(line) as WorkerEvent
@@ -1633,8 +2457,10 @@ export class SyncService {
       return
     }
 
+    if (this.cancelRequestedJobId === jobId) return
+
     if (event.type === 'job') {
-      if (event.total_count != null) {
+      if (event.total_count != null && !preservePlannedCount) {
         await this.db
           .update(syncJobsTable)
           .set({ plannedCount: event.total_count, updatedAt: nowIso() })
@@ -1833,6 +2659,26 @@ export class SyncService {
         target: syncJobTracksTable.id,
         set: {
           ...values,
+          libraryTrackId:
+            overrides.libraryTrackId === undefined
+              ? syncJobTracksTable.libraryTrackId
+              : values.libraryTrackId,
+          sortIndex:
+            overrides.sortIndex === undefined
+              ? syncJobTracksTable.sortIndex
+              : values.sortIndex,
+          remoteTarget:
+            overrides.remoteTarget === undefined
+              ? syncJobTracksTable.remoteTarget
+              : values.remoteTarget,
+          jobPhase:
+            overrides.jobPhase === undefined
+              ? syncJobTracksTable.jobPhase
+              : values.jobPhase,
+          currentOutputPath:
+            overrides.currentOutputPath === undefined
+              ? syncJobTracksTable.currentOutputPath
+              : values.currentOutputPath,
           createdAt: undefined,
           updatedAt: timestamp,
         },
@@ -1898,6 +2744,15 @@ export class SyncService {
         updatedAt: nowIso(),
       })
       .where(eq(syncJobsTable.id, jobId))
+  }
+
+  private async finalizeActiveJobStatus(
+    jobId: string,
+    forcedTerminal?: 'failed' | 'cancelled'
+  ) {
+    if (this.activeJobId === jobId) this.activeJobId = null
+    if (this.cancelRequestedJobId === jobId) this.cancelRequestedJobId = null
+    await this.recomputeJob(jobId, forcedTerminal)
   }
 
   private toTrackView(
@@ -2014,24 +2869,22 @@ export class SyncService {
         const rightPreferred = right.id === track.preferredFileId ? 1 : 0
         if (leftPreferred !== rightPreferred)
           return rightPreferred - leftPreferred
-        const leftAbsolute = left.absolutePathSnapshot ? 1 : 0
-        const rightAbsolute = right.absolutePathSnapshot ? 1 : 0
-        if (leftAbsolute !== rightAbsolute) return rightAbsolute - leftAbsolute
         return left.relativePath.localeCompare(right.relativePath)
       })
       let selectedFile: (typeof localFiles)[number] | null = null
+      let selectedPath: string | null = null
       for (const file of sortedFiles) {
-        const snapshot = file.absolutePathSnapshot
-        if (!snapshot) continue
+        const candidatePath = path.resolve(localRoot.uri, file.relativePath)
         try {
-          await access(snapshot)
+          await access(candidatePath)
           selectedFile = file
+          selectedPath = candidatePath
           break
         } catch {
           // Stale indexed path; try next file variant for this track.
         }
       }
-      if (!selectedFile?.absolutePathSnapshot) continue
+      if (!selectedFile || !selectedPath) continue
       candidates.push({
         track_work_id: createId('track'),
         library_track_id: track.id,
@@ -2060,8 +2913,12 @@ export class SyncService {
         mb_album_id: track.mbAlbumId,
         mb_releasegroup_id: track.mbReleaseGroupId,
         lyrics_status: track.lyricsStatus,
-        current_output_path: selectedFile.absolutePathSnapshot,
-        current_lrc_path: selectedFile.lrcPath,
+        current_output_path: selectedPath,
+        current_lrc_path: selectedFile.lrcPath
+          ? path
+              .resolve(localRoot.uri, selectedFile.relativePath)
+              .replace(/\.[^/.]+$/, '.lrc')
+          : null,
         cover_art_present: track.coverArtPresent,
       })
     }
@@ -2075,17 +2932,11 @@ export class SyncService {
         .from(syncJobTracksTable)
         .where(eq(syncJobTracksTable.jobId, jobId))
 
-      const touchedLocalOutputs = tracks
-        .filter((track) =>
-          ['completed', 'completed_local_only'].includes(track.status)
-        )
-        .map((track) => track.outputPath)
-        .filter((value): value is string => Boolean(value))
-
-      if (touchedLocalOutputs.length > 0) {
-        await this.libraryService.upsertLocalOutputs(touchedLocalOutputs)
-        await this.likedArtistsService.refreshArtists()
+      const reconcileResult = await this.libraryService.reconcileLocalLibrary()
+      if (!reconcileResult.ok) {
+        throw new Error(reconcileResult.message)
       }
+      await this.likedArtistsService.refreshArtists()
 
       for (const track of tracks) {
         if (track.status !== 'completed' || !track.outputPath) continue
@@ -2211,7 +3062,35 @@ export class SyncService {
         terminalOutcome: 'cancelled',
         updatedAt: nowIso(),
       })
-      .where(eq(syncJobTracksTable.jobId, jobId))
+      .where(
+        and(
+          eq(syncJobTracksTable.jobId, jobId),
+          inArray(syncJobTracksTable.status, ['pending', 'processing'])
+        )
+      )
+  }
+
+  private async failUnfinishedTracks(
+    jobId: string,
+    reasonCode: 'app_restarted' | 'worker_exited' | 'remote_retry_failed',
+    reasonDetail: string
+  ) {
+    await this.db
+      .update(syncJobTracksTable)
+      .set({
+        status: 'failed_terminal',
+        stage: 'finalize',
+        reasonCode,
+        reasonDetail,
+        terminalOutcome: reasonCode,
+        updatedAt: nowIso(),
+      })
+      .where(
+        and(
+          eq(syncJobTracksTable.jobId, jobId),
+          inArray(syncJobTracksTable.status, ['pending', 'processing'])
+        )
+      )
   }
 
   private normalizeArtistName(value: string) {
@@ -2281,14 +3160,6 @@ export class SyncService {
       .select()
       .from(syncJobTracksTable)
       .where(eq(syncJobTracksTable.jobId, jobId))
-    const currentLocal = new Set(
-      tracks
-        .filter((row) =>
-          ['completed', 'completed_local_only'].includes(row.status)
-        )
-        .map((row) => row.outputPath)
-        .filter((value): value is string => Boolean(value))
-    )
     const currentRemote = new Set(
       tracks
         .filter((row) => row.status === 'completed' && Boolean(row.outputPath))
@@ -2311,26 +3182,10 @@ export class SyncService {
     )
 
     for (const row of previous) {
-      if (row.rootKind === 'local') {
-        if (
-          !row.absolutePathSnapshot ||
-          currentLocal.has(row.absolutePathSnapshot)
-        ) {
-          continue
-        }
-        const relativePath = path
-          .relative(settings.outputDirectory, row.absolutePathSnapshot)
-          .split(path.sep)
-          .join('/')
-        await this.libraryService.pruneIndexedFile(row.rootUri, relativePath)
-      } else {
-        const remoteKey = `${row.rootUri}|${row.relativePath}`
-        if (currentRemote.has(remoteKey)) continue
-        await this.libraryService.pruneIndexedFile(
-          row.rootUri,
-          row.relativePath
-        )
-      }
+      if (row.rootKind !== 'remote') continue
+      const remoteKey = `${row.rootUri}|${row.relativePath}`
+      if (currentRemote.has(remoteKey)) continue
+      await this.libraryService.removeRemoteCopy(row.rootUri, row.relativePath)
     }
     this.reprocessPreexistingManagedFiles.delete(jobId)
   }

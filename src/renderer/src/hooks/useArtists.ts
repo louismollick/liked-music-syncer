@@ -1,6 +1,16 @@
 import type { LikedArtistView } from '@shared/contracts'
 import { useEffect, useMemo, useState } from 'react'
 
+export function sortArtistsByTrackCount(
+  artists: LikedArtistView[]
+): LikedArtistView[] {
+  return [...artists].sort(
+    (left, right) =>
+      right.likedTrackCount - left.likedTrackCount ||
+      left.name.localeCompare(right.name)
+  )
+}
+
 export function useArtists() {
   const [artists, setArtists] = useState<LikedArtistView[]>([])
 
@@ -56,7 +66,10 @@ export function useArtists() {
   }, [])
 
   const filteredArtists = useMemo(
-    () => artists.filter((a) => a.likedTrackCount > 0),
+    () =>
+      sortArtistsByTrackCount(
+        artists.filter((artist) => artist.likedTrackCount > 0)
+      ),
     [artists]
   )
 

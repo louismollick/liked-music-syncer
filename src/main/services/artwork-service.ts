@@ -73,6 +73,9 @@ interface AlbumArtworkOptions {
 }
 
 export class ArtworkService {
+  private albumSourceIndex: Promise<Map<string, SourceFileCandidate>> | null =
+    null
+
   constructor(
     private readonly db: AppDatabase,
     private readonly pythonWorker: PythonWorkerService,
@@ -111,7 +114,7 @@ export class ArtworkService {
     })
 
     const indexStartedAt = Date.now()
-    const index = await this.buildAlbumSourceIndex()
+    const index = await this.getAlbumSourceIndex()
     logMain({
       level: 'debug',
       source: 'artwork',
@@ -253,6 +256,7 @@ export class ArtworkService {
   }
 
   async pruneStaleCache(): Promise<void> {
+    this.invalidateSourceIndex()
     const validNames = await this.collectValidCacheFileNames()
     let entries: string[]
     try {
@@ -286,6 +290,18 @@ export class ArtworkService {
         },
       })
     }
+  }
+
+  invalidateSourceIndex(): void {
+    this.albumSourceIndex = null
+  }
+
+  private getAlbumSourceIndex(): Promise<Map<string, SourceFileCandidate>> {
+    this.albumSourceIndex ??= this.buildAlbumSourceIndex().catch((error) => {
+      this.albumSourceIndex = null
+      throw error
+    })
+    return this.albumSourceIndex
   }
 
   private async collectValidCacheFileNames(): Promise<Set<string>> {

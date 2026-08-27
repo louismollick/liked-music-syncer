@@ -2,7 +2,6 @@ import { buildAlbumKey } from '@shared/album-key'
 import type {
   AuthStatus,
   CommandResult,
-  LibraryIndexStatus,
   LibraryTrackView,
   LikedArtistView,
   SyncSnapshot,
@@ -31,23 +30,12 @@ import {
 import { SettingsRouteComponent } from './routes/settings'
 import { SyncRouteComponent } from './routes/sync'
 
-const EMPTY_INDEX_STATUS: LibraryIndexStatus = {
-  currentLocalRootUri: null,
-  ready: false,
-  inProgress: false,
-  reason: 'missing_root',
-  lastScannedAt: null,
-  lastScanStatus: null,
-  indexVersion: null,
-}
-
 interface AppStateValue {
   artists: LikedArtistView[]
   tracks: LibraryTrackView[]
   tracksLoaded: boolean
   tracksRefreshing: boolean
   snapshot: SyncSnapshot
-  libraryIndexStatus: LibraryIndexStatus
   authStatus: AuthStatus
   settings: ReturnType<typeof useSettings>['settings']
   setSettings: ReturnType<typeof useSettings>['setSettings']
@@ -106,8 +94,6 @@ export function AppShell(): JSX.Element {
   const [lastLibrarySearch, setLastLibrarySearch] = useState<LibrarySearch>(
     () => normalizeLibrarySearchInput(location.search)
   )
-  const [libraryIndexStatus, setLibraryIndexStatus] =
-    useState<LibraryIndexStatus>(EMPTY_INDEX_STATUS)
   const { artists } = useArtists()
   const {
     tracks,
@@ -117,14 +103,6 @@ export function AppShell(): JSX.Element {
   const snapshot = useSyncSnapshot()
   const { settings, setSettings, authStatus, setAuthStatus, save } =
     useSettings()
-
-  useEffect(() => {
-    void window.api.library.getIndexStatus().then(setLibraryIndexStatus)
-    const unsubscribe = window.api.library.subscribeIndexStatus(() => {
-      void window.api.library.getIndexStatus().then(setLibraryIndexStatus)
-    })
-    return unsubscribe
-  }, [])
 
   useEffect(() => {
     if (location.pathname !== '/library') return
@@ -178,7 +156,6 @@ export function AppShell(): JSX.Element {
       tracksLoaded,
       tracksRefreshing,
       snapshot,
-      libraryIndexStatus,
       authStatus,
       settings,
       setSettings,
@@ -193,7 +170,6 @@ export function AppShell(): JSX.Element {
       tracksLoaded,
       tracksRefreshing,
       snapshot,
-      libraryIndexStatus,
       authStatus,
       settings,
       setSettings,

@@ -24,7 +24,9 @@ import {
 } from '../src/main/db/schema'
 import {
   ARTWORK_FILENAME_PATTERN,
+  buildArtistPhotoMediaUrl,
   buildArtworkMediaUrl,
+  resolveArtistPhotoCacheFileName,
   resolveArtworkCacheFileName,
 } from '../src/main/services/artwork-protocol'
 import {
@@ -108,6 +110,13 @@ describe('app-media protocol path validation', () => {
     expect(
       resolveArtworkCacheFileName('file:///etc/passwd', cacheDir)
     ).toBeNull()
+  })
+
+  it('keeps artist photos in their own media cache host', () => {
+    const fileName = `${'a'.repeat(64)}.jpg`
+    const url = buildArtistPhotoMediaUrl(fileName)
+    expect(resolveArtistPhotoCacheFileName(url, cacheDir)).toBe(fileName)
+    expect(resolveArtworkCacheFileName(url, cacheDir)).toBeNull()
   })
 })
 
@@ -216,6 +225,32 @@ describe('ArtworkService', () => {
       artworkUrl: buildArtworkMediaUrl(cacheFileName),
     })
     expect(runJsonCommand).not.toHaveBeenCalled()
+    sqlite.close()
+  })
+
+  it('reuses the album source index across artwork batches', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const cacheDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lms-artwork-cache-')
+    )
+    cacheDirs.push(cacheDir)
+    cacheDirs.push(dir)
+    const service = new ArtworkService(
+      db,
+      { runJsonCommand: vi.fn() } as never,
+      cacheDir
+    )
+    const buildIndex = vi.spyOn(
+      service as unknown as {
+        buildAlbumSourceIndex: () => Promise<Map<string, unknown>>
+      },
+      'buildAlbumSourceIndex'
+    )
+
+    await service.getAlbumArtwork(['first|||artist'])
+    await service.getAlbumArtwork(['second|||artist'])
+
+    expect(buildIndex).toHaveBeenCalledTimes(1)
     sqlite.close()
   })
 

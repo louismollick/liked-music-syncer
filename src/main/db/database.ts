@@ -132,9 +132,7 @@ function resetSchema(sqlite: Database.Database) {
       writable INTEGER NOT NULL,
       managed_output INTEGER NOT NULL,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      last_scanned_at TEXT,
-      last_scan_status TEXT
+      updated_at TEXT NOT NULL
     );
 
     CREATE TABLE library_tracks (
@@ -194,6 +192,7 @@ function resetSchema(sqlite: Database.Database) {
       bitrate INTEGER,
       modified_at TEXT,
       sidecar_modified_at TEXT,
+      sidecar_sha256 TEXT,
       audio_sha256 TEXT,
       tag_fingerprint TEXT,
       embedded_lyrics_status TEXT NOT NULL,
@@ -241,6 +240,48 @@ function migrateSchema(sqlite: Database.Database, version: string | null) {
   resetSchema(sqlite)
 }
 
+function removeLegacyLibraryScanState(sqlite: Database.Database) {
+  const columns = sqlite.prepare('PRAGMA table_info(library_roots)').all() as {
+    name: string
+  }[]
+  if (!columns.some((column) => column.name === 'last_scanned_at')) return
+
+  sqlite.transaction(() => {
+    sqlite.exec(`
+      ALTER TABLE library_roots RENAME TO library_roots_with_scan_state;
+      CREATE TABLE library_roots (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        label TEXT NOT NULL,
+        uri TEXT NOT NULL UNIQUE,
+        writable INTEGER NOT NULL,
+        managed_output INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO library_roots (
+        id, kind, transport, label, uri, writable, managed_output,
+        created_at, updated_at
+      )
+      SELECT
+        id, kind, transport, label, uri, writable, managed_output,
+        created_at, updated_at
+      FROM library_roots_with_scan_state;
+      DROP TABLE library_roots_with_scan_state;
+    `)
+  })()
+}
+
+function addManagedMetadataColumns(sqlite: Database.Database) {
+  const columns = sqlite.prepare('PRAGMA table_info(library_files)').all() as {
+    name: string
+  }[]
+  if (!columns.some((column) => column.name === 'sidecar_sha256')) {
+    sqlite.exec('ALTER TABLE library_files ADD COLUMN sidecar_sha256 TEXT')
+  }
+}
+
 export function createDatabase(databaseFile: string) {
   mkdirSync(path.dirname(databaseFile), { recursive: true })
   const sqlite = new Database(databaseFile)
@@ -253,6 +294,14 @@ export function createDatabase(databaseFile: string) {
   } else if (schemaVersion !== SCHEMA_VERSION) {
     migrateSchema(sqlite, schemaVersion)
   }
+
+  removeLegacyLibraryScanState(sqlite)
+  addManagedMetadataColumns(sqlite)
+  sqlite
+    .prepare(
+      "DELETE FROM meta WHERE key IN ('library_index_version', 'library_index_local_root_uri')"
+    )
+    .run()
 
   return {
     sqlite,

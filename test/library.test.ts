@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
+import { eq } from 'drizzle-orm'
 import { execa } from 'execa'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -20,7 +21,6 @@ import {
   libraryRootsTable,
   libraryTracksTable,
   likedArtistsTable,
-  metaTable,
   syncJobsTable,
   syncJobTracksTable,
 } from '../src/main/db/schema'
@@ -29,6 +29,7 @@ import { LikedArtistsService } from '../src/main/services/liked-artists-service'
 import { setTempLogMirror } from '../src/main/services/logger'
 import {
   buildRemoteScannerSshArgs,
+  classifyRemoteTrack,
   normalizeExiftoolJson,
   parseRcloneSftpConfig,
   SyncService,
@@ -97,16 +98,8 @@ function scannedFile(
   }
 }
 
-function readyIndexStatus() {
-  return {
-    currentLocalRootUri: '/tmp/out',
-    ready: true,
-    inProgress: false,
-    reason: 'ready' as const,
-    lastScannedAt: '2026-05-18T00:00:00.000Z',
-    lastScanStatus: 'ok',
-    indexVersion: 1,
-  }
+function successfulReconcile() {
+  return { ok: true, message: 'Library refresh complete.' }
 }
 
 function createMockChildProcess() {
@@ -666,183 +659,23 @@ describe('library service', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('reports local index readiness from root scan state and meta', async () => {
+  it('coalesces concurrent reconcile requests into one trailing pass', async () => {
     const { db, sqlite, dir } = makeTempDb()
-    const service = new LibraryService(
-      db,
-      {
-        getRuntimeSettings: vi.fn().mockResolvedValue({
-          outputDirectory: '/library',
-          remoteCopyEnabled: false,
-          rcloneRemote: '',
-          remoteMusicRoot: '',
-        }),
-      } as never,
-      {} as never
-    )
-
-    expect((await service.getIndexStatus()).reason).toBe('never_scanned')
-
-    await db.insert(libraryRootsTable).values({
-      id: 'root_local_/library',
-      kind: 'local',
-      transport: 'filesystem',
-      label: 'Local output',
-      uri: '/library',
-      writable: true,
-      managedOutput: true,
-      createdAt: '2026-05-18T00:00:00.000Z',
-      updatedAt: '2026-05-18T00:00:00.000Z',
-      lastScannedAt: '2026-05-18T00:00:00.000Z',
-      lastScanStatus: 'ok',
+    let releaseFirstScan: (() => void) | undefined
+    const firstScan = new Promise<void>((resolve) => {
+      releaseFirstScan = resolve
     })
-
-    expect((await service.getIndexStatus()).reason).toBe('stale_version')
-
-    await db.insert(metaTable).values([
-      { key: 'library_index_version', value: '1' },
-      { key: 'library_index_local_root_uri', value: '/library' },
-    ])
-
-    expect(await service.getIndexStatus()).toMatchObject({
-      currentLocalRootUri: '/library',
-      ready: true,
-      inProgress: false,
-      reason: 'ready',
-      lastScanStatus: 'ok',
-      indexVersion: 1,
-    })
-
-    sqlite.close()
-    fs.rmSync(dir, { recursive: true, force: true })
-  })
-
-  it('refreshIndex performs incremental reconcile when index is ready', async () => {
-    const { db, sqlite, dir } = makeTempDb()
-    await db.insert(libraryRootsTable).values({
-      id: 'root_local_/library',
-      kind: 'local',
-      transport: 'filesystem',
-      label: 'Local output',
-      uri: '/library',
-      writable: true,
-      managedOutput: true,
-      createdAt: '2026-05-18T00:00:00.000Z',
-      updatedAt: '2026-05-18T00:00:00.000Z',
-      lastScannedAt: '2026-05-18T00:00:00.000Z',
-      lastScanStatus: 'ok',
-    })
-    await db.insert(metaTable).values([
-      { key: 'library_index_version', value: '1' },
-      { key: 'library_index_local_root_uri', value: '/library' },
-    ])
-    await db.insert(libraryTracksTable).values([
-      {
-        id: 'track_keep',
-        identityKind: 'lms_source',
-        identityValue: 'youtube_music:liked123',
-        managedByApp: true,
-        tagSchemaVersion: 1,
-        youtubeMusicTrackId: 'liked123',
-        resolvedYoutubeMusicTrackId: 'catalog456',
-        title: 'Track Title',
-        artist: 'Artist Name',
-        album: 'Album Name',
-        albumArtist: 'Artist Name',
-        lyricsStatus: 'synced',
-        hasEmbeddedLyrics: true,
-        hasSidecarLyrics: false,
-        coverArtPresent: true,
-        missingFieldsJson: '[]',
-        preferredFileId: 'file_keep',
-        firstSeenAt: '2026-05-18T00:00:00.000Z',
-        lastSeenAt: '2026-05-18T00:00:00.000Z',
-        updatedAt: '2026-05-18T00:00:00.000Z',
-      },
-      {
-        id: 'track_delete',
-        identityKind: 'path',
-        identityValue: '/library:gone.m4a',
-        managedByApp: false,
-        title: 'Gone',
-        artist: 'Ghost',
-        album: 'Lost',
-        albumArtist: 'Ghost',
-        lyricsStatus: 'missing',
-        hasEmbeddedLyrics: false,
-        hasSidecarLyrics: false,
-        coverArtPresent: false,
-        missingFieldsJson: '[]',
-        preferredFileId: 'file_delete',
-        firstSeenAt: '2026-05-18T00:00:00.000Z',
-        lastSeenAt: '2026-05-18T00:00:00.000Z',
-        updatedAt: '2026-05-18T00:00:00.000Z',
-      },
-    ])
-    await db.insert(libraryFilesTable).values([
-      {
-        id: 'file_keep',
-        trackId: 'track_keep',
-        rootId: 'root_local_/library',
-        relativePath: 'keep.m4a',
-        absolutePathSnapshot: '/library/keep.m4a',
-        lrcPath: null,
-        format: 'm4a',
-        sizeBytes: 123,
-        durationSeconds: 120,
-        bitrate: 256000,
-        modifiedAt: '2026-05-18T00:00:00.000Z',
-        sidecarModifiedAt: null,
-        audioSha256: null,
-        tagFingerprint: 'fingerprint',
-        embeddedLyricsStatus: 'synced',
-        sidecarLyricsStatus: 'missing',
-        missingFieldsJson: '[]',
-        discoveredVia: 'lms_tags',
-        lastScannedAt: '2026-05-18T00:00:00.000Z',
-        firstSeenAt: '2026-05-18T00:00:00.000Z',
-        updatedAt: '2026-05-18T00:00:00.000Z',
-      },
-      {
-        id: 'file_delete',
-        trackId: 'track_delete',
-        rootId: 'root_local_/library',
-        relativePath: 'gone.m4a',
-        absolutePathSnapshot: '/library/gone.m4a',
-        lrcPath: null,
-        format: 'm4a',
-        sizeBytes: 77,
-        durationSeconds: 90,
-        bitrate: 256000,
-        modifiedAt: '2026-05-18T00:00:00.000Z',
-        sidecarModifiedAt: null,
-        audioSha256: null,
-        tagFingerprint: 'gone',
-        embeddedLyricsStatus: 'missing',
-        sidecarLyricsStatus: 'missing',
-        missingFieldsJson: '[]',
-        discoveredVia: 'path',
-        lastScannedAt: '2026-05-18T00:00:00.000Z',
-        firstSeenAt: '2026-05-18T00:00:00.000Z',
-        updatedAt: '2026-05-18T00:00:00.000Z',
-      },
-    ])
-
     const pythonWorker = {
-      runJsonCommand: vi.fn().mockResolvedValue({
-        scanned_at: '2026-05-19T00:00:00.000Z',
-        files: [
-          scannedFile({
-            relative_path: 'keep.m4a',
-            absolute_path_snapshot: '/library/keep.m4a',
-            lrc_path: '/library/keep.lrc',
-            size_bytes: 456,
-            modified_at: '2026-05-19T00:00:00.000Z',
-            sidecar_modified_at: '2026-05-19T00:00:01.000Z',
-          }),
-        ],
-        deleted_relative_paths: ['gone.m4a'],
-      }),
+      runJsonCommand: vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          await firstScan
+          return { scanned_at: '2026-05-18T00:00:00.000Z', files: [] }
+        })
+        .mockResolvedValue({
+          scanned_at: '2026-05-18T00:00:01.000Z',
+          files: [],
+        }),
     }
     const service = new LibraryService(
       db,
@@ -857,25 +690,67 @@ describe('library service', () => {
       pythonWorker as never
     )
 
-    const result = await service.refreshIndex()
-    expect(result.ok).toBe(true)
-    expect(vi.mocked(pythonWorker.runJsonCommand)).toHaveBeenCalledWith(
-      'library-reconcile-local-root',
-      expect.objectContaining({
-        uri: '/library',
-      })
+    const first = service.reconcileLocalLibrary()
+    const second = service.reconcileLocalLibrary()
+    const third = service.reconcileLocalLibrary()
+    releaseFirstScan?.()
+
+    await expect(Promise.all([first, second, third])).resolves.toEqual([
+      successfulReconcile(),
+      successfulReconcile(),
+      successfulReconcile(),
+    ])
+    expect(pythonWorker.runJsonCommand).toHaveBeenCalledTimes(2)
+    expect(pythonWorker.runJsonCommand).toHaveBeenCalledWith(
+      'library-scan-root',
+      expect.objectContaining({ uri: '/library' })
     )
 
-    const files = await db.select().from(libraryFilesTable)
-    expect(files).toHaveLength(1)
-    expect(files[0]).toMatchObject({
-      relativePath: 'keep.m4a',
-      sidecarModifiedAt: '2026-05-19T00:00:01.000Z',
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('preserves the last inventory when the filesystem scan fails', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const service = new LibraryService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/library',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+        }),
+      } as never,
+      {
+        runJsonCommand: vi.fn().mockRejectedValue(new Error('walk failed')),
+      } as never
+    )
+    await db.insert(libraryTracksTable).values({
+      id: 'existing',
+      identityKind: 'path',
+      identityValue: '/library:existing.m4a',
+      managedByApp: false,
+      title: 'Existing',
+      artist: 'Artist',
+      album: 'Album',
+      albumArtist: 'Artist',
+      lyricsStatus: 'missing',
+      hasEmbeddedLyrics: false,
+      hasSidecarLyrics: false,
+      coverArtPresent: false,
+      missingFieldsJson: '[]',
+      preferredFileId: null,
+      firstSeenAt: '2026-05-18T00:00:00.000Z',
+      lastSeenAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
     })
 
-    const tracks = await db.select().from(libraryTracksTable)
-    expect(tracks).toHaveLength(1)
-    expect((await service.getIndexStatus()).ready).toBe(true)
+    await expect(service.reconcileLocalLibrary()).resolves.toMatchObject({
+      ok: false,
+      message: 'walk failed',
+    })
+    expect(await service.listTracks()).toHaveLength(1)
 
     sqlite.close()
     fs.rmSync(dir, { recursive: true, force: true })
@@ -1061,6 +936,668 @@ describe('sync job track contract', () => {
     })
 
     sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('cancels only unfinished tracks', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(syncJobsTable).values({
+      id: 'job_1',
+      kind: 'reprocess',
+      scope: 'library',
+      label: 'Reprocess Library',
+      status: 'queued',
+      queueBucket: 'queue',
+      startedAt: stamp,
+      endedAt: null,
+      plannedCount: 3,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+
+    const service = new SyncService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+    const upsert = (
+      service as unknown as {
+        upsertJobTrack: (
+          jobId: string,
+          item: Record<string, unknown>
+        ) => Promise<void>
+      }
+    ).upsertJobTrack.bind(service)
+    const track = (
+      id: string,
+      status: 'completed' | 'failed_terminal' | 'pending',
+      reasonCode: string
+    ) => ({
+      id,
+      youtube_music_track_id: id,
+      title: id,
+      artist: 'Artist',
+      album: 'Album',
+      album_artist: 'Artist',
+      source_url: `https://music.youtube.com/watch?v=${id}`,
+      status,
+      stage: status === 'pending' ? 'idle' : 'finalize',
+      reason_code: reasonCode,
+      reason_detail: reasonCode,
+      source_kind: 'reprocess',
+      resolution_method: 'exact',
+      lyrics_status: 'missing',
+    })
+    await upsert('job_1', track('completed', 'completed', 'reprocess_updated'))
+    await upsert(
+      'job_1',
+      track('failed', 'failed_terminal', 'reprocess_apply_failed')
+    )
+    await upsert('job_1', track('pending', 'pending', ''))
+
+    await expect(service.cancel('job_1')).resolves.toMatchObject({ ok: true })
+
+    const rows = await db
+      .select()
+      .from(syncJobTracksTable)
+      .orderBy(syncJobTracksTable.id)
+    expect(rows.map((row) => [row.id, row.status, row.reasonCode])).toEqual([
+      ['completed', 'completed', 'reprocess_updated'],
+      ['failed', 'failed_terminal', 'reprocess_apply_failed'],
+      ['pending', 'failed_terminal', 'cancelled'],
+    ])
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('finishes unresolved tracks when the worker exits unexpectedly', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const child = createMockChildProcess()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(syncJobsTable).values({
+      id: 'job_1',
+      kind: 'reprocess',
+      scope: 'library',
+      label: 'Reprocess Library',
+      status: 'queued',
+      queueBucket: 'queue',
+      startedAt: stamp,
+      endedAt: null,
+      plannedCount: 3,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+
+    const service = new SyncService(
+      db,
+      {} as never,
+      { spawnNdjsonCommand: vi.fn().mockReturnValue(child) } as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+    const internals = service as unknown as {
+      upsertJobTrack: (
+        jobId: string,
+        item: Record<string, unknown>
+      ) => Promise<void>
+      launchNdjsonWorkerJob: (
+        jobId: string,
+        command: 'reprocess-job',
+        payload: Record<string, unknown>
+      ) => Promise<void>
+    }
+    const track = (
+      id: string,
+      status: 'completed' | 'pending' | 'processing'
+    ) => ({
+      id,
+      youtube_music_track_id: id,
+      title: id,
+      artist: 'Artist',
+      album: 'Album',
+      album_artist: 'Artist',
+      source_url: `https://music.youtube.com/watch?v=${id}`,
+      status,
+      stage: status === 'completed' ? 'finalize' : 'source_resolve',
+      reason_code: status === 'completed' ? 'reprocess_updated' : '',
+      reason_detail: '',
+      source_kind: 'reprocess',
+      resolution_method: 'exact',
+      lyrics_status: 'missing',
+    })
+    await internals.upsertJobTrack('job_1', track('completed', 'completed'))
+    await internals.upsertJobTrack('job_1', track('pending', 'pending'))
+    await internals.upsertJobTrack('job_1', track('processing', 'processing'))
+
+    await internals.launchNdjsonWorkerJob('job_1', 'reprocess-job', {})
+    child.emitExit(1, null)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const [job] = await db.select().from(syncJobsTable)
+    const rows = await db
+      .select()
+      .from(syncJobTracksTable)
+      .orderBy(syncJobTracksTable.id)
+    expect(job?.status).toBe('completed')
+    expect(rows.map((row) => [row.id, row.status, row.reasonCode])).toEqual([
+      ['completed', 'completed', 'reprocess_updated'],
+      ['pending', 'failed_terminal', 'worker_exited'],
+      ['processing', 'failed_terminal', 'worker_exited'],
+    ])
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('recovers jobs left running by a previous app launch', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(syncJobsTable).values({
+      id: 'job_1',
+      kind: 'reprocess',
+      scope: 'library',
+      label: 'Reprocess Library',
+      status: 'running',
+      queueBucket: 'queue',
+      startedAt: stamp,
+      endedAt: null,
+      plannedCount: 2,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+    const service = new SyncService(
+      db,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+    const upsert = (
+      service as unknown as {
+        upsertJobTrack: (
+          jobId: string,
+          item: Record<string, unknown>
+        ) => Promise<void>
+      }
+    ).upsertJobTrack.bind(service)
+    await upsert('job_1', {
+      id: 'completed',
+      youtube_music_track_id: 'completed',
+      title: 'Completed',
+      artist: 'Artist',
+      album: 'Album',
+      album_artist: 'Artist',
+      source_url: 'https://music.youtube.com/watch?v=completed',
+      status: 'completed',
+      stage: 'finalize',
+      source_kind: 'reprocess',
+      resolution_method: 'exact',
+      lyrics_status: 'missing',
+    })
+    await upsert('job_1', {
+      id: 'pending',
+      youtube_music_track_id: 'pending',
+      title: 'Pending',
+      artist: 'Artist',
+      album: 'Album',
+      album_artist: 'Artist',
+      source_url: 'https://music.youtube.com/watch?v=pending',
+      status: 'processing',
+      stage: 'source_resolve',
+      source_kind: 'reprocess',
+      resolution_method: 'exact',
+      lyrics_status: 'missing',
+    })
+
+    await service.recoverInterruptedJobs()
+
+    const [job] = await db.select().from(syncJobsTable)
+    const tracks = await db
+      .select()
+      .from(syncJobTracksTable)
+      .orderBy(syncJobTracksTable.id)
+    expect(job?.status).toBe('completed')
+    expect(
+      tracks.map((track) => [track.id, track.status, track.reasonCode])
+    ).toEqual([
+      ['completed', 'completed', ''],
+      ['pending', 'failed_terminal', 'app_restarted'],
+    ])
+    expect((await service.getSnapshot()).jobs[0]).toMatchObject({
+      id: 'job_1',
+      totalTracks: 2,
+      processedTracks: 2,
+      completedTracks: 1,
+      failedTracks: 1,
+    })
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it.each([
+    { kind: 'liked_songs_sync', label: 'Liked Songs Sync' },
+    {
+      kind: 'favorite_artist_catalog_refresh',
+      label: 'Refresh Favorite Catalog',
+    },
+  ] as const)('retries only failed tracks inside a finished $kind job', async ({
+    kind,
+    label,
+  }) => {
+    const { db, sqlite, dir } = makeTempDb()
+    const child = createMockChildProcess()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(syncJobsTable).values({
+      id: 'job_original',
+      kind,
+      scope: null,
+      label,
+      status: 'completed',
+      queueBucket: 'completed',
+      startedAt: stamp,
+      endedAt: stamp,
+      plannedCount: 2,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+
+    const pythonWorker = {
+      runJsonCommand: vi.fn().mockResolvedValue({
+        ok: true,
+        is_authenticated: true,
+        message: 'Authenticated.',
+      }),
+      spawnNdjsonCommand: vi.fn().mockReturnValue(child),
+    }
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          ytmusicBrowserAuth: 'cookie: a=b',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+          lyricsApiBaseUrl: '',
+        }),
+      } as never,
+      pythonWorker as never,
+      {
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
+        getManagedLocalSignatures: vi.fn().mockResolvedValue({
+          sourceIds: new Set<string>(),
+          resolvedIds: new Set<string>(),
+          trackSignatures: [],
+          releaseSignatures: [],
+        }),
+      } as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+    const upsert = (
+      service as unknown as {
+        upsertJobTrack: (
+          jobId: string,
+          item: Record<string, unknown>
+        ) => Promise<void>
+      }
+    ).upsertJobTrack.bind(service)
+    const track = (id: string, status: 'completed' | 'failed_terminal') => ({
+      id,
+      youtube_music_track_id: id,
+      resolved_youtube_music_track_id: `${id}_resolved`,
+      title: `Song ${id}`,
+      artist: 'Artist',
+      album: 'Album',
+      album_artist: 'Artist',
+      source_url: `https://music.youtube.com/watch?v=${id}`,
+      status,
+      stage: 'finalize',
+      reason_code: status === 'failed_terminal' ? 'sync_failed' : '',
+      reason_detail: status === 'failed_terminal' ? 'download failed' : '',
+      source_kind: 'liked_song',
+      resolution_method: 'exact',
+      lyrics_status: 'missing',
+    })
+    await upsert('job_original', track('succeeded', 'completed'))
+    await upsert('job_original', track('failed', 'failed_terminal'))
+
+    await expect(
+      service.retryFailedTracks('job_original')
+    ).resolves.toMatchObject({
+      ok: true,
+      message: 'Retry started.',
+    })
+
+    const jobs = await db.select().from(syncJobsTable)
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]).toMatchObject({
+      id: 'job_original',
+      status: 'running',
+      plannedCount: 2,
+      kind,
+      label,
+      endedAt: null,
+    })
+    const retryTracks = await db
+      .select()
+      .from(syncJobTracksTable)
+      .where(eq(syncJobTracksTable.jobId, 'job_original'))
+    expect(retryTracks).toHaveLength(2)
+    expect(retryTracks.find((track) => track.id === 'succeeded')).toMatchObject(
+      {
+        status: 'completed',
+      }
+    )
+    expect(retryTracks.find((track) => track.id === 'failed')).toMatchObject({
+      youtubeMusicTrackId: 'failed',
+      status: 'pending',
+      reasonCode: '',
+    })
+    expect(pythonWorker.spawnNdjsonCommand).toHaveBeenCalledWith(
+      'sync-job',
+      expect.objectContaining({
+        job_id: 'job_original',
+        force_reprocess: true,
+        retry_items: [
+          expect.objectContaining({
+            trackWorkId: 'failed',
+            videoId: 'failed',
+            title: 'Song failed',
+          }),
+        ],
+      })
+    )
+
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'job',
+        event: 'started',
+        job_id: 'job_original',
+        total_count: 1,
+      })}\n`
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await service.getSnapshot()).jobs[0]).toMatchObject({
+      id: 'job_original',
+      totalTracks: 2,
+      processedTracks: 1,
+    })
+
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'track',
+        event: 'upsert',
+        job_id: 'job_original',
+        item: track('failed', 'completed'),
+      })}\n`
+    )
+    child.stdout.write(
+      `${JSON.stringify({
+        type: 'job',
+        event: 'completed',
+        job_id: 'job_original',
+        total_count: 1,
+      })}\n`
+    )
+
+    child.emitExit(0)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await service.getSnapshot()).jobs).toEqual([
+      expect.objectContaining({
+        id: 'job_original',
+        status: 'completed',
+        totalTracks: 2,
+        processedTracks: 2,
+        completedTracks: 2,
+        failedTracks: 0,
+      }),
+    ])
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('retries failed reprocess tracks with their current library paths', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const child = createMockChildProcess()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(syncJobsTable).values({
+      id: 'job_original',
+      kind: 'reprocess',
+      scope: 'library',
+      label: 'Reprocess Library',
+      status: 'completed',
+      queueBucket: 'completed',
+      startedAt: stamp,
+      endedAt: stamp,
+      plannedCount: 1,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+    const pythonWorker = {
+      runJsonCommand: vi.fn().mockResolvedValue({
+        ok: true,
+        is_authenticated: true,
+        message: 'Authenticated.',
+      }),
+      spawnNdjsonCommand: vi.fn().mockReturnValue(child),
+    }
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/tmp/out',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+          ytmusicBrowserAuth: 'cookie: a=b',
+          ytDlpCookiesBrowser: 'firefox',
+          folderTemplate: '{albumartist}/{album}',
+          fileTemplate: '{track:02d} {title}',
+          embedUnsyncedLyrics: true,
+          writeLrcSidecar: true,
+          lyricsApiBaseUrl: '',
+        }),
+      } as never,
+      pythonWorker as never,
+      {
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
+      } as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+    await (
+      service as unknown as {
+        upsertJobTrack: (
+          jobId: string,
+          item: Record<string, unknown>,
+          overrides: Record<string, unknown>
+        ) => Promise<void>
+      }
+    ).upsertJobTrack(
+      'job_original',
+      {
+        id: 'failed_reprocess',
+        youtube_music_track_id: 'liked123',
+        resolved_youtube_music_track_id: 'resolved123',
+        title: 'Song',
+        artist: 'Artist',
+        album: 'Album',
+        album_artist: 'Artist',
+        source_url: 'https://music.youtube.com/watch?v=liked123',
+        status: 'failed_terminal',
+        stage: 'finalize',
+        reason_code: 'reprocess_apply_failed',
+        reason_detail: 'tag write failed',
+        source_kind: 'reprocess',
+        resolution_method: 'exact',
+        lyrics_status: 'synced',
+      },
+      {
+        libraryTrackId: 'library_track_1',
+        currentOutputPath: '/tmp/out/Artist/Album/01 Song.m4a',
+        outputPath: '/tmp/out/Artist/Album/01 Song.m4a',
+        lrcPath: '/tmp/out/Artist/Album/01 Song.lrc',
+      }
+    )
+
+    await expect(
+      service.retryFailedTracks('job_original')
+    ).resolves.toMatchObject({
+      ok: true,
+      message: 'Retry started.',
+    })
+
+    expect(pythonWorker.spawnNdjsonCommand).toHaveBeenCalledWith(
+      'reprocess-job',
+      expect.objectContaining({
+        job_id: 'job_original',
+        items: [
+          expect.objectContaining({
+            track_work_id: 'failed_reprocess',
+            library_track_id: 'library_track_1',
+            youtube_music_track_id: 'liked123',
+            current_output_path: '/tmp/out/Artist/Album/01 Song.m4a',
+            current_lrc_path: '/tmp/out/Artist/Album/01 Song.lrc',
+          }),
+        ],
+      })
+    )
+    const jobs = await db.select().from(syncJobsTable)
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]).toMatchObject({
+      id: 'job_original',
+      kind: 'reprocess',
+      label: 'Reprocess Library',
+      plannedCount: 1,
+    })
+
+    child.emitExit(0)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('retries only the failed remote-copy candidates from a finished job', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-retry-remote-'))
+    const audioPath = path.join(localDir, '01 Song.m4a')
+    fs.writeFileSync(audioPath, 'audio')
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(syncJobsTable).values({
+      id: 'job_original',
+      kind: 'sync_missing_to_remote',
+      scope: null,
+      label: 'Sync Missing to Remote',
+      status: 'completed',
+      queueBucket: 'completed',
+      startedAt: stamp,
+      endedAt: stamp,
+      plannedCount: 1,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+    vi.mocked(execa).mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    } as never)
+    const libraryService = {
+      reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
+      upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
+    }
+    const service = new SyncService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          remoteCopyEnabled: true,
+          rcloneRemote: 'music',
+          remoteMusicRoot: 'library',
+        }),
+      } as never,
+      {} as never,
+      libraryService as never,
+      {} as never,
+      () => 'ffmpeg'
+    )
+    await (
+      service as unknown as {
+        upsertJobTrack: (
+          jobId: string,
+          item: Record<string, unknown>,
+          overrides: Record<string, unknown>
+        ) => Promise<void>
+      }
+    ).upsertJobTrack(
+      'job_original',
+      {
+        id: 'failed_remote',
+        youtube_music_track_id: 'liked123',
+        title: 'Song',
+        artist: 'Artist',
+        album: 'Album',
+        album_artist: 'Artist',
+        source_url: 'https://music.youtube.com/watch?v=liked123',
+        status: 'failed_retryable',
+        stage: 'finalize',
+        reason_code: 'remote_audio_copy_failed',
+        reason_detail: 'connection reset',
+        source_kind: 'library',
+        resolution_method: 'library',
+        lyrics_status: 'missing',
+      },
+      {
+        libraryTrackId: 'library_track_1',
+        outputPath: audioPath,
+        remoteTarget: 'music:library/Artist/Album/01 Song.m4a',
+      }
+    )
+
+    await expect(
+      service.retryFailedTracks('job_original')
+    ).resolves.toMatchObject({
+      ok: true,
+      message: 'Retry complete.',
+    })
+
+    expect(execa).toHaveBeenCalledWith(
+      'rclone',
+      ['copyto', audioPath, 'music:library/Artist/Album/01 Song.m4a'],
+      expect.objectContaining({ reject: false })
+    )
+    expect(libraryService.upsertRemoteCopyFromLocalPath).toHaveBeenCalledWith(
+      audioPath
+    )
+    const jobs = await db.select().from(syncJobsTable)
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]).toMatchObject({
+      id: 'job_original',
+      status: 'completed',
+      plannedCount: 1,
+      label: 'Sync Missing to Remote',
+    })
+    const [retriedTrack] = await db.select().from(syncJobTracksTable)
+    expect(retriedTrack).toMatchObject({
+      id: 'failed_remote',
+      jobId: 'job_original',
+      status: 'completed',
+    })
+
+    sqlite.close()
+    fs.rmSync(localDir, { recursive: true, force: true })
     fs.rmSync(dir, { recursive: true, force: true })
   })
 })
@@ -1402,8 +1939,7 @@ describe('favorite artist catalog sync', () => {
         spawnNdjsonCommand,
       } as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
         getManagedLocalSignatures: vi.fn().mockResolvedValue({
           sourceIds: new Set(['liked_existing']),
           resolvedIds: new Set(['resolved_existing']),
@@ -1510,8 +2046,7 @@ describe('favorite artist catalog sync', () => {
         spawnNdjsonCommand,
       } as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
         getManagedLocalSignatures: vi.fn().mockResolvedValue({
           sourceIds: new Set(['liked_existing']),
           resolvedIds: new Set(['resolved_existing']),
@@ -1608,8 +2143,7 @@ describe('favorite artist catalog sync', () => {
         spawnNdjsonCommand,
       } as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
         getManagedLocalSignatures: vi.fn().mockResolvedValue({
           sourceIds: new Set(['liked_existing']),
           resolvedIds: new Set(['resolved_existing']),
@@ -1923,6 +2457,40 @@ describe('clear failures', () => {
 })
 
 describe('remote shell scanner helpers', () => {
+  const remoteIdentity = (
+    tagFingerprint: string | null,
+    sidecarSha256: string | null = null
+  ) => ({
+    relativePath: 'Artist/Album/01 Song.m4a',
+    youtubeMusicTrackId: 'source',
+    resolvedYoutubeMusicTrackId: 'resolved',
+    tagFingerprint,
+    sidecarSha256,
+  })
+
+  it('classifies missing, matching, changed, and unscanned fingerprints', () => {
+    expect(classifyRemoteTrack(undefined, 'local', null)).toBe('copy')
+    expect(classifyRemoteTrack(remoteIdentity('same'), 'same', null)).toBe(
+      'skip'
+    )
+    expect(classifyRemoteTrack(remoteIdentity('remote'), 'local', null)).toBe(
+      'replace'
+    )
+    expect(classifyRemoteTrack(remoteIdentity(null), 'local', null)).toBe(
+      'replace'
+    )
+    expect(
+      classifyRemoteTrack(
+        remoteIdentity('same', 'remote-lrc'),
+        'same',
+        'local-lrc'
+      )
+    ).toBe('sidecar')
+    expect(
+      classifyRemoteTrack(remoteIdentity('same', 'remote-lrc'), 'same', null)
+    ).toBe('skip')
+  })
+
   it('parses rclone SFTP config', () => {
     expect(
       parseRcloneSftpConfig(
@@ -1958,12 +2526,16 @@ describe('remote shell scanner helpers', () => {
     ])
     expect(args[7]).toContain("cd '/home/ubuntu/louismollick-server/music'")
     expect(args[7]).toContain('exiftool')
+    expect(args[7]).toContain('ManagedMetadataFingerprint')
+    expect(args[7]).toContain('SidecarSHA256')
+    expect(args[7]).not.toContain('"-Comment"')
+    expect(args[7]).not.toContain('"-Rating"')
   })
 
   it('normalizes exiftool JSON', () => {
     expect(
       normalizeExiftoolJson(
-        '[{"SourceFile":"./A/B.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"source","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved"}]',
+        '[{"SourceFile":"./A/B.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"source","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved","ManagedMetadataFingerprint":"fingerprint","SidecarSHA256":"sidecar"}]',
         '2026-05-20T00:00:00.000Z'
       )
     ).toEqual({
@@ -1974,6 +2546,8 @@ describe('remote shell scanner helpers', () => {
           relativePath: 'A/B.m4a',
           youtubeMusicTrackId: 'source',
           resolvedYoutubeMusicTrackId: 'resolved',
+          tagFingerprint: 'fingerprint',
+          sidecarSha256: 'sidecar',
         },
       ],
     })
@@ -2012,8 +2586,7 @@ describe('library reprocess candidates', () => {
         spawnNdjsonCommand,
       } as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
       } as never,
       {} as never,
       {
@@ -2144,9 +2717,7 @@ describe('library reprocess candidates', () => {
         spawnNdjsonCommand,
       } as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
-        getIndexNotReadyResult: vi.fn(),
-        upsertLocalOutputs: vi.fn().mockResolvedValue(undefined),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {
@@ -2257,6 +2828,10 @@ describe('library reprocess candidates', () => {
     expect(job?.status).toBe('completed')
     expect(job?.queueBucket).toBe('completed')
     expect(track?.terminalOutcome).toBe('updated')
+    expect(track?.libraryTrackId).toBe('library_track_1')
+    expect(track?.sortIndex).toBe(1)
+    expect(track?.jobPhase).toBe('reprocess_apply')
+    expect(track?.currentOutputPath).toBe('/tmp/out/Artist/Album/01 Song.m4a')
 
     await new Promise((resolve) => setTimeout(resolve, 10))
     sqlite.close()
@@ -2294,9 +2869,7 @@ describe('library reprocess candidates', () => {
         spawnNdjsonCommand,
       } as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
-        getIndexNotReadyResult: vi.fn(),
-        upsertLocalOutputs: vi.fn().mockResolvedValue(undefined),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {
@@ -2912,11 +3485,7 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue({
-          ...readyIndexStatus(),
-          currentLocalRootUri: localDir,
-        }),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {} as never,
@@ -2936,6 +3505,23 @@ describe('sync missing to remote', () => {
     ).toBe(true)
     const [job] = await db.select().from(syncJobsTable)
     expect(job?.kind).toBe('sync_missing_to_remote')
+    expect(job?.plannedCount).toBe(1)
+    expect(job?.status).toBe('completed')
+    expect(job?.queueBucket).toBe('completed')
+    expect(job?.endedAt).not.toBeNull()
+    expect(
+      snapshots.at(-1)?.jobs.find((candidate) => candidate.id === job?.id)
+        ?.displayStatus
+    ).toBe('completed')
+    expect(
+      snapshots.some((snapshot) =>
+        snapshot.jobs.some(
+          (candidate) =>
+            candidate.kind === 'sync_missing_to_remote' &&
+            candidate.totalTracks === 1
+        )
+      )
+    ).toBe(true)
     const tracks = await db.select().from(syncJobTracksTable)
     expect(tracks[0]?.stage).toBe('finalize')
     expect(tracks[0]?.status).toBe('completed')
@@ -2960,6 +3546,9 @@ describe('sync missing to remote', () => {
     vi.mocked(execa).mockClear()
     const { db, sqlite, dir } = makeTempDb()
     const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-local-'))
+    const audioPath = path.join(localDir, 'Artist', 'Album', '01 Song.m4a')
+    fs.mkdirSync(path.dirname(audioPath), { recursive: true })
+    fs.writeFileSync(audioPath, 'audio')
 
     await db.insert(libraryRootsTable).values([
       {
@@ -3067,6 +3656,28 @@ describe('sync missing to remote', () => {
 
     await db.insert(libraryFilesTable).values([
       {
+        id: 'local_file',
+        trackId: 'track_local',
+        rootId: `root_local_${localDir}`,
+        relativePath: 'Artist/Album/01 Song.m4a',
+        absolutePathSnapshot: audioPath,
+        lrcPath: null,
+        format: 'm4a',
+        sizeBytes: 100,
+        durationSeconds: 120,
+        bitrate: 256000,
+        modifiedAt: null,
+        audioSha256: null,
+        tagFingerprint: 'same-fingerprint',
+        embeddedLyricsStatus: 'missing',
+        sidecarLyricsStatus: 'missing',
+        missingFieldsJson: '[]',
+        discoveredVia: 'lms_tags',
+        lastScannedAt: '2026-05-20T00:00:00.000Z',
+        firstSeenAt: '2026-05-20T00:00:00.000Z',
+        updatedAt: '2026-05-20T00:00:00.000Z',
+      },
+      {
         id: 'remote_file',
         trackId: 'track_remote',
         rootId: 'root_remote_seedbox:/music',
@@ -3101,7 +3712,7 @@ describe('sync missing to remote', () => {
         exitCode: 0,
         stderr: '',
         stdout:
-          '[{"SourceFile":"./Artist/Album/01 Song.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"liked123","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved123"}]',
+          '[{"SourceFile":"./Artist/Album/01 Song.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"liked123","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved123","ManagedMetadataFingerprint":"same-fingerprint"}]',
       } as never)
 
     const service = new SyncService(
@@ -3117,11 +3728,7 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue({
-          ...readyIndexStatus(),
-          currentLocalRootUri: localDir,
-        }),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {} as never,
@@ -3131,7 +3738,7 @@ describe('sync missing to remote', () => {
 
     const result = await service.syncMissingToRemote()
     expect(result.ok).toBe(true)
-    expect(result.details).toContain('skipped existing 2')
+    expect(result.details).toContain('skipped matching 1')
     expect(vi.mocked(execa)).toHaveBeenCalledTimes(2)
 
     sqlite.close()
@@ -3154,8 +3761,7 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue(readyIndexStatus()),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
       } as never,
       {} as never,
       {} as never,
@@ -3215,11 +3821,7 @@ describe('sync missing to remote', () => {
       } as never,
       {} as never,
       {
-        ensureLocalIndexReady: vi.fn().mockResolvedValue({
-          ...readyIndexStatus(),
-          currentLocalRootUri: localDir,
-        }),
-        getIndexNotReadyResult: vi.fn(),
+        reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
       } as never,
       {} as never,
       {} as never,

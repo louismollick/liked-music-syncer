@@ -23,7 +23,7 @@ export function useTracks() {
 
     void loadTracks(true)
 
-    const unsub = window.api.library.subscribeIndexStatus(() => {
+    const unsub = window.api.library.subscribeInventory(() => {
       void loadTracks()
     })
 

@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from PIL import Image
+from mediafile import MediaFile
 
 from liked_music_syncer.library_scan import scan_root
 from liked_music_syncer.media_tags import register_lms_mediafile_fields, write_media_tags
@@ -120,6 +121,35 @@ def test_comments_migration_parses_legacy_source_url(tmp_path: Path) -> None:
     assert migrated.lms_youtube_music_track_id == "legacy123"
     assert migrated.lms_resolved_youtube_music_track_id == "catalog456"
     assert migrated.comments in (None, "")
+
+
+def test_comment_changes_do_not_change_managed_metadata_fingerprint(tmp_path: Path) -> None:
+    register_lms_mediafile_fields()
+    audio_path = tmp_path / "song.m4a"
+    _make_m4a(audio_path)
+    write_media_tags(audio_path, _item(), _cover_bytes(), "lyrics")
+
+    before = scan_root({"transport": "filesystem", "kind": "local", "uri": str(tmp_path)})["files"][0]
+    media = MediaFile(str(audio_path))
+    media.comments = "player-owned note"
+    media.save()
+    after = scan_root({"transport": "filesystem", "kind": "local", "uri": str(tmp_path)})["files"][0]
+
+    assert after["tag_fingerprint"] == before["tag_fingerprint"]
+
+
+def test_sidecar_content_has_an_independent_fingerprint(tmp_path: Path) -> None:
+    audio_path = tmp_path / "song.m4a"
+    _make_m4a(audio_path)
+    write_media_tags(audio_path, _item(), None, None)
+    sidecar = audio_path.with_suffix(".lrc")
+    sidecar.write_text("first", encoding="utf-8")
+    before = scan_root({"transport": "filesystem", "kind": "local", "uri": str(tmp_path)})["files"][0]
+    sidecar.write_text("second", encoding="utf-8")
+    after = scan_root({"transport": "filesystem", "kind": "local", "uri": str(tmp_path)})["files"][0]
+
+    assert after["tag_fingerprint"] == before["tag_fingerprint"]
+    assert after["sidecar_sha256"] != before["sidecar_sha256"]
 
 
 def test_scan_root_reports_synced_plain_and_missing_lyrics(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Input } from '../ui/Input'
 import { Select } from '../ui/Select'
+import { runBrowserAuthCapture } from './auth-capture'
 import { SettingsSection } from './SettingsSection'
 
 const BROWSERS: YtDlpCookiesBrowser[] = [
@@ -31,6 +32,7 @@ interface Props {
   onChange: (next: Partial<AppSettingsView>) => void
   onSave: () => void
   onAction: (action: Promise<CommandResult>) => void
+  onAuthStatusChange: (authStatus: AuthStatus) => void
 }
 
 export function SettingsView({
@@ -39,12 +41,15 @@ export function SettingsView({
   onChange,
   onSave,
   onAction,
+  onAuthStatusChange,
 }: Props): JSX.Element {
   const captureAuth = async () => {
-    const result = await window.api.auth.captureBrowserAuth(
-      settings.ytDlpCookiesBrowser
-    )
-    onAction(Promise.resolve(result))
+    await runBrowserAuthCapture({
+      browser: settings.ytDlpCookiesBrowser,
+      capture: window.api.auth.captureBrowserAuth,
+      onAction,
+      onAuthStatusChange,
+    })
   }
 
   const pickDirectory = async () => {
@@ -164,6 +169,9 @@ export function SettingsView({
 
       <SettingsSection title="Maintenance">
         <div className="flex gap-2">
+          <Button onClick={() => onAction(window.api.library.refreshIndex())}>
+            Refresh Library
+          </Button>
           <Button onClick={() => onAction(window.api.settings.testRemote())}>
             Test Remote
           </Button>

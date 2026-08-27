@@ -167,8 +167,6 @@ export interface LibraryRootView {
   managedOutput: boolean
   createdAt: string
   updatedAt: string
-  lastScannedAt: string | null
-  lastScanStatus: string | null
 }
 
 export interface LibraryFileView {
@@ -184,6 +182,7 @@ export interface LibraryFileView {
   bitrate: number | null
   modifiedAt: string | null
   sidecarModifiedAt: string | null
+  sidecarSha256: string | null
   audioSha256: string | null
   tagFingerprint: string | null
   embeddedLyricsStatus: LyricsStatus
@@ -266,22 +265,6 @@ export interface DriftSummary {
   missingEverywhereTracks: number
 }
 
-export interface LibraryIndexStatus {
-  currentLocalRootUri: string | null
-  ready: boolean
-  inProgress: boolean
-  reason:
-    | 'ready'
-    | 'missing_root'
-    | 'never_scanned'
-    | 'stale_version'
-    | 'scan_failed'
-    | 'bootstrapping'
-  lastScannedAt: string | null
-  lastScanStatus: string | null
-  indexVersion: number | null
-}
-
 export interface BinaryStatus {
   uv: string | null
   ffmpeg: string | null
@@ -328,6 +311,7 @@ export interface ElectronApi {
     startLibraryReprocess: () => Promise<CommandResult>
     reprocessArtists: (artistIds: string[]) => Promise<CommandResult>
     refreshFavoriteArtists: (artistIds?: string[]) => Promise<CommandResult>
+    retryFailedTracks: (jobId: string) => Promise<CommandResult>
     clearFailures: () => Promise<CommandResult>
     syncMissingToRemote: () => Promise<CommandResult>
     cancel: (jobId: string) => Promise<CommandResult>
@@ -337,8 +321,6 @@ export interface ElectronApi {
     subscribe: (listener: (snapshot: SyncSnapshot) => void) => () => void
   }
   library: {
-    scanRoots: () => Promise<CommandResult>
-    getIndexStatus: () => Promise<LibraryIndexStatus>
     refreshIndex: () => Promise<CommandResult>
     refreshArtists: () => Promise<CommandResult>
     listArtists: () => Promise<LikedArtistView[]>
@@ -350,7 +332,7 @@ export interface ElectronApi {
     subscribeAlbumArtwork: (
       listener: (update: AlbumArtworkUpdate) => void
     ) => () => void
-    subscribeIndexStatus: (listener: () => void) => () => void
+    subscribeInventory: (listener: () => void) => () => void
     setArtistFavorite: (
       artistId: string,
       isFavorite: boolean

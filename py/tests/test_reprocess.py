@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import subprocess
+import unicodedata
 from pathlib import Path
+
+import pytest
 
 import liked_music_syncer.reprocess as reprocess_module
 
@@ -82,12 +85,64 @@ def test_apply_reprocess_same_video_skips_download(tmp_path: Path, monkeypatch) 
     assert calls["tag"] == 1
 
 
+def test_apply_reprocess_preserves_unicode_equivalent_same_video_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    decomposed_name = unicodedata.normalize("NFD", "01 急げ.m4a")
+    composed_name = unicodedata.normalize("NFC", "01 急げ.m4a")
+    current_output = tmp_path / decomposed_name
+    target_output = tmp_path / composed_name
+    current_output.write_bytes(b"old-audio")
+    if not target_output.exists():
+        pytest.skip("Filesystem does not treat NFC and NFD paths as the same entry")
+
+    payload = _apply_payload(tmp_path, same_video=True)
+    payload["payload"]["current_output_path"] = str(current_output)
+    payload["payload"]["target_output_path"] = str(target_output)
+    monkeypatch.setattr(reprocess_module, "write_media_tags", lambda *args: None)
+    monkeypatch.setattr(reprocess_module, "_sync_remote_artifacts", lambda *args: None)
+
+    result = reprocess_module.apply_reprocess(payload)
+
+    assert result["ok"] is True
+    assert target_output.read_bytes() == b"old-audio"
+
+
+def test_apply_reprocess_preserves_unicode_equivalent_sidecar(
+    tmp_path: Path, monkeypatch
+) -> None:
+    payload = _apply_payload(tmp_path, same_video=True)
+    decomposed_name = unicodedata.normalize("NFD", "01 急げ.lrc")
+    composed_name = unicodedata.normalize("NFC", "01 急げ.lrc")
+    current_lrc = tmp_path / decomposed_name
+    target_lrc = tmp_path / composed_name
+    current_lrc.write_text("[00:01.00]old\n", encoding="utf-8")
+    if not target_lrc.exists():
+        pytest.skip("Filesystem does not treat NFC and NFD paths as the same entry")
+
+    payload["payload"]["item"]["lyrics_status"] = "synced"
+    payload["payload"]["lyrics_text"] = "[00:02.00]new\n"
+    payload["payload"]["current_lrc_path"] = str(current_lrc)
+    payload["payload"]["target_lrc_path"] = str(target_lrc)
+    monkeypatch.setattr(reprocess_module, "write_media_tags", lambda *args: None)
+    monkeypatch.setattr(reprocess_module, "_sync_remote_artifacts", lambda *args: None)
+
+    result = reprocess_module.apply_reprocess(payload)
+
+    assert result["lrc_path"] == str(target_lrc)
+    assert target_lrc.read_text(encoding="utf-8") == "[00:02.00]new\n"
+
+
 def test_apply_reprocess_changed_video_downloads_audio(tmp_path: Path, monkeypatch) -> None:
     payload = _apply_payload(tmp_path, same_video=False)
-    calls = {"download": 0}
+    payload["payload"]["item"]["selected_source_url"] = (
+        "https://music.youtube.com/watch?v=resolved999"
+    )
+    calls: dict[str, object] = {"download": 0, "selected_source_url": None}
 
     def fake_download(config: object, item: object, temp_dir: Path) -> tuple[Path, dict[str, str]]:
-        calls["download"] += 1
+        calls["download"] = int(calls["download"]) + 1
+        calls["selected_source_url"] = getattr(item, "selected_source_url")
         downloaded = temp_dir / "downloaded.m4a"
         downloaded.write_bytes(b"new-audio")
         return downloaded, {"acodec": "aac"}
@@ -108,7 +163,51 @@ def test_apply_reprocess_changed_video_downloads_audio(tmp_path: Path, monkeypat
     assert result["ok"] is True
     assert result["replaced"] is True
     assert calls["download"] == 1
+    assert calls["selected_source_url"] == (
+        "https://music.youtube.com/watch?v=resolved999"
+    )
     assert Path(result["output_path"]).exists()
+
+
+def test_apply_reprocess_preserves_unicode_equivalent_replacement_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    decomposed_name = unicodedata.normalize("NFD", "01 急げ.m4a")
+    composed_name = unicodedata.normalize("NFC", "01 急げ.m4a")
+    current_output = tmp_path / decomposed_name
+    target_output = tmp_path / composed_name
+    current_output.write_bytes(b"old-audio")
+    if not target_output.exists():
+        pytest.skip("Filesystem does not treat NFC and NFD paths as the same entry")
+
+    payload = _apply_payload(tmp_path, same_video=False)
+    payload["payload"]["current_output_path"] = str(current_output)
+    payload["payload"]["target_output_path"] = str(target_output)
+
+    def fake_download(
+        config: object, item: object, temp_dir: Path
+    ) -> tuple[Path, dict[str, str]]:
+        downloaded = temp_dir / "downloaded.m4a"
+        downloaded.write_bytes(b"new-audio")
+        return downloaded, {"acodec": "aac"}
+
+    def fake_normalize(
+        downloaded_path: Path,
+        output_path: Path,
+        ffmpeg_path: str,
+        audio_codec: str | None,
+    ) -> None:
+        output_path.write_bytes(downloaded_path.read_bytes())
+
+    monkeypatch.setattr(reprocess_module, "_download_audio", fake_download)
+    monkeypatch.setattr(reprocess_module, "_normalize_audio", fake_normalize)
+    monkeypatch.setattr(reprocess_module, "write_media_tags", lambda *args: None)
+    monkeypatch.setattr(reprocess_module, "_sync_remote_artifacts", lambda *args: None)
+
+    result = reprocess_module.apply_reprocess(payload)
+
+    assert result["ok"] is True
+    assert target_output.read_bytes() == b"new-audio"
 
 
 def test_preview_reprocess_sets_target_lrc_path_none_for_plain_lyrics(
@@ -285,6 +384,80 @@ def test_run_reprocess_stream_noop_emits_completed_without_writes(
     assert final_item["reason_code"] == "reprocess_no_changes"
     assert calls["download"] == 0
     assert calls["tag"] == 0
+
+
+def test_run_reprocess_stream_continues_after_one_preview_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    events: list[dict[str, object]] = []
+
+    def candidate(track_id: str) -> dict[str, object]:
+        return {
+            "track_work_id": track_id,
+            "youtube_music_track_id": track_id,
+            "title": f"Song {track_id}",
+            "artist": "Artist",
+            "album": "Album",
+            "album_artist": "Artist",
+            "lyrics_status": "missing",
+        }
+
+    def preview_one(
+        config: object,
+        ytmusic: object,
+        item: dict[str, object],
+        index: int,
+    ) -> dict[str, object]:
+        if index == 1:
+            raise RuntimeError("network unavailable after wake")
+        track_id = str(item["track_work_id"])
+        return {
+            "action_kind": "noop",
+            "diff": {},
+            "payload": {
+                "item": {
+                    "id": track_id,
+                    "youtube_music_track_id": track_id,
+                    "title": f"Song {track_id}",
+                    "artist": "Artist",
+                    "album": "Album",
+                    "album_artist": "Artist",
+                    "source_url": f"https://music.youtube.com/watch?v={track_id}",
+                    "lyrics_status": "missing",
+                },
+                "current_output_path": str(tmp_path / f"{track_id}.m4a"),
+                "current_lrc_path": None,
+                "target_output_path": str(tmp_path / f"{track_id}.m4a"),
+                "target_lrc_path": None,
+                "same_video": True,
+            },
+        }
+
+    monkeypatch.setattr(reprocess_module, "_build_ytmusic_client", lambda auth: object())
+    monkeypatch.setattr(reprocess_module, "_preview_one", preview_one)
+    monkeypatch.setattr(reprocess_module, "emit_event", events.append)
+
+    reprocess_module.run_reprocess_stream(
+        {
+            **_config_payload(tmp_path),
+            "items": [candidate("track_2"), candidate("track_3")],
+        }
+    )
+
+    track_events = [event for event in events if event["type"] == "track"]
+    final_items = {
+        str(event["item"]["id"]): event["item"]
+        for event in track_events
+        if isinstance(event.get("item"), dict)
+        and event["item"].get("status") != "processing"
+    }
+    assert [event["event"] for event in events if event["type"] == "job"] == [
+        "started",
+        "completed",
+    ]
+    assert final_items["track_2"]["status"] == "failed_terminal"
+    assert final_items["track_2"]["reason_code"] == "reprocess_preview_failed"
+    assert final_items["track_3"]["status"] == "completed"
 
 
 def test_apply_reprocess_same_video_missing_file_reports_context(

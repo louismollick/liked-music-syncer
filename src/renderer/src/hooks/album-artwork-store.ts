@@ -7,6 +7,20 @@ export function normalizeAlbumArtworkKeys(albumKeys: string[]): string[] {
   return [...new Set(albumKeys.filter(Boolean))].sort()
 }
 
+export function stabilizeAlbumArtworkKeys(
+  previousKeys: string[],
+  albumKeys: string[]
+): string[] {
+  const nextKeys = normalizeAlbumArtworkKeys(albumKeys)
+  if (
+    previousKeys.length === nextKeys.length &&
+    previousKeys.every((key, index) => key === nextKeys[index])
+  ) {
+    return previousKeys
+  }
+  return nextKeys
+}
+
 export function buildAlbumArtworkSignature(albumKeys: string[]): string {
   return albumKeys.join(ALBUM_KEY_SEPARATOR)
 }

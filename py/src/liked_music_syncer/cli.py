@@ -17,7 +17,7 @@ from .liked_artists import (
     fetch_artist_images,
     fetch_liked_artists,
 )
-from .library_scan import inspect_local_files, reconcile_local_root, scan_root
+from .library_scan import scan_root
 from .migrate_unknown_album import migrate_unknown_album
 from .models import SyncConfig
 from .reprocess import (
@@ -84,14 +84,6 @@ def main() -> int:
 
     if command == "library-scan-root":
         write_json(scan_root(payload))
-        return 0
-
-    if command == "library-reconcile-local-root":
-        write_json(reconcile_local_root(payload))
-        return 0
-
-    if command == "library-inspect-local-files":
-        write_json(inspect_local_files(payload))
         return 0
 
     if command == "extract-embedded-cover":
