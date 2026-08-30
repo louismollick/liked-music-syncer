@@ -76,6 +76,20 @@ export class ArtistPhotoCache {
     }
   }
 
+  async clear(): Promise<number> {
+    await Promise.allSettled(this.pending.values())
+    const entries = await fs.promises.readdir(this.cacheDirectory, {
+      withFileTypes: true,
+    })
+    const files = entries.filter((entry) => entry.isFile())
+    await Promise.all(
+      files.map((entry) =>
+        fs.promises.unlink(path.join(this.cacheDirectory, entry.name))
+      )
+    )
+    return files.length
+  }
+
   private async downloadAndStore(remoteUrl: string): Promise<string> {
     const fileName = artistPhotoCacheFileName(remoteUrl)
     const cachePath = path.join(this.cacheDirectory, fileName)

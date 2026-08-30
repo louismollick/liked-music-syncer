@@ -1,5 +1,6 @@
 import { buildAlbumKey } from '@shared/album-key'
 import type {
+  AuthSessionView,
   AuthStatus,
   CommandResult,
   LibraryTrackView,
@@ -19,6 +20,7 @@ import {
 import { MainLayout } from './components/layout/MainLayout'
 import type { AlbumGroup } from './components/library/library-utils'
 import { useArtists } from './hooks/useArtists'
+import { useAuthSession } from './hooks/useAuthSession'
 import { useSettings } from './hooks/useSettings'
 import { useSyncSnapshot } from './hooks/useSyncSnapshot'
 import { useTracks } from './hooks/useTracks'
@@ -39,8 +41,14 @@ interface AppStateValue {
   authStatus: AuthStatus
   settings: ReturnType<typeof useSettings>['settings']
   setSettings: ReturnType<typeof useSettings>['setSettings']
-  setAuthStatus: ReturnType<typeof useSettings>['setAuthStatus']
-  saveSettings: ReturnType<typeof useSettings>['save']
+  updateSettings: ReturnType<typeof useSettings>['update']
+  authSession: AuthSessionView
+  refreshAuth: ReturnType<typeof useAuthSession>['refresh']
+  selectAuthSource: ReturnType<typeof useAuthSession>['selectSource']
+  selectAuthAccount: ReturnType<typeof useAuthSession>['selectAccount']
+  loadAuthAccountCounts: ReturnType<typeof useAuthSession>['loadAccountCounts']
+  switchingAuthAccountKey: string | null
+  authAccountSwitchError: string | null
   runAction: (action: Promise<CommandResult>) => Promise<void>
   showMessage: (message: string) => void
 }
@@ -101,8 +109,17 @@ export function AppShell(): JSX.Element {
     refreshing: tracksRefreshing,
   } = useTracks()
   const snapshot = useSyncSnapshot()
-  const { settings, setSettings, authStatus, setAuthStatus, save } =
-    useSettings()
+  const { settings, setSettings, update } = useSettings()
+  const auth = useAuthSession()
+  const authStatus = useMemo<AuthStatus>(
+    () => ({
+      authMode: auth.session.state === 'signed_in' ? 'browser_headers' : 'none',
+      isAuthenticated: auth.session.state === 'signed_in',
+      hasBrowserAuth: Boolean(auth.session.activeAccount),
+      lastError: auth.session.issue?.message ?? null,
+    }),
+    [auth.session]
+  )
 
   useEffect(() => {
     if (location.pathname !== '/library') return
@@ -159,8 +176,14 @@ export function AppShell(): JSX.Element {
       authStatus,
       settings,
       setSettings,
-      setAuthStatus,
-      saveSettings: save,
+      updateSettings: update,
+      authSession: auth.session,
+      refreshAuth: auth.refresh,
+      selectAuthSource: auth.selectSource,
+      selectAuthAccount: auth.selectAccount,
+      loadAuthAccountCounts: auth.loadAccountCounts,
+      switchingAuthAccountKey: auth.switchingAccountKey,
+      authAccountSwitchError: auth.accountSwitchError,
       runAction,
       showMessage: setMessage,
     }),
@@ -173,8 +196,14 @@ export function AppShell(): JSX.Element {
       authStatus,
       settings,
       setSettings,
-      setAuthStatus,
-      save,
+      update,
+      auth.session,
+      auth.refresh,
+      auth.selectSource,
+      auth.selectAccount,
+      auth.loadAccountCounts,
+      auth.switchingAccountKey,
+      auth.accountSwitchError,
       runAction,
     ]
   )
@@ -183,6 +212,11 @@ export function AppShell(): JSX.Element {
     <AppStateContext.Provider value={appState}>
       <MainLayout
         counts={snapshot.counts}
+        authSession={auth.session}
+        onSelectAccount={auth.selectAccount}
+        onLoadAccountCounts={auth.loadAccountCounts}
+        switchingAccountKey={auth.switchingAccountKey}
+        accountSwitchError={auth.accountSwitchError}
         artists={artists}
         tracks={tracks}
         onSearchArtist={onSearchArtist}

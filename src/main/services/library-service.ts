@@ -10,6 +10,10 @@ import type {
 } from '@shared/contracts'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { canonicalAlbumName } from '../../shared/album-key'
+import {
+  parseArtistCreditsJson,
+  stringifyArtistCredits,
+} from '../../shared/artist-credit'
 import type { AppDatabase } from '../db/database'
 import {
   libraryFilesTable,
@@ -42,6 +46,7 @@ interface ScannedFilePayload {
   spotify_track_id: string | null
   soundcloud_track_id: string | null
   resolved_youtube_music_track_id: string | null
+  artist_credits: unknown
   source_origin: string | null
   catalog_release_browse_id: string | null
   catalog_release_title: string | null
@@ -108,6 +113,7 @@ interface TrackAggregate {
   spotifyTrackId: string | null
   soundcloudTrackId: string | null
   resolvedYoutubeMusicTrackId: string | null
+  artistCreditsJson: string
   sourceOrigin: string | null
   catalogReleaseBrowseId: string | null
   catalogReleaseTitle: string | null
@@ -939,6 +945,7 @@ export class LibraryService {
           spotifyTrackId: payload.spotify_track_id,
           soundcloudTrackId: payload.soundcloud_track_id,
           resolvedYoutubeMusicTrackId: payload.resolved_youtube_music_track_id,
+          artistCreditsJson: stringifyArtistCredits(payload.artist_credits),
           sourceOrigin: payload.source_origin,
           catalogReleaseBrowseId: payload.catalog_release_browse_id,
           catalogReleaseTitle: payload.catalog_release_title,
@@ -1081,6 +1088,7 @@ export class LibraryService {
       spotifyTrackId: payload.spotify_track_id,
       soundcloudTrackId: payload.soundcloud_track_id,
       resolvedYoutubeMusicTrackId: payload.resolved_youtube_music_track_id,
+      artistCreditsJson: stringifyArtistCredits(payload.artist_credits),
       sourceOrigin: payload.source_origin,
       catalogReleaseBrowseId: payload.catalog_release_browse_id,
       catalogReleaseTitle: payload.catalog_release_title,
@@ -1138,6 +1146,9 @@ export class LibraryService {
     )
 
     if (rank > aggregate.preferredFileRank) {
+      aggregate.artistCreditsJson = stringifyArtistCredits(
+        payload.artist_credits
+      )
       aggregate.title = payload.title
       aggregate.artist = payload.artist
       aggregate.album = payload.album
@@ -1183,6 +1194,7 @@ export class LibraryService {
           spotifyTrackId: aggregate.spotifyTrackId,
           soundcloudTrackId: aggregate.soundcloudTrackId,
           resolvedYoutubeMusicTrackId: aggregate.resolvedYoutubeMusicTrackId,
+          artistCreditsJson: aggregate.artistCreditsJson,
           sourceOrigin: aggregate.sourceOrigin,
           catalogReleaseBrowseId: aggregate.catalogReleaseBrowseId,
           catalogReleaseTitle: aggregate.catalogReleaseTitle,
@@ -1224,6 +1236,7 @@ export class LibraryService {
             spotifyTrackId: aggregate.spotifyTrackId,
             soundcloudTrackId: aggregate.soundcloudTrackId,
             resolvedYoutubeMusicTrackId: aggregate.resolvedYoutubeMusicTrackId,
+            artistCreditsJson: aggregate.artistCreditsJson,
             sourceOrigin: aggregate.sourceOrigin,
             catalogReleaseBrowseId: aggregate.catalogReleaseBrowseId,
             catalogReleaseTitle: aggregate.catalogReleaseTitle,
@@ -1312,6 +1325,7 @@ export class LibraryService {
       spotifyTrackId: track.spotifyTrackId,
       soundcloudTrackId: track.soundcloudTrackId,
       resolvedYoutubeMusicTrackId: track.resolvedYoutubeMusicTrackId,
+      artistCredits: parseArtistCreditsJson(track.artistCreditsJson),
       sourceOrigin: track.sourceOrigin,
       catalogReleaseBrowseId: track.catalogReleaseBrowseId,
       catalogReleaseTitle: track.catalogReleaseTitle,

@@ -27,8 +27,12 @@ _Avoid_: Playlist, remote library
 ### Authentication
 
 **Auth Source**:
-The installed browser and browser profile that provide a signed-in session for a source platform.
+The installed browser and resolved browser profile from which the app reads a source-platform session. An Auth Source can be signed in, signed out, or unreadable.
 _Avoid_: Credential, account, browser
+
+**Auth Source Status**:
+Whether an Auth Source has a valid session, has no valid session, or cannot be checked. `Signed Out` means the source was readable but had no valid session; `Issue` means the app could not determine whether a valid session exists.
+_Avoid_: Account status, authentication error
 
 **Google Session**:
 A signed-in Google identity available through an Auth Source. One Google Session can expose several YouTube Music Accounts.
@@ -37,6 +41,10 @@ _Avoid_: YouTube account, browser account
 **YouTube Music Account**:
 A selectable personal or Brand Account identity used to access YouTube Music. This is the account the app shows and switches.
 _Avoid_: Google Session, email account, channel
+
+**Selected YouTube Music Account**:
+The YouTube Music Account currently used through one Auth Source.
+_Avoid_: Active Google Session, current channel
 
 **Source Contribution**:
 A relationship showing that a liked music library contributed to a library item. A library item can have many source contributions.
@@ -47,8 +55,12 @@ A library grouping based on the final downloaded or tagged album metadata.
 _Avoid_: Liked-song group, source album
 
 **Artist**:
-A library grouping based primarily on final track artist metadata.
+A credited performer identified by a trusted source artist ID when one is available. Artists with the same name remain distinct, and a track with several credited performers belongs to each Artist.
 _Avoid_: Album artist
+
+**Unidentified Artist**:
+An artist credit that has a name but no trusted source artist ID. It can group local library tracks, but it cannot supply a remote artist image or an Official Main Catalog.
+_Avoid_: Matched artist, inferred artist
 
 **Favorite Artist**:
 An artist the user explicitly marks for full-catalog syncing. The app treats that artist's songs as desired library items even when individual songs were not liked.

@@ -14,6 +14,25 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
+  --color-background: var(--color-surface-primary);
+  --color-foreground: var(--color-text-primary);
+  --color-card: var(--color-surface-secondary);
+  --color-card-foreground: var(--color-text-primary);
+  --color-popover: var(--color-surface-secondary);
+  --color-popover-foreground: var(--color-text-primary);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-surface-tertiary);
+  --color-secondary-foreground: var(--color-text-primary);
+  --color-muted: var(--color-surface-tertiary);
+  --color-muted-foreground: var(--color-text-secondary);
+  --color-accent-foreground: #ffffff;
+  --color-destructive: var(--color-error);
+  --color-input: var(--color-border);
+  --color-ring: var(--color-accent);
+  --radius-lg: 0.75rem;
+  --radius-md: 0.625rem;
+  --radius-sm: 0.5rem;
 }
 
 * {

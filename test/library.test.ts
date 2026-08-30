@@ -19,6 +19,7 @@ import { createDatabase } from '../src/main/db/database'
 import {
   libraryFilesTable,
   libraryRootsTable,
+  libraryTrackArtistsTable,
   libraryTracksTable,
   likedArtistsTable,
   syncJobsTable,
@@ -56,6 +57,10 @@ function scannedFile(
     spotify_track_id: null,
     soundcloud_track_id: null,
     resolved_youtube_music_track_id: 'catalog456',
+    artist_credits: [
+      { name: 'Artist Name', channel_id: 'UC_ARTIST_NAME' },
+      { name: 'Guest Artist', channel_id: 'UC_GUEST_ARTIST' },
+    ],
     title: 'Track Title',
     artist: 'Artist Name',
     album: 'Album Name',
@@ -185,6 +190,10 @@ describe('library service', () => {
     const tracks = await service.listTracks()
     expect(tracks).toHaveLength(1)
     expect(tracks[0]?.identityKind).toBe('lms_source')
+    expect(tracks[0]?.artistCredits).toEqual([
+      { name: 'Artist Name', channelId: 'UC_ARTIST_NAME' },
+      { name: 'Guest Artist', channelId: 'UC_GUEST_ARTIST' },
+    ])
 
     const track = await service.getTrack(tracks[0]!.id)
     expect(track?.files).toHaveLength(2)
@@ -1603,6 +1612,91 @@ describe('sync job track contract', () => {
 })
 
 describe('liked artists service', () => {
+  it('keeps same-name credited artists separate and links collaborations to both', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(libraryTracksTable).values([
+      {
+        id: 'track_wrong_phoenix',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:wrong',
+        managedByApp: true,
+        artistCreditsJson: JSON.stringify([
+          { name: 'Phoenix', channelId: 'UC_WRONG' },
+        ]),
+        artist: 'Phoenix',
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        firstSeenAt: stamp,
+        lastSeenAt: stamp,
+        updatedAt: stamp,
+      },
+      {
+        id: 'track_collaboration',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:collaboration',
+        managedByApp: true,
+        artistCreditsJson: JSON.stringify([
+          { name: 'Phoenix', channelId: 'UC_RIGHT' },
+          { name: 'Guest', channelId: 'UC_GUEST' },
+        ]),
+        artist: 'Phoenix, Guest',
+        lyricsStatus: 'missing',
+        hasEmbeddedLyrics: false,
+        hasSidecarLyrics: false,
+        coverArtPresent: false,
+        firstSeenAt: stamp,
+        lastSeenAt: stamp,
+        updatedAt: stamp,
+      },
+    ])
+
+    const service = new LikedArtistsService(db)
+    await service.refreshArtists()
+
+    expect(await service.listArtists()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'artist_channel_UC_WRONG',
+          channelId: 'UC_WRONG',
+          name: 'Phoenix',
+          likedTrackCount: 1,
+        }),
+        expect.objectContaining({
+          id: 'artist_channel_UC_RIGHT',
+          channelId: 'UC_RIGHT',
+          name: 'Phoenix',
+          likedTrackCount: 1,
+        }),
+        expect.objectContaining({
+          id: 'artist_channel_UC_GUEST',
+          channelId: 'UC_GUEST',
+          name: 'Guest',
+          likedTrackCount: 1,
+        }),
+      ])
+    )
+    expect(await db.select().from(libraryTrackArtistsTable)).toEqual(
+      expect.arrayContaining([
+        {
+          trackId: 'track_collaboration',
+          artistId: 'artist_channel_UC_RIGHT',
+          position: 0,
+        },
+        {
+          trackId: 'track_collaboration',
+          artistId: 'artist_channel_UC_GUEST',
+          position: 1,
+        },
+      ])
+    )
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it('refreshes artists from local library tracks and preserves favorite fields', async () => {
     const { db, sqlite, dir } = makeTempDb()
     await db.insert(likedArtistsTable).values({
@@ -1759,8 +1853,8 @@ describe('liked artists service', () => {
   it('caches artist images without blocking local artist refresh', async () => {
     const { db, sqlite, dir } = makeTempDb()
     await db.insert(likedArtistsTable).values({
-      id: 'local_artist_artist',
-      channelId: null,
+      id: 'artist_channel_channel_1',
+      channelId: 'channel_1',
       name: 'Artist',
       normalizedName: 'artist',
       photoUrl: null,
@@ -1792,7 +1886,7 @@ describe('liked artists service', () => {
           .mockResolvedValueOnce({
             ok: true,
             artist: {
-              id: 'local_artist_artist',
+              id: 'artist_channel_channel_1',
               channel_id: 'channel_1',
               photo_url: 'https://example.test/artist.jpg',
             },
@@ -1816,8 +1910,8 @@ describe('liked artists service', () => {
   it('publishes artist photo updates as each image is cached', async () => {
     const { db, sqlite, dir } = makeTempDb()
     await db.insert(likedArtistsTable).values({
-      id: 'local_artist_artist',
-      channelId: null,
+      id: 'artist_channel_channel_1',
+      channelId: 'channel_1',
       name: 'Artist',
       normalizedName: 'artist',
       photoUrl: null,
@@ -1849,7 +1943,7 @@ describe('liked artists service', () => {
           .mockResolvedValueOnce({
             ok: true,
             artist: {
-              id: 'local_artist_artist',
+              id: 'artist_channel_channel_1',
               channel_id: 'channel_1',
               photo_url: 'https://example.test/artist.jpg',
             },
@@ -1867,9 +1961,52 @@ describe('liked artists service', () => {
 
     expect(updates).toEqual([
       {
-        artistId: 'local_artist_artist',
+        artistId: 'artist_channel_channel_1',
         photoUrl: 'https://example.test/artist.jpg',
       },
+    ])
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('clears artist image URLs and files without clearing trusted channel IDs', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const stamp = '2026-05-18T00:00:00.000Z'
+    await db.insert(likedArtistsTable).values({
+      id: 'artist_channel_UC_ARTIST',
+      channelId: 'UC_ARTIST',
+      name: 'Artist',
+      normalizedName: 'artist',
+      photoUrl: 'https://example.test/artist.jpg',
+      likedTrackCount: 1,
+      lastRefreshedAt: stamp,
+      isFavorite: false,
+      favoritedAt: null,
+      lastCatalogRefreshedAt: null,
+      catalogTrackCount: null,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+    const artistPhotoCache = { clear: vi.fn().mockResolvedValue(3) }
+    const service = new LikedArtistsService(
+      db,
+      undefined,
+      undefined,
+      artistPhotoCache as never
+    )
+
+    await expect(service.clearArtistImageCache()).resolves.toMatchObject({
+      ok: true,
+      details: JSON.stringify({ clearedArtists: 1, clearedFiles: 3 }),
+    })
+    expect(artistPhotoCache.clear).toHaveBeenCalledOnce()
+    expect(await service.listArtists()).toEqual([
+      expect.objectContaining({
+        id: 'artist_channel_UC_ARTIST',
+        channelId: 'UC_ARTIST',
+        photoUrl: null,
+      }),
     ])
 
     sqlite.close()

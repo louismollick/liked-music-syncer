@@ -23,6 +23,12 @@ remote overwrite. `sidecar_sha256` records the bytes of the same-stem `.lrc`
 file independently so sidecar drift can be repaired without copying the audio
 file.
 
+Managed files also store ordered Artist Credits with their trusted YouTube
+Music channel IDs. A later database rebuild can therefore keep same-name
+Artists separate and restore collaboration relationships without searching by
+artist name. Files without trusted IDs remain browseable as Unidentified
+Artists, but they do not receive remote artist images.
+
 Remote reconciliation computes both observations from the files currently on
 the remote server. It never trusts a fingerprint stored inside an audio file.
 An owned-metadata difference replaces the remote `.m4a`; an `.lrc` difference

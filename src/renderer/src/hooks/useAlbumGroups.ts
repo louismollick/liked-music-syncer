@@ -1,4 +1,5 @@
 import { buildAlbumKey } from '@shared/album-key'
+import { artistCreditId } from '@shared/artist-credit'
 import type { LibraryTrackView } from '@shared/contracts'
 import { useMemo } from 'react'
 import {
@@ -19,26 +20,31 @@ export function useAlbumGroups(tracks: LibraryTrackView[]) {
     for (const track of tracks) {
       const albumKey = buildAlbumKey(track.album, track.albumArtist)
       const album = groupsByKey.get(albumKey)
-      const normalizedArtists = new Set(
-        [track.artist, track.albumArtist]
-          .map((value) => normalizeName(value))
-          .filter(Boolean)
+      const artistIds = new Set(
+        track.artistCredits.map((credit) => artistCreditId(credit))
       )
+      if (artistIds.size === 0) {
+        for (const value of [track.artist, track.albumArtist]) {
+          const normalized = normalizeName(value)
+          if (normalized) artistIds.add(`name:${normalized}`)
+        }
+      }
 
-      for (const artistName of normalizedArtists) {
-        const keys = artistAlbumKeys.get(artistName) ?? new Set<string>()
+      for (const artistId of artistIds) {
+        const keys = artistAlbumKeys.get(artistId) ?? new Set<string>()
         keys.add(album?.key ?? albumKey)
-        artistAlbumKeys.set(artistName, keys)
+        artistAlbumKeys.set(artistId, keys)
       }
     }
 
-    const filterByArtist = (artistName: string | null): AlbumGroup[] => {
-      if (!artistName) return groups
-
-      const normalizedArtist = normalizeName(artistName)
-      if (!normalizedArtist) return groups
-
-      const allowedKeys = artistAlbumKeys.get(normalizedArtist)
+    const filterByArtist = (
+      artistId: string | null,
+      artistName?: string | null
+    ): AlbumGroup[] => {
+      const lookupId =
+        artistId ?? (artistName ? `name:${normalizeName(artistName)}` : null)
+      if (!lookupId) return groups
+      const allowedKeys = artistAlbumKeys.get(lookupId)
       if (!allowedKeys) return []
 
       return groups.filter((group) => allowedKeys.has(group.key))

@@ -156,54 +156,24 @@ def _lookup_artist_image_row(
     ytmusic: Any, artist: dict[str, Any]
 ) -> dict[str, Any] | None:
     artist_id = artist.get("id")
-    name = artist.get("name")
-    normalized_name = artist.get("normalized_name")
-    if not isinstance(artist_id, str) or not isinstance(name, str) or not name.strip():
+    channel_id = artist.get("channel_id")
+    if (
+        not isinstance(artist_id, str)
+        or not isinstance(channel_id, str)
+        or not channel_id
+    ):
         return None
 
     try:
-        results = ytmusic.search(name, filter="artists", limit=5)
+        artist_payload = ytmusic.get_artist(channel_id)
     except Exception:
-        results = []
-
-    if not isinstance(results, list):
-        results = []
-
-    best: dict[str, Any] | None = None
-    for result in results:
-        if not isinstance(result, dict):
-            continue
-        result_name = result.get("artist") or result.get("name") or result.get("title")
-        if (
-            isinstance(normalized_name, str)
-            and isinstance(result_name, str)
-            and _normalize_name(result_name) == normalized_name
-        ):
-            best = result
-            break
-        if best is None:
-            best = result
-
-    if best is None:
         return None
 
-    channel_id_raw = best.get("browseId") or best.get("id")
-    channel_id = channel_id_raw if isinstance(channel_id_raw, str) and channel_id_raw else None
-    photo_url: str | None = None
-
-    if channel_id:
-        try:
-            artist_payload = ytmusic.get_artist(channel_id)
-            photo_url = _best_thumbnail_url(
-                artist_payload.get("thumbnails")
-                if isinstance(artist_payload, dict)
-                else None
-            )
-        except Exception:
-            photo_url = None
-
-    if not photo_url:
-        photo_url = _best_thumbnail_url(best.get("thumbnails"))
+    photo_url = _best_thumbnail_url(
+        artist_payload.get("thumbnails")
+        if isinstance(artist_payload, dict)
+        else None
+    )
 
     if not photo_url:
         return None
@@ -226,7 +196,7 @@ def fetch_artist_image(payload: dict[str, Any]) -> dict[str, Any]:
     if row is None:
         return {
             "ok": True,
-            "message": "No matching artist image found.",
+            "message": "No trusted artist image available.",
             "artist": None,
         }
     return {"ok": True, "message": "Artist image resolved.", "artist": row}

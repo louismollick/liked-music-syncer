@@ -27,6 +27,7 @@ const searchStringSchema = z.preprocess((value) => {
 const rawLibrarySearchSchema = z.object({
   tab: libraryTabSchema.optional(),
   artist: searchStringSchema.optional(),
+  artistId: searchStringSchema.optional(),
   albumKey: searchStringSchema.optional(),
   albumLabel: searchStringSchema.optional(),
 })
@@ -34,6 +35,7 @@ const rawLibrarySearchSchema = z.object({
 export interface LibrarySearch {
   tab: LibraryTab
   artist?: string
+  artistId?: string
   albumKey?: string
   albumLabel?: string
 }
@@ -44,7 +46,9 @@ export function normalizeLibrarySearchInput(search: unknown): LibrarySearch {
   const tab = candidate.tab ?? 'artists'
 
   if (tab === 'albums') {
-    return candidate.artist ? { tab, artist: candidate.artist } : { tab }
+    return candidate.artist
+      ? { tab, artist: candidate.artist, artistId: candidate.artistId }
+      : { tab }
   }
 
   if (tab === 'songs') {
@@ -62,6 +66,7 @@ function serializeLibrarySearch(search: LibrarySearch): string {
   const params = new URLSearchParams()
   params.set('tab', search.tab)
   if (search.artist) params.set('artist', search.artist)
+  if (search.artistId) params.set('artistId', search.artistId)
   if (search.albumKey) params.set('albumKey', search.albumKey)
   if (search.albumLabel) params.set('albumLabel', search.albumLabel)
   return params.toString()
@@ -139,7 +144,10 @@ export function LibraryViewContainer({
   const [selectedArtistIds, setSelectedArtistIds] = useState<string[]>([])
   const { groups: allAlbums, filterByArtist } = useAlbumGroups(tracks)
   const activeTab = search.tab
-  const activeArtistFilter = activeTab === 'albums' ? search.artist : undefined
+  const activeArtistFilter =
+    activeTab === 'albums' && search.artist
+      ? { id: search.artistId ?? null, name: search.artist }
+      : null
   const activeAlbumFilter =
     activeTab === 'songs' && search.albumKey
       ? {
@@ -199,6 +207,7 @@ export function LibraryViewContainer({
     navigateToLibrary({
       tab: 'albums',
       artist: artist.name,
+      artistId: artist.id,
     })
 
   const openAlbumSongs = (album: AlbumGroup) =>
@@ -210,7 +219,10 @@ export function LibraryViewContainer({
 
   const onAction = (action: Promise<CommandResult>) => runAction(action)
   const albums = useMemo(
-    () => (activeArtistFilter ? filterByArtist(activeArtistFilter) : allAlbums),
+    () =>
+      activeArtistFilter
+        ? filterByArtist(activeArtistFilter.id, activeArtistFilter.name)
+        : allAlbums,
     [activeArtistFilter, allAlbums, filterByArtist]
   )
 
@@ -243,7 +255,7 @@ export function LibraryViewContainer({
           tracksLoaded={tracksLoaded}
           tracksRefreshing={tracksRefreshing}
           artistFilter={
-            activeArtistFilter ? { artistName: activeArtistFilter } : null
+            activeArtistFilter ? { artistName: activeArtistFilter.name } : null
           }
           isActive={activeTab === 'albums'}
           onOpenAlbum={openAlbumSongs}

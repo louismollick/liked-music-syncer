@@ -3,6 +3,7 @@ import {
   canonicalAlbumName,
   UNKNOWN_ALBUM_NAME,
 } from '@shared/album-key'
+import { artistCreditId } from '@shared/artist-credit'
 import type { LibraryTrackView } from '@shared/contracts'
 
 export interface AlbumGroup {
@@ -78,8 +79,14 @@ function normalizeName(value: string | null | undefined): string {
 
 export function matchesArtistFilter(
   track: LibraryTrackView,
-  artistName: string
+  artistId: string,
+  artistName?: string
 ): boolean {
+  if (track.artistCredits.length > 0) {
+    return track.artistCredits.some(
+      (credit) => artistCreditId(credit) === artistId
+    )
+  }
   const wanted = normalizeName(artistName)
   if (!wanted) return true
 

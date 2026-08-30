@@ -5,6 +5,7 @@ import type {
 } from '@shared/contracts'
 import type { BrowserWindow } from 'electron'
 import { dialog, ipcMain } from 'electron'
+import type { AuthCoordinator } from './auth/auth-coordinator'
 import type { ArtworkService } from './services/artwork-service'
 import type { AuthService } from './services/auth-service'
 import type { LibraryService } from './services/library-service'
@@ -17,6 +18,7 @@ export function registerIpcHandlers(
   window: BrowserWindow,
   settingsService: SettingsService,
   authService: AuthService,
+  authCoordinator: AuthCoordinator,
   syncService: SyncService,
   libraryService: LibraryService,
   likedArtistsService: LikedArtistsService,
@@ -42,12 +44,39 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('auth:getStatus', () => authService.getStatus())
+  ipcMain.handle('auth:getSnapshot', () => authCoordinator.getSnapshot())
+  ipcMain.handle('auth:refresh', (_event, scope, reason) => {
+    if (!['selected', 'all'].includes(scope))
+      throw new Error('Invalid auth refresh scope.')
+    return authCoordinator.refresh(scope, reason)
+  })
+  ipcMain.handle('auth:selectSource', (_event, sourceId) => {
+    if (typeof sourceId !== 'string') throw new Error('Invalid auth source.')
+    return authCoordinator.selectSource(sourceId)
+  })
+  ipcMain.handle('auth:selectAccount', (_event, accountKey) =>
+    authCoordinator.selectAccount(accountKey)
+  )
+  ipcMain.handle('auth:loadAccountCounts', () =>
+    authCoordinator.loadAccountCounts()
+  )
+  ipcMain.handle('auth:openSignIn', async () => {
+    await authCoordinator.openSignIn()
+    window.once('focus', () => {
+      void authCoordinator.refresh('selected', 'focus_return')
+    })
+  })
   ipcMain.handle('auth:captureBrowserAuth', (_event, browser) =>
     authService.captureBrowserAuth(browser)
   )
   ipcMain.handle('auth:disconnect', () => authService.disconnect())
 
   ipcMain.handle('settings:get', () => settingsService.getView())
+  ipcMain.handle('settings:update', async (_event, input) => {
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new Error('Invalid settings update.')
+    return settingsService.update(input)
+  })
   ipcMain.handle(
     'settings:save',
     async (_event, input): Promise<SettingsSaveResult> => {
@@ -156,13 +185,15 @@ export function registerIpcHandlers(
   ipcMain.handle('library:refreshIndex', refreshLibrary)
   ipcMain.handle('library:refreshArtists', refreshLibrary)
   ipcMain.handle('library:listArtists', () => likedArtistsService.listArtists())
-  ipcMain.handle('library:refreshArtistImages', async () => {
-    logMain({
-      level: 'info',
-      source: 'ipc',
-      message: 'library:refreshArtistImages invoked from renderer',
-    })
-    return likedArtistsService.refreshArtistImages()
+  ipcMain.handle('library:refreshArtistImages', () =>
+    likedArtistsService.refreshArtistImages()
+  )
+  ipcMain.handle('library:clearArtistImageCache', async () => {
+    const result = await likedArtistsService.clearArtistImageCache()
+    if (result.ok && !window.isDestroyed()) {
+      window.webContents.send('library:artistsUpdated')
+    }
+    return result
   })
   ipcMain.handle(
     'library:setArtistFavorite',

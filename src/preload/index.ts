@@ -4,14 +4,27 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 const api: ElectronApi = {
   auth: {
-    getStatus: () => ipcRenderer.invoke('auth:getStatus'),
-    captureBrowserAuth: (browser) =>
-      ipcRenderer.invoke('auth:captureBrowserAuth', browser),
-    disconnect: () => ipcRenderer.invoke('auth:disconnect'),
+    getSnapshot: () => ipcRenderer.invoke('auth:getSnapshot'),
+    refresh: (scope, reason) =>
+      ipcRenderer.invoke('auth:refresh', scope, reason),
+    selectSource: (sourceId) =>
+      ipcRenderer.invoke('auth:selectSource', sourceId),
+    selectAccount: (accountKey) =>
+      ipcRenderer.invoke('auth:selectAccount', accountKey),
+    loadAccountCounts: () => ipcRenderer.invoke('auth:loadAccountCounts'),
+    openSignIn: () => ipcRenderer.invoke('auth:openSignIn'),
+    subscribe: (listener) => {
+      const wrapped = (
+        _event: unknown,
+        snapshot: Parameters<typeof listener>[0]
+      ) => listener(snapshot)
+      ipcRenderer.on('auth:snapshot', wrapped)
+      return () => ipcRenderer.removeListener('auth:snapshot', wrapped)
+    },
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
-    save: (input) => ipcRenderer.invoke('settings:save', input),
+    update: (input) => ipcRenderer.invoke('settings:update', input),
     testBinaries: () => ipcRenderer.invoke('settings:testBinaries'),
     testRemote: () => ipcRenderer.invoke('settings:testRemote'),
     pickOutputDirectory: () =>
@@ -49,6 +62,8 @@ const api: ElectronApi = {
     listArtists: () => ipcRenderer.invoke('library:listArtists'),
     refreshArtistImages: () =>
       ipcRenderer.invoke('library:refreshArtistImages'),
+    clearArtistImageCache: () =>
+      ipcRenderer.invoke('library:clearArtistImageCache'),
     subscribeArtists: (listener) => {
       const wrapped = () => {
         listener()

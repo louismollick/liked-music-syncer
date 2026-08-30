@@ -58,6 +58,7 @@ export const syncJobTracksTable = sqliteTable('sync_job_tracks', {
   spotifyTrackId: text('spotify_track_id'),
   soundcloudTrackId: text('soundcloud_track_id'),
   resolvedYoutubeMusicTrackId: text('resolved_youtube_music_track_id'),
+  artistCreditsJson: text('artist_credits_json').notNull().default('[]'),
   title: text('title').notNull(),
   artist: text('artist').notNull(),
   album: text('album').notNull(),
@@ -136,6 +137,7 @@ export const libraryTracksTable = sqliteTable(
     spotifyTrackId: text('spotify_track_id'),
     soundcloudTrackId: text('soundcloud_track_id'),
     resolvedYoutubeMusicTrackId: text('resolved_youtube_music_track_id'),
+    artistCreditsJson: text('artist_credits_json').notNull().default('[]'),
     sourceOrigin: text('source_origin'),
     catalogReleaseBrowseId: text('catalog_release_browse_id'),
     catalogReleaseTitle: text('catalog_release_title'),
@@ -176,6 +178,21 @@ export const libraryTracksTable = sqliteTable(
     identityKeyUnique: uniqueIndex('library_tracks_identity_key_unique').on(
       table.identityKind,
       table.identityValue
+    ),
+  })
+)
+
+export const libraryTrackArtistsTable = sqliteTable(
+  'library_track_artists',
+  {
+    trackId: text('track_id').notNull(),
+    artistId: text('artist_id').notNull(),
+    position: integer('position').notNull(),
+  },
+  (table) => ({
+    trackArtistUnique: uniqueIndex('library_track_artists_unique').on(
+      table.trackId,
+      table.artistId
     ),
   })
 )

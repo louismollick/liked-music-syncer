@@ -15,6 +15,7 @@ from mediafile import MediaFile
 
 from .lyrics import classify_lyrics_text
 from .media_tags import register_lms_mediafile_fields, read_legacy_youtube_track_id
+from .models import normalize_artist_credits
 
 
 @dataclass(slots=True)
@@ -146,6 +147,7 @@ def _tag_fingerprint(metadata: dict[str, Any]) -> str:
             "catalog_release_browse_id",
             "catalog_release_title",
             "catalog_release_kind",
+            "artist_credits",
             "title",
             "artist",
             "album",
@@ -209,6 +211,11 @@ def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]
     catalog_release_browse_id = getattr(media, "lms_catalog_release_browse_id", None) or None
     catalog_release_title = getattr(media, "lms_catalog_release_title", None) or None
     catalog_release_kind = getattr(media, "lms_catalog_release_kind", None) or None
+    artist_credits_json = getattr(media, "lms_artist_credits", None) or ""
+    try:
+        artist_credits = normalize_artist_credits(json.loads(artist_credits_json))
+    except (json.JSONDecodeError, TypeError):
+        artist_credits = []
 
     if not youtube_music_track_id:
         youtube_music_track_id = read_legacy_youtube_track_id(path)
@@ -232,6 +239,7 @@ def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]
         "catalog_release_browse_id": catalog_release_browse_id,
         "catalog_release_title": catalog_release_title,
         "catalog_release_kind": catalog_release_kind,
+        "artist_credits": artist_credits,
         "title": media.title or None,
         "artist": media.artist or None,
         "album": media.album or None,

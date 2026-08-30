@@ -5,8 +5,13 @@ import type {
   LikedArtistView,
 } from '@shared/contracts'
 import { asc, eq } from 'drizzle-orm'
+import { parseArtistCreditsJson } from '../../shared/artist-credit'
 import type { AppDatabase } from '../db/database'
-import { libraryTracksTable, likedArtistsTable } from '../db/schema'
+import {
+  libraryTrackArtistsTable,
+  libraryTracksTable,
+  likedArtistsTable,
+} from '../db/schema'
 import type { ArtistPhotoCache } from './artist-photo-cache'
 import { logMain } from './logger'
 import type { PythonWorkerService } from './python-worker'
@@ -40,6 +45,7 @@ function localArtistId(normalizedName: string): string {
 
 interface LocalArtist {
   id: string
+  channelId: string | null
   name: string
   normalizedName: string
   trackCount: number
@@ -249,25 +255,41 @@ export class LikedArtistsService {
     const tracks = await this.db.select().from(libraryTracksTable)
     const localArtistsByName = new Map<string, LocalArtist>()
 
+    const trackArtistLinks: Array<{
+      trackId: string
+      artistKey: string
+      position: number
+    }> = []
     for (const track of tracks) {
-      const name = track.artist?.trim()
-      if (!name) continue
-
-      const normalizedName = normalizeArtistName(name)
-      if (!normalizedName) continue
-
-      const existing = localArtistsByName.get(normalizedName)
-      if (existing) {
-        existing.trackCount += 1
-        continue
+      const credits = parseArtistCreditsJson(track.artistCreditsJson)
+      const effectiveCredits =
+        credits.length > 0
+          ? credits
+          : track.artist?.trim()
+            ? [{ name: track.artist.trim(), channelId: null }]
+            : []
+      for (const [position, credit] of effectiveCredits.entries()) {
+        const normalizedName = normalizeArtistName(credit.name)
+        if (!normalizedName) continue
+        const artistKey = credit.channelId
+          ? `channel:${credit.channelId}`
+          : `name:${normalizedName}`
+        const existing = localArtistsByName.get(artistKey)
+        if (existing) {
+          existing.trackCount += 1
+        } else {
+          localArtistsByName.set(artistKey, {
+            id: credit.channelId
+              ? `artist_channel_${credit.channelId}`
+              : localArtistId(normalizedName),
+            channelId: credit.channelId,
+            name: credit.name,
+            normalizedName,
+            trackCount: 1,
+          })
+        }
+        trackArtistLinks.push({ trackId: track.id, artistKey, position })
       }
-
-      localArtistsByName.set(normalizedName, {
-        id: localArtistId(normalizedName),
-        name,
-        normalizedName,
-        trackCount: 1,
-      })
     }
 
     const existingRows = await this.db.select().from(likedArtistsTable)
@@ -275,6 +297,12 @@ export class LikedArtistsService {
     const existingByNormalizedName = new Map(
       existingRows.map((row) => [row.normalizedName, row])
     )
+    const existingByChannelId = new Map(
+      existingRows
+        .filter((row) => row.channelId)
+        .map((row) => [row.channelId as string, row])
+    )
+    await this.db.delete(libraryTrackArtistsTable)
     await this.db
       .delete(likedArtistsTable)
       .where(eq(likedArtistsTable.isFavorite, false))
@@ -282,10 +310,15 @@ export class LikedArtistsService {
     let preservedPhotoUrls = 0
     let migratedArtistIds = 0
 
-    for (const artist of localArtistsByName.values()) {
+    const persistedArtistIdByKey = new Map<string, string>()
+    for (const [artistKey, artist] of localArtistsByName) {
       const existing =
         existingById.get(artist.id) ??
-        existingByNormalizedName.get(artist.normalizedName)
+        (artist.channelId
+          ? existingByChannelId.get(artist.channelId)
+          : existingByNormalizedName.get(artist.normalizedName))
+      const persistedId = artist.id
+      persistedArtistIdByKey.set(artistKey, persistedId)
       if (decodeStoredArtistPhotoUrl(existing?.photoUrl ?? null)) {
         preservedPhotoUrls++
       }
@@ -293,8 +326,8 @@ export class LikedArtistsService {
       await this.db
         .insert(likedArtistsTable)
         .values({
-          id: artist.id,
-          channelId: existing?.channelId ?? null,
+          id: persistedId,
+          channelId: artist.channelId,
           name: artist.name,
           normalizedName: artist.normalizedName,
           photoUrl: existing?.photoUrl ?? null,
@@ -310,7 +343,7 @@ export class LikedArtistsService {
         .onConflictDoUpdate({
           target: likedArtistsTable.id,
           set: {
-            channelId: existing?.channelId ?? null,
+            channelId: artist.channelId,
             name: artist.name,
             normalizedName: artist.normalizedName,
             photoUrl: existing?.photoUrl ?? null,
@@ -324,11 +357,21 @@ export class LikedArtistsService {
           },
         })
 
-      if (existing && existing.id !== artist.id) {
+      if (existing && existing.id !== persistedId) {
         await this.db
           .delete(likedArtistsTable)
           .where(eq(likedArtistsTable.id, existing.id))
       }
+    }
+
+    if (trackArtistLinks.length > 0) {
+      await this.db.insert(libraryTrackArtistsTable).values(
+        trackArtistLinks.map((link) => ({
+          trackId: link.trackId,
+          artistId: persistedArtistIdByKey.get(link.artistKey) as string,
+          position: link.position,
+        }))
+      )
     }
 
     const rebuilt = await this.listArtists({ logSnapshot: true })
@@ -370,6 +413,25 @@ export class LikedArtistsService {
     }
   }
 
+  async clearArtistImageCache(): Promise<CommandResult> {
+    if (!this.artistPhotoCache) {
+      return { ok: false, message: 'Artist image cache is unavailable.' }
+    }
+    await this.imageRefreshJob?.catch(() => undefined)
+    const artists = await this.db.select().from(likedArtistsTable)
+    const clearedArtists = artists.filter((artist) => artist.photoUrl).length
+    await this.db.update(likedArtistsTable).set({
+      photoUrl: null,
+      updatedAt: nowIso(),
+    })
+    const clearedFiles = await this.artistPhotoCache.clear()
+    return {
+      ok: true,
+      message: 'Artist image cache cleared.',
+      details: JSON.stringify({ clearedArtists, clearedFiles }),
+    }
+  }
+
   private async runArtistImageRefresh(): Promise<CommandResult> {
     if (!this.settingsService || !this.pythonWorker) {
       logMain({
@@ -384,7 +446,7 @@ export class LikedArtistsService {
     const settingsService = this.settingsService
 
     const startedAt = Date.now()
-    const catalog = await this.listArtists({ logSnapshot: true })
+    const catalog = await this.listArtists()
     const storedArtists = await this.db.select().from(likedArtistsTable)
     const artistsWithRemotePhotos = storedArtists.filter((artist) =>
       Boolean(decodeStoredArtistPhotoUrl(artist.photoUrl))
@@ -409,6 +471,7 @@ export class LikedArtistsService {
       .filter(
         (artist) =>
           !isKnownMissingArtistPhoto(artist.photoUrl) &&
+          Boolean(artist.channelId) &&
           isLowResArtistPhotoUrl(decodeStoredArtistPhotoUrl(artist.photoUrl))
       )
       .map((artist) => ({
@@ -424,6 +487,10 @@ export class LikedArtistsService {
         lastCatalogRefreshedAt: artist.lastCatalogRefreshedAt,
         catalogTrackCount: artist.catalogTrackCount,
       }))
+    if (artists.length === 0) {
+      return { ok: true, message: 'Artist images already cached.' }
+    }
+
     logMain({
       level: 'info',
       source: 'liked-artists',
@@ -433,14 +500,6 @@ export class LikedArtistsService {
         catalogSize: catalog.length,
       },
     })
-    if (artists.length === 0) {
-      logMain({
-        level: 'info',
-        source: 'liked-artists',
-        message: 'Artist image refresh skipped (all artists have photo URLs)',
-      })
-      return { ok: true, message: 'Artist images already cached.' }
-    }
 
     const settings = await settingsService.getRuntimeSettings()
     if (!settings.ytmusicBrowserAuth) {
@@ -522,8 +581,8 @@ export class LikedArtistsService {
                 ytmusic_browser_auth: browserAuthInput,
                 artist: {
                   id: artist.id,
+                  channel_id: artist.channelId,
                   name: artist.name,
-                  normalized_name: artist.normalizedName,
                 },
               }
             )

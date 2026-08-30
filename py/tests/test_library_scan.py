@@ -50,6 +50,10 @@ def _item(source_id: str = "source123") -> SyncItemState:
         album_artist="Album Artist",
         source_url=f"https://music.youtube.com/watch?v={source_id}",
         cover_art_url=None,
+        artist_credits=[
+            {"name": "Artist Name", "channel_id": "UC_ARTIST"},
+            {"name": "Guest Artist", "channel_id": "UC_GUEST"},
+        ],
     )
 
 
@@ -95,7 +99,11 @@ def test_m4a_standard_and_custom_tag_round_trip(tmp_path: Path) -> None:
     assert file_data["mb_releasegroup_id"] == "mb-release-group"
     assert file_data["youtube_music_track_id"] == "liked123"
     assert file_data["resolved_youtube_music_track_id"] == "catalog456"
-    assert file_data["tag_schema_version"] == 3
+    assert file_data["tag_schema_version"] == 4
+    assert file_data["artist_credits"] == [
+        {"name": "Artist Name", "channel_id": "UC_ARTIST"},
+        {"name": "Guest Artist", "channel_id": "UC_GUEST"},
+    ]
     assert file_data["resolution_method"] == "search_song_exact"
     assert file_data["lyrics_status"] == "synced"
     assert file_data["cover_art_present"] is True

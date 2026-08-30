@@ -2,6 +2,7 @@ import path, { join } from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { app, BrowserWindow, shell } from 'electron'
 import icon from '../../resources/icon.png?asset'
+import { AuthCoordinator } from './auth/auth-coordinator'
 import { createDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc'
 import { ArtistPhotoCache } from './services/artist-photo-cache'
@@ -133,6 +134,11 @@ app.whenReady().then(async () => {
     poTokenService,
     getBundledFfmpegPath
   )
+  const authCoordinator = new AuthCoordinator(
+    settingsService,
+    pythonWorkerService,
+    () => syncService.hasQueuedOrRunningJobs()
+  )
   await syncService.recoverInterruptedJobs()
 
   createWindow()
@@ -140,12 +146,18 @@ app.whenReady().then(async () => {
     mainWindow!,
     settingsService,
     authService,
+    authCoordinator,
     syncService,
     libraryService,
     likedArtistsService,
     artworkService,
     getBundledFfmpegPath
   )
+  authCoordinator.subscribe((snapshot) => {
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send('auth:snapshot', snapshot)
+  })
+  void authCoordinator.bootstrap()
   void libraryService.reconcileLocalLibrary().then(async (result) => {
     if (!result.ok) {
       logMain({

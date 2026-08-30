@@ -13,10 +13,14 @@ export const settingsRoute = createRoute({
 export function SettingsRouteComponent(): JSX.Element {
   const {
     settings,
-    authStatus,
-    setSettings,
-    setAuthStatus,
-    saveSettings,
+    authSession,
+    updateSettings,
+    refreshAuth,
+    selectAuthSource,
+    selectAuthAccount,
+    loadAuthAccountCounts,
+    switchingAuthAccountKey,
+    authAccountSwitchError,
     runAction,
     showMessage,
   } = useAppState()
@@ -24,22 +28,29 @@ export function SettingsRouteComponent(): JSX.Element {
   return (
     <SettingsView
       settings={settings}
-      authStatus={authStatus}
-      onChange={(partial) =>
-        setSettings((previous) => ({ ...previous, ...partial }))
-      }
-      onSave={async () => {
-        const result = await saveSettings()
-        showMessage(
-          result.details
-            ? `${result.message} ${result.details}`
-            : result.message
-        )
-        const nextAuth = await window.api.auth.getStatus()
-        setAuthStatus(nextAuth)
+      authSession={authSession}
+      onChange={(partial) => {
+        void updateSettings(partial).then((result) => {
+          if (!result.ok) showMessage(result.message)
+        })
       }}
+      onRefreshAuth={() => {
+        void refreshAuth('all')
+      }}
+      onSelectSource={(id) => {
+        void selectAuthSource(id).catch((error) =>
+          showMessage(error instanceof Error ? error.message : String(error))
+        )
+      }}
+      onSelectAccount={(key) => {
+        void selectAuthAccount(key)
+      }}
+      onLoadAccountCounts={() => {
+        void loadAuthAccountCounts()
+      }}
+      switchingAccountKey={switchingAuthAccountKey}
+      accountSwitchError={authAccountSwitchError}
       onAction={runAction}
-      onAuthStatusChange={setAuthStatus}
     />
   )
 }

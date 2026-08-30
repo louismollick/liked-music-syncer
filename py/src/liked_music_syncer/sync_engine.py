@@ -30,7 +30,7 @@ from .json_io import emit_event
 from .lyrics import classify_lyrics_text, is_zero_timestamp_only_lrc, lyrics_sidecar_text
 from .lyrics_language import detect_primary_lyrics_language
 from .media_tags import write_media_tags
-from .models import SyncConfig, SyncItemState
+from .models import SyncConfig, SyncItemState, normalize_artist_credits
 from .templating import OutputLayout
 
 JOB_LOG_ITEM_ID = "__job__"
@@ -245,6 +245,7 @@ def _build_item(track: dict[str, Any], index: int) -> SyncItemState:
             or f"https://music.youtube.com/watch?v={video_id}"
         ),
         cover_art_url=_pick_thumbnail(track.get("thumbnails")),
+        artist_credits=normalize_artist_credits(track.get("artistCredits") or track.get("artists")),
         source_kind=str(track.get("sourceKind") or track.get("likeStatus") or "liked_song"),
         video_type=str(track.get("videoType")) if track.get("videoType") else None,
         track_number=_signature_int(track.get("trackNumber")),
@@ -672,6 +673,9 @@ def _apply_watch_metadata(item: SyncItemState, track: dict[str, Any]) -> None:
     if artists:
         item.artist = ", ".join(artists)
         item.album_artist = item.artist
+    credits = normalize_artist_credits(track.get("artists"))
+    if credits:
+        item.artist_credits = credits
     item.video_type = str(track.get("videoType")) if track.get("videoType") else item.video_type
     item.cover_art_url = _pick_thumbnail(track.get("thumbnails") or track.get("thumbnail")) or item.cover_art_url
     isrc = track.get("isrc")
@@ -1011,24 +1015,6 @@ def _resolve_exact_catalog(
     return candidate_lyrics_browse_id
 
 
-def _artist_search_match(ytmusic: YTMusic, artist: dict[str, str | None]) -> str | None:
-    target_name = str(artist.get("name") or "")
-    target_normalized = str(artist.get("normalized_name") or "") or _normalize_artist_name(target_name)
-    results = ytmusic.search(target_name, filter="artists", limit=5)
-    for result in results:
-        if not isinstance(result, dict):
-            continue
-        name = result.get("artist") or result.get("name") or result.get("title")
-        browse_id = result.get("browseId") or result.get("id")
-        if (
-            isinstance(name, str)
-            and isinstance(browse_id, str)
-            and _normalize_artist_name(name) == target_normalized
-        ):
-            return browse_id
-    return None
-
-
 def _album_section_results(ytmusic: YTMusic, section: Any) -> list[dict[str, Any]]:
     if not isinstance(section, dict):
         return []
@@ -1129,7 +1115,7 @@ def _discover_artist_catalog_tracks(
     ytmusic: YTMusic,
     artist: dict[str, str | None],
 ) -> list[dict[str, Any]]:
-    channel_id = artist.get("channel_id") or _artist_search_match(ytmusic, artist)
+    channel_id = artist.get("channel_id")
     if not channel_id:
         return []
 
@@ -1556,6 +1542,8 @@ def _track_matches_artist_filters(track: dict[str, Any], config: SyncConfig) -> 
         artist_id = artist.get("id")
         if isinstance(artist_id, str) and artist_id and artist_id in channel_ids:
             return True
+        if channel_ids:
+            continue
         artist_name = artist.get("name")
         if isinstance(artist_name, str) and _normalize_artist_name(artist_name) in names:
             return True
@@ -1610,6 +1598,9 @@ def _sync_release_item_metadata(item: SyncItemState, track: dict[str, Any]) -> N
     if artists:
         item.artist = ", ".join(artists)
         item.album_artist = item.artist
+    credits = normalize_artist_credits(track.get("artists"))
+    if credits:
+        item.artist_credits = credits
     album_info = _album_info(track.get("album"))
     album_name = album_info.get("name")
     if isinstance(album_name, str) and album_name:

@@ -1,6 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import path from 'node:path'
+import {
+  normalizeArtistCredits,
+  parseArtistCreditsJson,
+  stringifyArtistCredits,
+} from '@shared/artist-credit'
 import type {
   CommandResult,
   LikedArtistView,
@@ -20,6 +25,7 @@ import type { AppDatabase } from '../db/database'
 import {
   libraryFilesTable,
   libraryRootsTable,
+  libraryTrackArtistsTable,
   libraryTracksTable,
   syncJobsTable,
   syncJobTracksTable,
@@ -51,6 +57,7 @@ interface WorkerTrackPayload {
   spotify_track_id?: string | null
   soundcloud_track_id?: string | null
   resolved_youtube_music_track_id?: string | null
+  artist_credits?: Array<{ name: string; channel_id: string | null }>
   title: string
   artist: string
   album: string
@@ -134,6 +141,8 @@ interface ReprocessCandidatePayload {
   spotify_track_id: string | null
   soundcloud_track_id: string | null
   resolved_youtube_music_track_id: string | null
+  artist_credits: Array<{ name: string; channel_id: string | null }>
+  tag_schema_version: number | null
   source_origin: string | null
   catalog_release_browse_id: string | null
   catalog_release_title: string | null
@@ -379,6 +388,16 @@ def text(row, *names):
     current = value(row, *names)
     return str(current) if current is not None else None
 
+def json_array(row, *names):
+    current = text(row, *names)
+    if not current:
+        return []
+    try:
+        parsed = json.loads(current)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
+
 def binary_hash(current):
     if not isinstance(current, str):
         return None
@@ -412,6 +431,7 @@ for index in range(0, len(paths), 100):
             "-LMS_CATALOG_RELEASE_BROWSE_ID",
             "-LMS_CATALOG_RELEASE_TITLE",
             "-LMS_CATALOG_RELEASE_KIND",
+            "-LMS_ARTIST_CREDITS",
             "-Title", "-Artist", "-Album", "-AlbumArtist",
             "-TrackNumber", "-TrackTotal", "-DiscNumber", "-DiscTotal", "-DiskNumber", "-DiskTotal",
             "-Year", "-ContentCreateDate", "-Genre", "-Language", "-ISRC",
@@ -444,6 +464,7 @@ for index in range(0, len(paths), 100):
             "catalog_release_browse_id": text(row, "LMS_CATALOG_RELEASE_BROWSE_ID"),
             "catalog_release_title": text(row, "LMS_CATALOG_RELEASE_TITLE"),
             "catalog_release_kind": text(row, "LMS_CATALOG_RELEASE_KIND"),
+            "artist_credits": json_array(row, "LMS_ARTIST_CREDITS"),
             "title": text(row, "Title"), "artist": text(row, "Artist"),
             "album": text(row, "Album"), "album_artist": text(row, "AlbumArtist"),
             "track_number": integer(row, "TrackNumber"), "track_total": integer(row, "TrackTotal"),
@@ -544,6 +565,13 @@ export class SyncService {
   subscribe(listener: SyncListener) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  async hasQueuedOrRunningJobs(): Promise<boolean> {
+    const row = await this.db.query.syncJobsTable.findFirst({
+      where: inArray(syncJobsTable.status, ['queued', 'running']),
+    })
+    return Boolean(row)
   }
 
   async recoverInterruptedJobs() {
@@ -1294,6 +1322,10 @@ export class SyncService {
       spotify_track_id: track.spotifyTrackId,
       soundcloud_track_id: track.soundcloudTrackId,
       resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+        (credit) => ({ name: credit.name, channel_id: credit.channelId })
+      ),
+      tag_schema_version: null,
       source_origin: track.sourceOrigin,
       catalog_release_browse_id: track.catalogReleaseBrowseId,
       catalog_release_title: track.catalogReleaseTitle,
@@ -1555,6 +1587,9 @@ export class SyncService {
       spotify_track_id: track.spotifyTrackId,
       soundcloud_track_id: track.soundcloudTrackId,
       resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+        (credit) => ({ name: credit.name, channel_id: credit.channelId })
+      ),
       title: track.title,
       artist: track.artist,
       album: track.album,
@@ -1598,7 +1633,11 @@ export class SyncService {
       soundcloudTrackId: item.soundcloud_track_id,
       title: item.title,
       artist: item.artist,
-      artists: [{ name: item.artist }],
+      artists: normalizeArtistCredits(item.artist_credits).map((credit) => ({
+        name: credit.name,
+        id: credit.channelId,
+      })),
+      artistCredits: item.artist_credits,
       album: { name: item.album },
       albumArtist: item.album_artist,
       sourceUrl: item.source_url,
@@ -2604,6 +2643,7 @@ export class SyncService {
       spotifyTrackId: item.spotify_track_id ?? null,
       soundcloudTrackId: item.soundcloud_track_id ?? null,
       resolvedYoutubeMusicTrackId: item.resolved_youtube_music_track_id ?? null,
+      artistCreditsJson: stringifyArtistCredits(item.artist_credits),
       title: item.title,
       artist: item.artist,
       album: item.album,
@@ -2840,13 +2880,22 @@ export class SyncService {
     )
     if (!localRoot) return []
 
-    const [tracks, files] = await Promise.all([
+    const [tracks, files, trackArtists] = await Promise.all([
       this.db.select().from(libraryTracksTable),
       this.db
         .select()
         .from(libraryFilesTable)
         .where(eq(libraryFilesTable.rootId, localRoot.id)),
+      this.db.select().from(libraryTrackArtistsTable),
     ])
+    const selectedArtistIds = new Set(
+      selectedArtists.map((artist) => artist.id)
+    )
+    const selectedTrackIds = new Set(
+      trackArtists
+        .filter((link) => selectedArtistIds.has(link.artistId))
+        .map((link) => link.trackId)
+    )
     const filesByTrackId = new Map<string, typeof files>()
     for (const file of files) {
       const current = filesByTrackId.get(file.trackId) ?? []
@@ -2857,10 +2906,7 @@ export class SyncService {
     const candidates: ReprocessCandidatePayload[] = []
     for (const track of tracks) {
       if (!this.isReprocessEligibleTrack(track)) continue
-      if (
-        selectedArtists.length > 0 &&
-        !this.trackMatchesSelectedArtists(track.artist, selectedArtists)
-      ) {
+      if (selectedArtists.length > 0 && !selectedTrackIds.has(track.id)) {
         continue
       }
       const localFiles = filesByTrackId.get(track.id) ?? []
@@ -2892,6 +2938,10 @@ export class SyncService {
         spotify_track_id: track.spotifyTrackId,
         soundcloud_track_id: track.soundcloudTrackId,
         resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+        artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+          (credit) => ({ name: credit.name, channel_id: credit.channelId })
+        ),
+        tag_schema_version: track.tagSchemaVersion,
         source_origin: track.sourceOrigin,
         catalog_release_browse_id: track.catalogReleaseBrowseId,
         catalog_release_title: track.catalogReleaseTitle,
@@ -2995,6 +3045,9 @@ export class SyncService {
       spotify_track_id: track.spotifyTrackId,
       soundcloud_track_id: track.soundcloudTrackId,
       resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+        (credit) => ({ name: credit.name, channel_id: credit.channelId })
+      ),
       title: track.title ?? track.identityValue,
       artist: track.artist ?? 'Unknown artist',
       album: track.album ?? 'Unknown album',
@@ -3093,41 +3146,22 @@ export class SyncService {
       )
   }
 
-  private normalizeArtistName(value: string) {
-    return value
-      .toLowerCase()
-      .replace(/[^\w\s]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-  }
-
-  private trackMatchesSelectedArtists(
-    artist: string | null,
-    selected: LikedArtistView[]
-  ) {
-    if (!artist) return false
-    const parts = artist
-      .split(',')
-      .map((part) => this.normalizeArtistName(part))
-      .filter(Boolean)
-    if (parts.length === 0) return false
-    const wanted = new Set(
-      selected.map((item) => this.normalizeArtistName(item.name))
-    )
-    return parts.some((part) => wanted.has(part))
-  }
-
   private async getManagedFilesForArtists(
     selected: LikedArtistView[]
   ): Promise<ManagedFileRow[]> {
-    const tracks = await this.db.select().from(libraryTracksTable)
+    const [tracks, trackArtists] = await Promise.all([
+      this.db.select().from(libraryTracksTable),
+      this.db.select().from(libraryTrackArtistsTable),
+    ])
+    const selectedArtistIds = new Set(selected.map((artist) => artist.id))
+    const linkedTrackIds = new Set(
+      trackArtists
+        .filter((link) => selectedArtistIds.has(link.artistId))
+        .map((link) => link.trackId)
+    )
     const matchedTrackIds = new Set(
       tracks
-        .filter(
-          (track) =>
-            track.managedByApp &&
-            this.trackMatchesSelectedArtists(track.artist, selected)
-        )
+        .filter((track) => track.managedByApp && linkedTrackIds.has(track.id))
         .map((track) => track.id)
     )
     if (matchedTrackIds.size === 0) return []

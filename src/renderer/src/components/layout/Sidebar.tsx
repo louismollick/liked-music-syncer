@@ -1,7 +1,11 @@
+import type { AuthSessionView } from '@shared/contracts'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
 import type { JSX, ReactNode } from 'react'
 import { useState } from 'react'
 import { type LibraryTab, libraryTabSchema } from '../../routes/library'
+import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar'
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
+import { Spinner } from '../ui/spinner'
 
 type SectionKey = 'library'
 
@@ -12,6 +16,47 @@ interface Props {
     completed: number
     failed: number
   }
+  authSession: AuthSessionView
+  onSelectAccount: (key: string) => Promise<boolean>
+  onLoadAccountCounts: () => Promise<void>
+  switchingAccountKey: string | null
+  accountSwitchError: string | null
+}
+
+function AccountAvatar({
+  account,
+}: {
+  account: NonNullable<AuthSessionView['activeAccount']>
+}) {
+  return (
+    <Avatar className="size-10 rounded-lg after:rounded-lg">
+      {account.imageUrl ? (
+        <AvatarImage src={account.imageUrl} className="rounded-lg" />
+      ) : null}
+      <AvatarFallback className="rounded-lg">
+        {account.displayName.slice(0, 2).toUpperCase()}
+      </AvatarFallback>
+    </Avatar>
+  )
+}
+
+function AccountCount({
+  account,
+}: {
+  account: AuthSessionView['accounts'][number]
+}) {
+  if (account.likedSongCountState === 'loading') return <Spinner />
+  if (
+    account.likedSongCountState !== 'loaded' ||
+    account.likedSongCount == null
+  )
+    return null
+  return (
+    <span className="text-xs text-text-muted">
+      {account.likedSongCount.toLocaleString()} liked{' '}
+      {account.likedSongCount === 1 ? 'song' : 'songs'}
+    </span>
+  )
 }
 
 function loadExpanded(): Set<SectionKey> {
@@ -130,8 +175,16 @@ function NavItem({
   )
 }
 
-export function Sidebar({ counts }: Props): JSX.Element {
+export function Sidebar({
+  counts,
+  authSession,
+  onSelectAccount,
+  onLoadAccountCounts,
+  switchingAccountKey,
+  accountSwitchError,
+}: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<SectionKey>>(loadExpanded)
+  const [profileOpen, setProfileOpen] = useState(false)
   const navigate = useNavigate()
   const location = useRouterState({
     select: (state) => state.location,
@@ -230,6 +283,93 @@ export function Sidebar({ counts }: Props): JSX.Element {
           }
         />
       </nav>
+      <div className="border-t border-border p-3">
+        {authSession.state === 'loading' && !authSession.activeAccount ? (
+          <div
+            role="status"
+            className="size-10 animate-pulse rounded-lg bg-surface-tertiary"
+            aria-label="Checking YouTube Music account"
+          />
+        ) : authSession.state === 'signed_in' && authSession.activeAccount ? (
+          <Popover
+            open={profileOpen}
+            onOpenChange={(open) => {
+              setProfileOpen(open)
+              if (open) void onLoadAccountCounts()
+            }}
+          >
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="Open YouTube Music account menu"
+                />
+              }
+            >
+              <AccountAvatar account={authSession.activeAccount} />
+            </PopoverTrigger>
+            <PopoverContent
+              side="top"
+              align="start"
+              sideOffset={-40}
+              className="w-64 gap-1 p-1.5"
+            >
+              {authSession.accounts
+                .filter(
+                  (account) => account.key !== authSession.selectedAccountKey
+                )
+                .map((account) => (
+                  <button
+                    key={account.key}
+                    type="button"
+                    disabled={switchingAccountKey !== null}
+                    onClick={() => {
+                      void onSelectAccount(account.key).then((ok) => {
+                        if (ok) setProfileOpen(false)
+                      })
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md p-2 text-left hover:bg-surface-tertiary disabled:opacity-60"
+                  >
+                    <AccountAvatar account={account} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-text-primary">
+                        {account.displayName}
+                      </span>
+                      <span className="block truncate text-xs text-text-muted">
+                        {account.handle ?? 'YouTube Music'}
+                      </span>
+                      <AccountCount account={account} />
+                    </span>
+                    {switchingAccountKey === account.key ? <Spinner /> : null}
+                  </button>
+                ))}
+              {accountSwitchError ? (
+                <p className="px-2 py-1 text-xs text-error">
+                  {accountSwitchError}
+                </p>
+              ) : null}
+              <div className="min-h-10 pl-12 pr-2 py-1">
+                <p className="truncate text-sm font-medium text-text-primary">
+                  {authSession.activeAccount.displayName}
+                </p>
+                <p className="truncate text-xs text-text-muted">
+                  {authSession.activeAccount.handle ?? 'YouTube Music'}
+                </p>
+                <AccountCount account={authSession.activeAccount} />
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void navigate({ to: '/settings' })}
+            className="w-full rounded-lg px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary"
+          >
+            {authSession.state === 'signed_out' ? 'Sign In' : 'Auth Issue'}
+          </button>
+        )}
+      </div>
     </aside>
   )
 }
