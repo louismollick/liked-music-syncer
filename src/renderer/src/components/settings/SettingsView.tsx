@@ -4,7 +4,7 @@ import type {
   CommandResult,
 } from '@shared/contracts'
 import type { JSX } from 'react'
-import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar'
+import { AccountIdentity } from '../auth/AccountIdentity'
 import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Input } from '../ui/Input'
@@ -22,7 +22,11 @@ import { SettingsSection } from './SettingsSection'
 interface Props {
   settings: AppSettingsView
   authSession: AuthSessionView
-  onChange: (next: Partial<AppSettingsView>) => void
+  onChange: (
+    next: Partial<AppSettingsView>,
+    options?: { immediate?: boolean }
+  ) => void
+  onFlush: (keys: Array<keyof AppSettingsView>) => void
   onRefreshAuth: () => void
   onSelectSource: (sourceId: string) => void
   onSelectAccount: (accountKey: string) => void
@@ -36,6 +40,7 @@ export function SettingsView({
   settings,
   authSession,
   onChange,
+  onFlush,
   onRefreshAuth,
   onSelectSource,
   onSelectAccount,
@@ -63,40 +68,9 @@ export function SettingsView({
       (account) => account.key === authSession.selectedAccountKey
     ) ?? authSession.activeAccount
 
-  const accountRow = (account: NonNullable<typeof selectedAccount>) => (
-    <span className="flex min-w-0 flex-1 items-center gap-2">
-      <Avatar className="size-9 rounded-lg after:rounded-lg">
-        {account.imageUrl ? (
-          <AvatarImage src={account.imageUrl} className="rounded-lg" />
-        ) : null}
-        <AvatarFallback className="rounded-lg">
-          {account.displayName.slice(0, 2).toUpperCase()}
-        </AvatarFallback>
-      </Avatar>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm text-text-primary">
-          {account.displayName}
-        </span>
-        <span className="block truncate text-xs text-text-muted">
-          {account.handle ?? 'YouTube Music'}
-        </span>
-        {account.likedSongCountState === 'loading' ? (
-          <Spinner />
-        ) : account.likedSongCountState === 'loaded' &&
-          account.likedSongCount != null ? (
-          <span className="block text-xs text-text-muted">
-            {account.likedSongCount.toLocaleString()} liked{' '}
-            {account.likedSongCount === 1 ? 'song' : 'songs'}
-          </span>
-        ) : null}
-      </span>
-      {switchingAccountKey === account.key ? <Spinner /> : null}
-    </span>
-  )
-
   const pickDirectory = async () => {
     const picked = await window.api.settings.pickOutputDirectory()
-    if (picked) onChange({ outputDirectory: picked })
+    if (picked) onChange({ outputDirectory: picked }, { immediate: true })
   }
 
   return (
@@ -156,7 +130,7 @@ export function SettingsView({
                         </span>
                         <span className="text-text-muted">
                           {source.status === 'signed_in'
-                            ? 'Signed in'
+                            ? `${source.accountCount ?? 0} ${source.accountCount === 1 ? 'account' : 'accounts'} found`
                             : source.status === 'signed_out'
                               ? 'Signed out'
                               : source.status === 'issue'
@@ -169,6 +143,9 @@ export function SettingsView({
                 </SelectGroup>
               </SelectContent>
             </Select>
+            <p className="mt-1 text-xs text-text-muted">
+              Checked the first 5 browser account slots.
+            </p>
           </div>
           {authSession.state === 'signed_out' ? (
             <Button
@@ -199,7 +176,10 @@ export function SettingsView({
             >
               <SelectTrigger className="h-auto min-h-12 w-full">
                 <SelectValue placeholder="Select an account">
-                  {accountRow(selectedAccount)}
+                  <AccountIdentity
+                    account={selectedAccount}
+                    switching={switchingAccountKey === selectedAccount.key}
+                  />
                 </SelectValue>
               </SelectTrigger>
               <SelectContent
@@ -213,7 +193,10 @@ export function SettingsView({
                       value={account.key}
                       className="py-2"
                     >
-                      {accountRow(account)}
+                      <AccountIdentity
+                        account={account}
+                        switching={switchingAccountKey === account.key}
+                      />
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -227,6 +210,11 @@ export function SettingsView({
         {authSession.issue ? (
           <p className="text-sm text-error">{authSession.issue.recovery}</p>
         ) : null}
+        {authSession.switchingDisabledReason ? (
+          <p className="text-sm text-text-muted">
+            {authSession.switchingDisabledReason}
+          </p>
+        ) : null}
       </SettingsSection>
 
       <SettingsSection title="Output">
@@ -237,6 +225,7 @@ export function SettingsView({
               value={settings.outputDirectory}
               placeholder="/path/to/music"
               onChange={(e) => onChange({ outputDirectory: e.target.value })}
+              onBlur={() => onFlush(['outputDirectory'])}
             />
           </div>
           <div className="flex items-end">
@@ -247,11 +236,13 @@ export function SettingsView({
           label="Folder Template"
           value={settings.folderTemplate}
           onChange={(e) => onChange({ folderTemplate: e.target.value })}
+          onBlur={() => onFlush(['folderTemplate'])}
         />
         <Input
           label="File Template"
           value={settings.fileTemplate}
           onChange={(e) => onChange({ fileTemplate: e.target.value })}
+          onBlur={() => onFlush(['fileTemplate'])}
         />
       </SettingsSection>
 
@@ -261,12 +252,14 @@ export function SettingsView({
           value={settings.rcloneRemote}
           placeholder="remote:"
           onChange={(e) => onChange({ rcloneRemote: e.target.value })}
+          onBlur={() => onFlush(['rcloneRemote'])}
         />
         <Input
           label="Remote Music Root"
           value={settings.remoteMusicRoot}
           placeholder="/music"
           onChange={(e) => onChange({ remoteMusicRoot: e.target.value })}
+          onBlur={() => onFlush(['remoteMusicRoot'])}
         />
         <Checkbox
           label="Remote copy enabled"
@@ -281,6 +274,7 @@ export function SettingsView({
           value={settings.lyricsApiBaseUrl}
           placeholder="https://lrclib.net"
           onChange={(e) => onChange({ lyricsApiBaseUrl: e.target.value })}
+          onBlur={() => onFlush(['lyricsApiBaseUrl'])}
         />
         <Checkbox
           label="Embed unsynced lyrics"

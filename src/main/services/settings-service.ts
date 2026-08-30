@@ -63,6 +63,8 @@ export interface RuntimeSettings {
 }
 
 export class SettingsService {
+  private updateQueue: Promise<void> = Promise.resolve()
+
   constructor(
     private readonly db: AppDatabase,
     private readonly settingsFile: string
@@ -147,20 +149,24 @@ export class SettingsService {
   }
 
   async update(input: UpdateSettingsInput): Promise<CommandResult> {
-    const current = await this.getView()
-    await this.save({
-      outputDirectory: input.outputDirectory ?? current.outputDirectory,
-      remoteCopyEnabled: input.remoteCopyEnabled ?? current.remoteCopyEnabled,
-      ytDlpCookiesBrowser: current.ytDlpCookiesBrowser,
-      rcloneRemote: input.rcloneRemote ?? current.rcloneRemote,
-      remoteMusicRoot: input.remoteMusicRoot ?? current.remoteMusicRoot,
-      lyricsApiBaseUrl: input.lyricsApiBaseUrl ?? current.lyricsApiBaseUrl,
-      folderTemplate: input.folderTemplate ?? current.folderTemplate,
-      fileTemplate: input.fileTemplate ?? current.fileTemplate,
-      embedUnsyncedLyrics:
-        input.embedUnsyncedLyrics ?? current.embedUnsyncedLyrics,
-      writeLrcSidecar: input.writeLrcSidecar ?? current.writeLrcSidecar,
+    const run = this.updateQueue.then(async () => {
+      const current = await this.getView()
+      await this.save({
+        outputDirectory: input.outputDirectory ?? current.outputDirectory,
+        remoteCopyEnabled: input.remoteCopyEnabled ?? current.remoteCopyEnabled,
+        ytDlpCookiesBrowser: current.ytDlpCookiesBrowser,
+        rcloneRemote: input.rcloneRemote ?? current.rcloneRemote,
+        remoteMusicRoot: input.remoteMusicRoot ?? current.remoteMusicRoot,
+        lyricsApiBaseUrl: input.lyricsApiBaseUrl ?? current.lyricsApiBaseUrl,
+        folderTemplate: input.folderTemplate ?? current.folderTemplate,
+        fileTemplate: input.fileTemplate ?? current.fileTemplate,
+        embedUnsyncedLyrics:
+          input.embedUnsyncedLyrics ?? current.embedUnsyncedLyrics,
+        writeLrcSidecar: input.writeLrcSidecar ?? current.writeLrcSidecar,
+      })
     })
+    this.updateQueue = run.catch(() => undefined)
+    await run
     return { ok: true, message: 'Setting updated.' }
   }
 
@@ -202,8 +208,8 @@ export class SettingsService {
   ) {
     await this.writeSecret('ytmusicBrowserAuth', credential)
     await this.writeValue('selectedAuthSource', sourceId)
-    await this.writeValue('activeAuthAccount', JSON.stringify(account))
-    await this.writeValue(`authAccount:${sourceId}`, JSON.stringify(account))
+    await this.writeSecret('activeAuthAccount', JSON.stringify(account))
+    await this.writeSecret(`authAccount:${sourceId}`, JSON.stringify(account))
   }
 
   async getRuntimeSettings(): Promise<RuntimeSettings> {

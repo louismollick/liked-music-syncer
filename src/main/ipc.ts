@@ -63,7 +63,18 @@ export function registerIpcHandlers(
   ipcMain.handle('auth:openSignIn', async () => {
     await authCoordinator.openSignIn()
     window.once('focus', () => {
-      void authCoordinator.refresh('selected', 'focus_return')
+      void authCoordinator
+        .refresh('selected', 'focus_return')
+        .catch((error) => {
+          logMain({
+            level: 'error',
+            source: 'auth',
+            message: 'Authentication refresh after browser focus failed',
+            context: {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
+        })
     })
   })
   ipcMain.handle('auth:captureBrowserAuth', (_event, browser) =>

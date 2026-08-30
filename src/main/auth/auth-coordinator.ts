@@ -38,6 +38,51 @@ interface WorkerResult {
 }
 type Listener = (snapshot: AuthSessionView) => void
 
+const AUTH_ISSUES: Record<
+  AuthIssueCode,
+  { message: string; recovery: string }
+> = {
+  cookie_store_unreadable: {
+    message: 'The browser cookie store could not be read.',
+    recovery:
+      'Fully quit the selected browser, reopen it, then retry. If the issue continues, check that its profile is readable.',
+  },
+  keychain_denied: {
+    message: 'macOS did not allow access to the browser encryption key.',
+    recovery: 'Allow Keychain access when macOS asks, then retry.',
+  },
+  permission_denied: {
+    message: 'macOS denied access to the browser data.',
+    recovery:
+      'Open YouTube Music in this browser, confirm you are signed in, then retry.',
+  },
+  browser_profile_missing: {
+    message: 'The selected browser profile could not be found.',
+    recovery:
+      'Open YouTube Music in this browser, confirm you are signed in, then retry.',
+  },
+  network_unavailable: {
+    message: 'YouTube Music could not be reached.',
+    recovery:
+      'Open YouTube Music in this browser, confirm you are signed in, then retry.',
+  },
+  credential_rejected: {
+    message: 'YouTube Music rejected the browser session.',
+    recovery:
+      'Open YouTube Music in this browser, confirm you are signed in, then retry.',
+  },
+  account_enumeration_failed: {
+    message: 'The active YouTube Music identity could not be read.',
+    recovery:
+      'Open YouTube Music in this browser, confirm you are signed in, then retry.',
+  },
+  unexpected_response: {
+    message: 'YouTube Music returned an unexpected response.',
+    recovery:
+      'Open YouTube Music in this browser, confirm you are signed in, then retry.',
+  },
+}
+
 export class AuthCoordinator {
   private listeners = new Set<Listener>()
   private sources = new Map<string, InstalledAuthSource>()
@@ -62,7 +107,9 @@ export class AuthCoordinator {
   constructor(
     private settings: SettingsService,
     private worker: PythonWorkerService,
-    private jobsBusy: () => Promise<boolean>
+    private jobsBusy: () => Promise<boolean>,
+    private preferredBrowserPath: () => Promise<string | null> = async () =>
+      null
   ) {}
   getSnapshot = () => this.snapshot
   subscribe(listener: Listener) {
@@ -95,9 +142,7 @@ export class AuthCoordinator {
     const selected =
       persisted.sourceId && this.sources.has(persisted.sourceId)
         ? persisted.sourceId
-        : this.sources.has('chrome')
-          ? 'chrome'
-          : (this.sources.keys().next().value as string)
+        : await this.fallbackSourceId()
     this.publish({
       selectedSourceId: selected,
       activeAccount: persistedAccount,
@@ -121,7 +166,6 @@ export class AuthCoordinator {
         )
         const account = accounts[0]
         if (account) await this.commitAccount(selected, account)
-        await this.refresh('selected', 'startup')
         return this.snapshot
       }
     }
@@ -138,6 +182,14 @@ export class AuthCoordinator {
       if (!this.sources.has(id)) this.rows.delete(id)
     this.publish()
   }
+  private async fallbackSourceId(): Promise<string> {
+    if (this.sources.has('chrome')) return 'chrome'
+    const preferredPath = await this.preferredBrowserPath()
+    const preferredSource = [...this.sources.values()].find(
+      (source) => source.applicationPath === preferredPath
+    )
+    return preferredSource?.id ?? (this.sources.keys().next().value as string)
+  }
   private row(source: InstalledAuthSource): AuthSourceView {
     return {
       id: source.id,
@@ -153,14 +205,52 @@ export class AuthCoordinator {
   }
 
   async refresh(scope: 'selected' | 'all', _reason: AuthRefreshReason) {
+    const priorSelection = this.snapshot.selectedSourceId
     if (scope === 'all') await this.discover()
+    if (scope === 'all' && this.sources.size === 0) {
+      await this.settings.setSelectedAuthSource('')
+      this.publish({
+        selectedSourceId: null,
+        selectedAccountKey: null,
+        activeAccount: null,
+        accounts: [],
+        accountsComplete: false,
+        state: 'no_supported_browser',
+        issue: null,
+      })
+      return this.snapshot
+    }
+    const selectionDisappeared = Boolean(
+      priorSelection && !this.sources.has(priorSelection)
+    )
+    if (selectionDisappeared && this.sources.size > 0) {
+      const fallback = await this.fallbackSourceId()
+      await this.settings.setSelectedAuthSource(fallback)
+      this.publish({
+        selectedSourceId: fallback,
+        selectedAccountKey: null,
+        activeAccount: null,
+        accounts: [],
+        accountsComplete: false,
+        state: 'loading',
+        issue: null,
+      })
+    }
     const ids =
       scope === 'selected'
         ? ([this.snapshot.selectedSourceId].filter(Boolean) as string[])
         : [...this.sources.keys()]
     this.publish({ isRefreshing: true })
-    for (const id of ids) await this.probe(id, scope === 'selected')
-    this.publish({ isRefreshing: false })
+    try {
+      for (const id of ids) {
+        const commit =
+          scope === 'selected' ||
+          (selectionDisappeared && id === this.snapshot.selectedSourceId)
+        await this.probe(id, commit)
+      }
+    } finally {
+      this.publish({ isRefreshing: false })
+    }
     return this.snapshot
   }
   private async probe(id: string, commit: boolean) {
@@ -179,7 +269,7 @@ export class AuthCoordinator {
       try {
         result = await this.worker.runJsonCommand<WorkerResult>(
           'auth-capture-browser',
-          { browser: source.cookieBackend }
+          { browser: source.cookieBackend, profile_name: source.profileName }
         )
       } catch (error) {
         result = {
@@ -324,6 +414,8 @@ export class AuthCoordinator {
       activeAccount: remembered,
       selectedAccountKey: remembered?.key ?? null,
       accounts: remembered ? [remembered] : [],
+      state: 'loading',
+      issue: null,
     })
     const row = this.rows.get(id)!
     if (row.status === 'signed_out') {
@@ -378,12 +470,20 @@ export class AuthCoordinator {
       if (existing) return existing
       const task = (async () => {
         const credential = this.credentialsByAccountKey.get(account.key)
-        const result = credential
-          ? await this.worker.runJsonCommand<{
+        let result: { ok: boolean; count: number | null } = {
+          ok: false,
+          count: null,
+        }
+        if (credential) {
+          try {
+            result = await this.worker.runJsonCommand<{
               ok: boolean
               count: number | null
             }>('auth-liked-song-count', { browser_auth_input: credential })
-          : { ok: false, count: null }
+          } catch {
+            result = { ok: false, count: null }
+          }
+        }
         const updated = (item: YouTubeMusicAccountView) =>
           item.key === account.key
             ? {
@@ -412,6 +512,36 @@ export class AuthCoordinator {
       await Promise.all(accounts.slice(index, index + 2).map(load))
     return this.snapshot
   }
+  async getValidatedCredential(): Promise<string> {
+    const current = await this.settings.getStoredYtMusicBrowserAuth()
+    if (current) {
+      try {
+        const checked = await this.worker.runJsonCommand<WorkerResult>(
+          'auth-status',
+          { browser_auth_input: current }
+        )
+        if (checked.ok && checked.is_authenticated) {
+          const normalized = checked.credential_json ?? current
+          if (normalized !== current) {
+            await this.settings.saveYtMusicBrowserAuth(normalized)
+          }
+          return normalized
+        }
+      } catch {
+        // Recapture below. Authentication failures are normalized by probe().
+      }
+    }
+
+    await this.refresh('selected', 'credential_rejected')
+    const recovered = await this.settings.getStoredYtMusicBrowserAuth()
+    if (this.snapshot.state !== 'signed_in' || !recovered) {
+      throw new Error(
+        this.snapshot.issue?.message ??
+          'YouTube Music authentication is unavailable.'
+      )
+    }
+    return recovered
+  }
   async openSignIn() {
     const source = this.snapshot.selectedSourceId
       ? this.sources.get(this.snapshot.selectedSourceId)
@@ -423,49 +553,29 @@ export class AuthCoordinator {
       'https://music.youtube.com',
     ])
   }
+  setSwitchingDisabled(disabled: boolean) {
+    this.publish({
+      switchingDisabledReason: disabled
+        ? 'Browser and account switching are disabled while sync work is queued or running.'
+        : null,
+    })
+  }
   private issue(
     code: string | undefined,
     _message: string,
     sourceId: string
   ): AuthIssueView {
-    const safe = (
-      [
-        'cookie_store_unreadable',
-        'keychain_denied',
-        'permission_denied',
-        'browser_profile_missing',
-        'network_unavailable',
-        'credential_rejected',
-        'account_enumeration_failed',
-        'unexpected_response',
-      ].includes(code ?? '')
-        ? code
-        : 'unexpected_response'
-    ) as AuthIssueCode
-    const messages: Record<AuthIssueCode, string> = {
-      cookie_store_unreadable: 'The browser cookie store could not be read.',
-      keychain_denied:
-        'macOS did not allow access to the browser encryption key.',
-      permission_denied: 'macOS denied access to the browser data.',
-      browser_profile_missing:
-        'The selected browser profile could not be found.',
-      network_unavailable: 'YouTube Music could not be reached.',
-      credential_rejected: 'YouTube Music rejected the browser session.',
-      account_enumeration_failed:
-        'The active YouTube Music identity could not be read.',
-      unexpected_response: 'YouTube Music returned an unexpected response.',
-    }
+    const safe = Object.hasOwn(AUTH_ISSUES, code ?? '')
+      ? (code as AuthIssueCode)
+      : 'unexpected_response'
+    const detail = AUTH_ISSUES[safe]
     return {
       code: safe,
-      message: messages[safe],
+      message: detail.message,
       recovery:
         safe === 'permission_denied' && sourceId === 'safari'
           ? 'Allow Full Disk Access for Liked Music Syncer in macOS Privacy & Security, then retry.'
-          : safe === 'keychain_denied'
-            ? 'Allow Keychain access when macOS asks, then retry.'
-            : safe === 'cookie_store_unreadable'
-              ? 'Fully quit the selected browser, reopen it, then retry. If the issue continues, check that its profile is readable.'
-              : 'Open YouTube Music in this browser, confirm you are signed in, then retry.',
+          : detail.recovery,
     }
   }
 }

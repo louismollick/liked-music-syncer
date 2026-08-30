@@ -6,6 +6,7 @@ import {
   remoteStatusLabel,
   songSortValue,
 } from '../src/renderer/src/components/library/library-utils'
+import { artistCreditId } from '../src/shared/artist-credit'
 import type { LibraryTrackView } from '../src/shared/contracts'
 
 function makeTrack(
@@ -58,6 +59,12 @@ function makeTrack(
 }
 
 describe('library view utils', () => {
+  it('preserves Unicode artist names in fallback identities', () => {
+    expect(artistCreditId({ name: '宇多田ヒカル', channelId: null })).toBe(
+      'local_artist_宇多田ヒカル'
+    )
+  })
+
   it('matches artist filters by trusted identity', () => {
     expect(
       matchesArtistFilter(makeTrack(), 'artist_channel_UC_ARTIST_NAME')

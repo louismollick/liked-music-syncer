@@ -175,4 +175,86 @@ describe('AuthCoordinator', () => {
       'unavailable'
     )
   })
+
+  it('finalizes a count as unavailable when the worker rejects', async () => {
+    const worker = {
+      runJsonCommand: vi.fn(async () => {
+        throw new Error('worker stopped')
+      }),
+    }
+    const coordinator = new AuthCoordinator(
+      {} as never,
+      worker as never,
+      async () => false
+    )
+    const account = {
+      key: 'first',
+      displayName: 'First',
+      handle: '@first',
+      imageUrl: null,
+      cachedImageUrl: null,
+      likedSongCount: null,
+      likedSongCountState: 'unrequested' as const,
+    }
+    const internal = coordinator as unknown as {
+      snapshot: ReturnType<AuthCoordinator['getSnapshot']>
+      credentialsByAccountKey: Map<string, string>
+    }
+    internal.snapshot = {
+      ...coordinator.getSnapshot(),
+      state: 'signed_in',
+      activeAccount: account,
+      selectedAccountKey: account.key,
+      accounts: [account],
+    }
+    internal.credentialsByAccountKey.set(account.key, 'credential')
+
+    await expect(coordinator.loadAccountCounts()).resolves.toBeDefined()
+    expect(coordinator.getSnapshot().accounts[0]?.likedSongCountState).toBe(
+      'unavailable'
+    )
+  })
+
+  it('clears the refresh flag when committing a probe fails', async () => {
+    const worker = {
+      runJsonCommand: vi.fn(async () => ({
+        ok: true,
+        is_authenticated: true,
+        message: 'ok',
+        credential_json: '{}',
+        account: { display_name: 'First', handle: '@first' },
+      })),
+    }
+    const settings = {
+      commitAuthSelection: vi.fn(async () => {
+        throw new Error('safe storage unavailable')
+      }),
+    }
+    const coordinator = new AuthCoordinator(
+      settings as never,
+      worker as never,
+      async () => false
+    )
+    const source = {
+      id: 'chrome',
+      browserName: 'Chrome',
+      applicationPath: '/Applications/Google Chrome.app',
+      profileName: null,
+      cookieBackend: 'chrome',
+    }
+    const internal = coordinator as unknown as {
+      sources: Map<string, typeof source>
+      rows: Map<string, unknown>
+      snapshot: { selectedSourceId: string | null }
+      row: (source: typeof source) => unknown
+    }
+    internal.sources.set(source.id, source)
+    internal.rows.set(source.id, internal.row(source))
+    internal.snapshot.selectedSourceId = source.id
+
+    await expect(coordinator.refresh('selected', 'retry')).rejects.toThrow(
+      'safe storage unavailable'
+    )
+    expect(coordinator.getSnapshot().isRefreshing).toBe(false)
+  })
 })

@@ -1,5 +1,10 @@
-import { createRoute } from '@tanstack/react-router'
+import {
+  createRoute,
+  useNavigate,
+  useRouterState,
+} from '@tanstack/react-router'
 import type { JSX } from 'react'
+import { useEffect } from 'react'
 import { useAppState } from '../App'
 import { SettingsView } from '../components/settings/SettingsView'
 import { rootRoute } from './root'
@@ -7,14 +12,20 @@ import { rootRoute } from './root'
 export const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings',
+  validateSearch: (search: Record<string, unknown>) => ({
+    detectAuth: search.detectAuth === true ? true : undefined,
+  }),
   component: SettingsRouteComponent,
 })
 
 export function SettingsRouteComponent(): JSX.Element {
+  const navigate = useNavigate()
+  const location = useRouterState({ select: (state) => state.location })
   const {
     settings,
     authSession,
     updateSettings,
+    flushSettings,
     refreshAuth,
     selectAuthSource,
     selectAuthAccount,
@@ -25,6 +36,25 @@ export function SettingsRouteComponent(): JSX.Element {
     showMessage,
   } = useAppState()
 
+  useEffect(() => {
+    if (
+      location.pathname !== '/settings' ||
+      location.search.detectAuth !== true
+    )
+      return
+    void refreshAuth('all')
+      .catch((error) =>
+        showMessage(error instanceof Error ? error.message : String(error))
+      )
+      .finally(() => {
+        void navigate({
+          to: '/settings',
+          search: { detectAuth: undefined },
+          replace: true,
+        })
+      })
+  }, [location.pathname, location.search, navigate, refreshAuth, showMessage])
+
   return (
     <SettingsView
       settings={settings}
@@ -34,8 +64,15 @@ export function SettingsRouteComponent(): JSX.Element {
           if (!result.ok) showMessage(result.message)
         })
       }}
+      onFlush={(keys) => {
+        void flushSettings(keys).then((result) => {
+          if (!result.ok) showMessage(result.message)
+        })
+      }}
       onRefreshAuth={() => {
-        void refreshAuth('all')
+        void refreshAuth('all').catch((error) =>
+          showMessage(error instanceof Error ? error.message : String(error))
+        )
       }}
       onSelectSource={(id) => {
         void selectAuthSource(id).catch((error) =>
@@ -46,7 +83,9 @@ export function SettingsRouteComponent(): JSX.Element {
         void selectAuthAccount(key)
       }}
       onLoadAccountCounts={() => {
-        void loadAuthAccountCounts()
+        void loadAuthAccountCounts().catch((error) =>
+          showMessage(error instanceof Error ? error.message : String(error))
+        )
       }}
       switchingAccountKey={switchingAuthAccountKey}
       accountSwitchError={authAccountSwitchError}

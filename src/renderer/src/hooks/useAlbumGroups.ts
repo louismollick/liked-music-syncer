@@ -26,7 +26,8 @@ export function useAlbumGroups(tracks: LibraryTrackView[]) {
       if (artistIds.size === 0) {
         for (const value of [track.artist, track.albumArtist]) {
           const normalized = normalizeName(value)
-          if (normalized) artistIds.add(`name:${normalized}`)
+          if (normalized)
+            artistIds.add(artistCreditId({ name: normalized, channelId: null }))
         }
       }
 
@@ -42,7 +43,10 @@ export function useAlbumGroups(tracks: LibraryTrackView[]) {
       artistName?: string | null
     ): AlbumGroup[] => {
       const lookupId =
-        artistId ?? (artistName ? `name:${normalizeName(artistName)}` : null)
+        artistId ??
+        (artistName
+          ? artistCreditId({ name: artistName, channelId: null })
+          : null)
       if (!lookupId) return groups
       const allowedKeys = artistAlbumKeys.get(lookupId)
       if (!allowedKeys) return []

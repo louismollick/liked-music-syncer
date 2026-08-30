@@ -75,6 +75,11 @@ def main() -> int:
         write_json(
             capture_browser_auth_from_browser(
                 browser_name=str(payload.get("browser", "firefox")),
+                profile_name=(
+                    str(payload["profile_name"])
+                    if payload.get("profile_name")
+                    else None
+                ),
             )
         )
         return 0

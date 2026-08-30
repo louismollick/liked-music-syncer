@@ -21,6 +21,7 @@ import type {
 } from '@shared/contracts'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { execa } from 'execa'
+import type { AuthCoordinator } from '../auth/auth-coordinator'
 import type { AppDatabase } from '../db/database'
 import {
   libraryFilesTable,
@@ -535,6 +536,7 @@ export class SyncService {
   private schedulerRunning = false
   private readonly poTokenService: PoTokenService
   private readonly getBundledFfmpegPath: () => string
+  private authCoordinator: AuthCoordinator | null = null
 
   constructor(
     private readonly db: AppDatabase,
@@ -565,6 +567,34 @@ export class SyncService {
   subscribe(listener: SyncListener) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  setAuthCoordinator(authCoordinator: AuthCoordinator) {
+    this.authCoordinator = authCoordinator
+  }
+
+  private async getValidatedBrowserAuth(
+    runtime: RuntimeSettingsLike
+  ): Promise<string> {
+    if (this.authCoordinator) {
+      return this.authCoordinator.getValidatedCredential()
+    }
+    if (!runtime.ytmusicBrowserAuth) {
+      throw new Error('Pull YT Music auth from your browser first.')
+    }
+    const result =
+      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+        'auth-status',
+        { browser_auth_input: runtime.ytmusicBrowserAuth }
+      )
+    if (!result.ok || !result.is_authenticated) {
+      throw new Error(result.message || 'YT Music auth check failed.')
+    }
+    const credential = result.credential_json ?? runtime.ytmusicBrowserAuth
+    if (result.credential_json) {
+      await this.settingsService.saveYtMusicBrowserAuth(result.credential_json)
+    }
+    return credential
   }
 
   async hasQueuedOrRunningJobs(): Promise<boolean> {
@@ -1008,28 +1038,13 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'startRun blocked: missing YT Music auth',
-        context: { kind: input.kind },
-      })
+    let browserAuthInput: string
+    try {
+      browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+    } catch (error) {
       return {
         ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
-
-    const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        { browser_auth_input: runtime.ytmusicBrowserAuth }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
-      return {
-        ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
+        message: error instanceof Error ? error.message : String(error),
       }
     }
 
@@ -1045,14 +1060,6 @@ export class SyncService {
 
     await this.poTokenService.ensureReady()
     const poTokenBundle = this.getPoTokenBundle()
-    const browserAuthInput =
-      authResult.credential_json ?? runtime.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
-
     const jobId = await this.createJob({
       kind: input.kind,
       scope: input.scope,
@@ -1120,22 +1127,13 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
+    let browserAuthInput: string
+    try {
+      browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+    } catch (error) {
       return {
         ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
-
-    const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        { browser_auth_input: runtime.ytmusicBrowserAuth }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
-      return {
-        ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
+        message: error instanceof Error ? error.message : String(error),
       }
     }
 
@@ -1144,14 +1142,6 @@ export class SyncService {
 
     await this.poTokenService.ensureReady()
     const poTokenBundle = this.getPoTokenBundle()
-    const browserAuthInput =
-      authResult.credential_json ?? runtime.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
-
     const jobId = sourceJob.id
     const retryItems = failedTracks.map((track, index) => {
       const trackWorkId = track.id
@@ -1286,35 +1276,20 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
-      return {
-        ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
     const reconcileResult = await this.libraryService.reconcileLocalLibrary()
     if (!reconcileResult.ok) return reconcileResult
-    const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        { browser_auth_input: runtime.ytmusicBrowserAuth }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
+    let browserAuthInput: string
+    try {
+      browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+    } catch (error) {
       return {
         ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
+        message: error instanceof Error ? error.message : String(error),
       }
     }
 
     await this.poTokenService.ensureReady()
     const poTokenBundle = this.getPoTokenBundle()
-    const browserAuthInput =
-      authResult.credential_json ?? runtime.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
     const candidates = failedTracks.map((track) => ({
       track_work_id: track.id,
       library_track_id: track.libraryTrackId ?? '',
@@ -1948,6 +1923,7 @@ export class SyncService {
         candidate.resolved_youtube_music_track_id,
       title: candidate.title ?? 'Unknown Title',
       artist: candidate.artist ?? 'Unknown Artist',
+      artist_credits: candidate.artist_credits,
       album: candidate.album ?? 'Unknown Album',
       album_artist: candidate.album_artist ?? candidate.artist ?? 'Unknown',
       source_url: `https://music.youtube.com/watch?v=${youtubeMusicTrackId}`,
@@ -2029,13 +2005,6 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
-      return {
-        ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
-
     const jobId = await this.createJob({
       kind: 'reprocess',
       scope,
@@ -2054,29 +2023,19 @@ export class SyncService {
         return reconcileResult
       }
 
-      const authResult =
-        await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-          'auth-status',
-          { browser_auth_input: runtime.ytmusicBrowserAuth }
-        )
-      if (!authResult.ok || !authResult.is_authenticated) {
+      let browserAuthInput: string
+      try {
+        browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+      } catch (error) {
         await this.failPreparingJob(jobId)
         return {
           ok: false,
-          message: authResult.message || 'YT Music auth check failed.',
+          message: error instanceof Error ? error.message : String(error),
         }
       }
 
       await this.poTokenService.ensureReady()
       const poTokenBundle = this.getPoTokenBundle()
-      const browserAuthInput =
-        authResult.credential_json ?? runtime.ytmusicBrowserAuth
-      if (authResult.credential_json) {
-        await this.settingsService.saveYtMusicBrowserAuth(
-          authResult.credential_json
-        )
-      }
-
       const candidates = await this.buildReprocessCandidates(selectedArtists)
       if (candidates.length === 0) {
         await this.db

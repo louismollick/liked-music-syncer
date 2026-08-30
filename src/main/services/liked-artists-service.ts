@@ -6,6 +6,7 @@ import type {
 } from '@shared/contracts'
 import { asc, eq } from 'drizzle-orm'
 import { parseArtistCreditsJson } from '../../shared/artist-credit'
+import type { AuthCoordinator } from '../auth/auth-coordinator'
 import type { AppDatabase } from '../db/database'
 import {
   libraryTrackArtistsTable,
@@ -75,6 +76,8 @@ export class LikedArtistsService {
     (update: ArtistPhotoUpdate) => void
   >()
   private imageRefreshJob: Promise<CommandResult> | null = null
+  private imageCacheQueue: Promise<void> = Promise.resolve()
+  private authCoordinator: AuthCoordinator | null = null
 
   constructor(
     private readonly db: AppDatabase,
@@ -86,6 +89,10 @@ export class LikedArtistsService {
   subscribeArtistPhotoUpdates(listener: (update: ArtistPhotoUpdate) => void) {
     this.photoUpdateListeners.add(listener)
     return () => this.photoUpdateListeners.delete(listener)
+  }
+
+  setAuthCoordinator(authCoordinator: AuthCoordinator) {
+    this.authCoordinator = authCoordinator
   }
 
   private emitArtistPhotoUpdate(update: ArtistPhotoUpdate) {
@@ -312,10 +319,15 @@ export class LikedArtistsService {
 
     const persistedArtistIdByKey = new Map<string, string>()
     for (const [artistKey, artist] of localArtistsByName) {
+      const legacyMatches = existingRows.filter(
+        (row) =>
+          row.channelId == null && row.normalizedName === artist.normalizedName
+      )
+      const legacyMatch = legacyMatches.length === 1 ? legacyMatches[0] : null
       const existing =
         existingById.get(artist.id) ??
         (artist.channelId
-          ? existingByChannelId.get(artist.channelId)
+          ? (existingByChannelId.get(artist.channelId) ?? legacyMatch)
           : existingByNormalizedName.get(artist.normalizedName))
       const persistedId = artist.id
       persistedArtistIdByKey.set(artistKey, persistedId)
@@ -404,7 +416,11 @@ export class LikedArtistsService {
       return this.imageRefreshJob
     }
 
-    const job = this.runArtistImageRefresh()
+    const job = this.imageCacheQueue.then(() => this.runArtistImageRefresh())
+    this.imageCacheQueue = job.then(
+      () => undefined,
+      () => undefined
+    )
     this.imageRefreshJob = job
     try {
       return await job
@@ -417,19 +433,25 @@ export class LikedArtistsService {
     if (!this.artistPhotoCache) {
       return { ok: false, message: 'Artist image cache is unavailable.' }
     }
-    await this.imageRefreshJob?.catch(() => undefined)
-    const artists = await this.db.select().from(likedArtistsTable)
-    const clearedArtists = artists.filter((artist) => artist.photoUrl).length
-    await this.db.update(likedArtistsTable).set({
-      photoUrl: null,
-      updatedAt: nowIso(),
+    const clear = this.imageCacheQueue.then(async () => {
+      const artists = await this.db.select().from(likedArtistsTable)
+      const clearedArtists = artists.filter((artist) => artist.photoUrl).length
+      await this.db.update(likedArtistsTable).set({
+        photoUrl: null,
+        updatedAt: nowIso(),
+      })
+      const clearedFiles = await this.artistPhotoCache!.clear()
+      return {
+        ok: true,
+        message: 'Artist image cache cleared.',
+        details: JSON.stringify({ clearedArtists, clearedFiles }),
+      }
     })
-    const clearedFiles = await this.artistPhotoCache.clear()
-    return {
-      ok: true,
-      message: 'Artist image cache cleared.',
-      details: JSON.stringify({ clearedArtists, clearedFiles }),
-    }
+    this.imageCacheQueue = clear.then(
+      () => undefined,
+      () => undefined
+    )
+    return clear
   }
 
   private async runArtistImageRefresh(): Promise<CommandResult> {
@@ -502,7 +524,7 @@ export class LikedArtistsService {
     })
 
     const settings = await settingsService.getRuntimeSettings()
-    if (!settings.ytmusicBrowserAuth) {
+    if (!settings.ytmusicBrowserAuth && !this.authCoordinator) {
       logMain({
         level: 'warn',
         source: 'liked-artists',
@@ -515,33 +537,41 @@ export class LikedArtistsService {
       }
     }
 
-    const authResult =
-      await pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        {
-          browser_auth_input: settings.ytmusicBrowserAuth,
+    let browserAuthInput: string
+    try {
+      if (this.authCoordinator) {
+        browserAuthInput = await this.authCoordinator.getValidatedCredential()
+      } else {
+        const authResult =
+          await pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+            'auth-status',
+            { browser_auth_input: settings.ytmusicBrowserAuth }
+          )
+        if (!authResult.ok || !authResult.is_authenticated) {
+          throw new Error(authResult.message || 'YT Music auth check failed.')
         }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
+        browserAuthInput =
+          authResult.credential_json ?? settings.ytmusicBrowserAuth
+        if (authResult.credential_json) {
+          await settingsService.saveYtMusicBrowserAuth(
+            authResult.credential_json
+          )
+        }
+      }
+    } catch (error) {
       logMain({
         level: 'warn',
         source: 'liked-artists',
         message: 'Artist image refresh blocked (auth check failed)',
         context: {
           missingPhotoCount: artists.length,
-          authMessage: authResult.message,
+          authMessage: error instanceof Error ? error.message : String(error),
         },
       })
       return {
         ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
+        message: error instanceof Error ? error.message : String(error),
       }
-    }
-
-    const browserAuthInput =
-      authResult.credential_json ?? settings.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await settingsService.saveYtMusicBrowserAuth(authResult.credential_json)
     }
 
     const stats = { fetched: 0, notFound: 0, failed: 0 }

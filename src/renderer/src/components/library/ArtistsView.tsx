@@ -60,11 +60,21 @@ export function ArtistsView({
     }
     lastImageRefreshKey.current = candidateKey
 
-    void window.api.library.refreshArtistImages().catch((error: unknown) => {
-      console.error('[artist-image] refresh failed', {
-        error: error instanceof Error ? error.message : String(error),
+    void window.api.library
+      .refreshArtistImages()
+      .then((result) => {
+        if (!result.ok && lastImageRefreshKey.current === candidateKey) {
+          lastImageRefreshKey.current = null
+        }
       })
-    })
+      .catch((error: unknown) => {
+        if (lastImageRefreshKey.current === candidateKey) {
+          lastImageRefreshKey.current = null
+        }
+        console.error('[artist-image] refresh failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
   }, [artists, authStatus.isAuthenticated, isActive])
 
   const toggleFavorite = (artist: LikedArtistView) => {

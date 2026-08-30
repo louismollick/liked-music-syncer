@@ -45,7 +45,9 @@ def _custom_browser_profile(browser_name: str) -> Path | None:
     return profiles.get(browser_name)
 
 
-def _extract_browser_cookies(browser_name: str) -> tuple[CookieJar, tuple[str, ...]]:
+def _extract_browser_cookies(
+    browser_name: str, profile_name: str | None = None
+) -> tuple[CookieJar, tuple[str, ...]]:
     normalized = browser_name.strip().lower()
     profile = _custom_browser_profile(normalized)
     if normalized == "zen":
@@ -68,6 +70,11 @@ def _extract_browser_cookies(browser_name: str) -> tuple[CookieJar, tuple[str, .
             "Could not decrypt YouTube Music cookies from Helium. "
             "Make sure you are signed in at music.youtube.com and fully quit Helium. "
             f"Tried compatible Chromium keychains ({'; '.join(errors)})."
+        )
+    if profile_name:
+        return extract_cookies_from_browser(normalized, profile=profile_name), (
+            normalized,
+            profile_name,
         )
     return extract_cookies_from_browser(normalized), (normalized,)
 
@@ -239,9 +246,15 @@ def check_browser_auth_status(browser_auth_input: str) -> AuthStatusResult:
         )
 
 
-def capture_browser_auth_from_browser(browser_name: str) -> AuthStatusResult:
+def capture_browser_auth_from_browser(
+    browser_name: str, profile_name: str | None = None
+) -> AuthStatusResult:
     try:
-        cookie_jar, _ = _extract_browser_cookies(browser_name)
+        cookie_jar, _ = (
+            _extract_browser_cookies(browser_name, profile_name)
+            if profile_name
+            else _extract_browser_cookies(browser_name)
+        )
         cookie_header = _get_cookie_header(cookie_jar, YTMUSIC_ORIGIN)
 
         def probe(auth_user: int) -> tuple[int, str, dict[str, str | None]] | Exception:

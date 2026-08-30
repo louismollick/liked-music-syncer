@@ -6,7 +6,7 @@ export interface ArtistCredit {
 function normalizeArtistName(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[^\w\s]+/g, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}_\s]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }

@@ -3,9 +3,12 @@ import { useNavigate, useRouterState } from '@tanstack/react-router'
 import type { JSX, ReactNode } from 'react'
 import { useState } from 'react'
 import { type LibraryTab, libraryTabSchema } from '../../routes/library'
-import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar'
+import {
+  AccountAvatar,
+  AccountCount,
+  AccountIdentity,
+} from '../auth/AccountIdentity'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
-import { Spinner } from '../ui/spinner'
 
 type SectionKey = 'library'
 
@@ -21,42 +24,6 @@ interface Props {
   onLoadAccountCounts: () => Promise<void>
   switchingAccountKey: string | null
   accountSwitchError: string | null
-}
-
-function AccountAvatar({
-  account,
-}: {
-  account: NonNullable<AuthSessionView['activeAccount']>
-}) {
-  return (
-    <Avatar className="size-10 rounded-lg after:rounded-lg">
-      {account.imageUrl ? (
-        <AvatarImage src={account.imageUrl} className="rounded-lg" />
-      ) : null}
-      <AvatarFallback className="rounded-lg">
-        {account.displayName.slice(0, 2).toUpperCase()}
-      </AvatarFallback>
-    </Avatar>
-  )
-}
-
-function AccountCount({
-  account,
-}: {
-  account: AuthSessionView['accounts'][number]
-}) {
-  if (account.likedSongCountState === 'loading') return <Spinner />
-  if (
-    account.likedSongCountState !== 'loaded' ||
-    account.likedSongCount == null
-  )
-    return null
-  return (
-    <span className="text-xs text-text-muted">
-      {account.likedSongCount.toLocaleString()} liked{' '}
-      {account.likedSongCount === 1 ? 'song' : 'songs'}
-    </span>
-  )
 }
 
 function loadExpanded(): Set<SectionKey> {
@@ -216,6 +183,9 @@ export function Sidebar({
   }
 
   const isLibraryActive = location.pathname === '/library'
+  const selectedSource = authSession.sources.find(
+    (source) => source.id === authSession.selectedSourceId
+  )
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-primary border-r border-border flex flex-col h-screen">
@@ -274,7 +244,12 @@ export function Sidebar({
         <NavItem
           label="Settings"
           active={location.pathname === '/settings'}
-          onClick={() => void navigate({ to: '/settings' })}
+          onClick={() =>
+            void navigate({
+              to: '/settings',
+              search: { detectAuth: undefined },
+            })
+          }
           icon={
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z" />
@@ -290,7 +265,9 @@ export function Sidebar({
             className="size-10 animate-pulse rounded-lg bg-surface-tertiary"
             aria-label="Checking YouTube Music account"
           />
-        ) : authSession.state === 'signed_in' && authSession.activeAccount ? (
+        ) : (authSession.state === 'signed_in' ||
+            authSession.state === 'loading') &&
+          authSession.activeAccount ? (
           <Popover
             open={profileOpen}
             onOpenChange={(open) => {
@@ -307,7 +284,10 @@ export function Sidebar({
                 />
               }
             >
-              <AccountAvatar account={authSession.activeAccount} />
+              <AccountAvatar
+                account={authSession.activeAccount}
+                className="size-10"
+              />
             </PopoverTrigger>
             <PopoverContent
               side="top"
@@ -315,6 +295,14 @@ export function Sidebar({
               sideOffset={-40}
               className="w-64 gap-1 p-1.5"
             >
+              {selectedSource ? (
+                <p className="px-2 py-1 text-xs text-text-muted">
+                  {selectedSource.browserName}
+                  {selectedSource.profileName
+                    ? ` (${selectedSource.profileName})`
+                    : ''}
+                </p>
+              ) : null}
               {authSession.accounts
                 .filter(
                   (account) => account.key !== authSession.selectedAccountKey
@@ -331,17 +319,11 @@ export function Sidebar({
                     }}
                     className="flex w-full items-center gap-2 rounded-md p-2 text-left hover:bg-surface-tertiary disabled:opacity-60"
                   >
-                    <AccountAvatar account={account} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-text-primary">
-                        {account.displayName}
-                      </span>
-                      <span className="block truncate text-xs text-text-muted">
-                        {account.handle ?? 'YouTube Music'}
-                      </span>
-                      <AccountCount account={account} />
-                    </span>
-                    {switchingAccountKey === account.key ? <Spinner /> : null}
+                    <AccountIdentity
+                      account={account}
+                      avatarClassName="size-10"
+                      switching={switchingAccountKey === account.key}
+                    />
                   </button>
                 ))}
               {accountSwitchError ? (
@@ -363,7 +345,15 @@ export function Sidebar({
         ) : (
           <button
             type="button"
-            onClick={() => void navigate({ to: '/settings' })}
+            onClick={() =>
+              void navigate({
+                to: '/settings',
+                search: {
+                  detectAuth:
+                    authSession.state === 'signed_out' ? true : undefined,
+                },
+              })
+            }
             className="w-full rounded-lg px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary"
           >
             {authSession.state === 'signed_out' ? 'Sign In' : 'Auth Issue'}

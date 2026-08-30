@@ -222,6 +222,62 @@ def test_capture_browser_auth_from_browser_validates_before_returning(monkeypatc
     assert len(result.accounts) == 1
 
 
+def test_capture_uses_the_resolved_browser_profile(monkeypatch) -> None:
+    jar = CookieJar()
+    jar.set_cookie(
+        Cookie(
+            version=0,
+            name="__Secure-3PAPISID",
+            value="secure-cookie",
+            port=None,
+            port_specified=False,
+            domain=".youtube.com",
+            domain_specified=True,
+            domain_initial_dot=True,
+            path="/",
+            path_specified=True,
+            secure=True,
+            expires=None,
+            discard=True,
+            comment=None,
+            comment_url=None,
+            rest={},
+            rfc2109=False,
+        )
+    )
+    extracted: list[tuple[str, str | None]] = []
+
+    def extract(browser: str, profile: str | None = None):
+        extracted.append((browser, profile))
+        return jar
+
+    monkeypatch.setattr(auth_module, "extract_cookies_from_browser", extract)
+    monkeypatch.setattr(
+        auth_module,
+        "_create_validated_browser_auth_client",
+        lambda raw: (
+            raw,
+            type(
+                "Client",
+                (),
+                {
+                    "get_account_info": lambda self: {
+                        "accountName": "Listener",
+                        "channelHandle": "@listener",
+                    }
+                },
+            )(),
+        ),
+    )
+
+    result = auth_module.capture_browser_auth_from_browser(
+        "chrome", "Profile 2"
+    )
+
+    assert result.ok is True
+    assert extracted == [("chrome", "Profile 2")]
+
+
 def test_capture_probes_all_five_slots_across_gaps_and_deduplicates(monkeypatch) -> None:
     jar = CookieJar()
     jar.set_cookie(

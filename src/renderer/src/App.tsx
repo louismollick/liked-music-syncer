@@ -42,6 +42,7 @@ interface AppStateValue {
   settings: ReturnType<typeof useSettings>['settings']
   setSettings: ReturnType<typeof useSettings>['setSettings']
   updateSettings: ReturnType<typeof useSettings>['update']
+  flushSettings: ReturnType<typeof useSettings>['flush']
   authSession: AuthSessionView
   refreshAuth: ReturnType<typeof useAuthSession>['refresh']
   selectAuthSource: ReturnType<typeof useAuthSession>['selectSource']
@@ -109,7 +110,7 @@ export function AppShell(): JSX.Element {
     refreshing: tracksRefreshing,
   } = useTracks()
   const snapshot = useSyncSnapshot()
-  const { settings, setSettings, update } = useSettings()
+  const { settings, setSettings, update, flush } = useSettings()
   const auth = useAuthSession()
   const authStatus = useMemo<AuthStatus>(
     () => ({
@@ -177,6 +178,7 @@ export function AppShell(): JSX.Element {
       settings,
       setSettings,
       updateSettings: update,
+      flushSettings: flush,
       authSession: auth.session,
       refreshAuth: auth.refresh,
       selectAuthSource: auth.selectSource,
@@ -197,6 +199,7 @@ export function AppShell(): JSX.Element {
       settings,
       setSettings,
       update,
+      flush,
       auth.session,
       auth.refresh,
       auth.selectSource,

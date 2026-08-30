@@ -137,9 +137,27 @@ app.whenReady().then(async () => {
   const authCoordinator = new AuthCoordinator(
     settingsService,
     pythonWorkerService,
-    () => syncService.hasQueuedOrRunningJobs()
+    () => syncService.hasQueuedOrRunningJobs(),
+    async () => {
+      if (process.platform !== 'darwin') return null
+      try {
+        return (
+          await app.getApplicationInfoForProtocol('https://music.youtube.com')
+        ).path
+      } catch {
+        return null
+      }
+    }
   )
+  syncService.setAuthCoordinator(authCoordinator)
+  likedArtistsService.setAuthCoordinator(authCoordinator)
   await syncService.recoverInterruptedJobs()
+  authCoordinator.setSwitchingDisabled(
+    await syncService.hasQueuedOrRunningJobs()
+  )
+  syncService.subscribe((snapshot) => {
+    authCoordinator.setSwitchingDisabled(snapshot.counts.inProgress > 0)
+  })
 
   createWindow()
   registerIpcHandlers(
@@ -157,49 +175,60 @@ app.whenReady().then(async () => {
     if (mainWindow && !mainWindow.isDestroyed())
       mainWindow.webContents.send('auth:snapshot', snapshot)
   })
-  void authCoordinator.bootstrap()
-  void libraryService.reconcileLocalLibrary().then(async (result) => {
-    if (!result.ok) {
-      logMain({
-        level: 'error',
-        source: 'startup',
-        message: 'Startup library reconcile failed',
-        context: { error: result.message },
-      })
-      return
-    }
-    await likedArtistsService.refreshArtists()
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('library:artistsUpdated')
-    }
-    void likedArtistsService
-      .refreshArtistImages()
-      .then((result) => {
-        logMain({
-          level: result.ok ? 'info' : 'warn',
-          source: 'startup',
-          message: 'Startup artist image refresh complete',
-          context: {
-            ok: result.ok,
-            message: result.message,
-            details: result.details ?? null,
-          },
-        })
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('library:artistsUpdated')
-        }
-      })
-      .catch((error) => {
+  const authBootstrap = authCoordinator.bootstrap().catch((error) => {
+    logMain({
+      level: 'error',
+      source: 'startup',
+      message: 'Authentication bootstrap failed',
+      context: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    })
+  })
+  void authBootstrap
+    .then(() => libraryService.reconcileLocalLibrary())
+    .then(async (result) => {
+      if (!result.ok) {
         logMain({
           level: 'error',
           source: 'startup',
-          message: 'Startup artist image refresh failed',
-          context: {
-            error: error instanceof Error ? error.message : String(error),
-          },
+          message: 'Startup library reconcile failed',
+          context: { error: result.message },
         })
-      })
-  })
+        return
+      }
+      await likedArtistsService.refreshArtists()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('library:artistsUpdated')
+      }
+      void likedArtistsService
+        .refreshArtistImages()
+        .then((result) => {
+          logMain({
+            level: result.ok ? 'info' : 'warn',
+            source: 'startup',
+            message: 'Startup artist image refresh complete',
+            context: {
+              ok: result.ok,
+              message: result.message,
+              details: result.details ?? null,
+            },
+          })
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('library:artistsUpdated')
+          }
+        })
+        .catch((error) => {
+          logMain({
+            level: 'error',
+            source: 'startup',
+            message: 'Startup artist image refresh failed',
+            context: {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
+        })
+    })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

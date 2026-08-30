@@ -118,19 +118,33 @@ export async function discoverInstalledBrowsers(): Promise<
   InstalledAuthSource[]
 > {
   if (process.platform !== 'darwin') return []
+  const bundleIds = BROWSER_REGISTRY.flatMap(
+    (definition) => definition.bundleIds
+  )
+  let applicationPaths: Record<string, string | null> = {}
+  try {
+    const script = `
+ObjC.import('AppKit')
+const bundleIds = ${JSON.stringify(bundleIds)}
+JSON.stringify(Object.fromEntries(bundleIds.map((bundleId) => {
+  const appPath = $.NSWorkspace.sharedWorkspace.absolutePathForAppBundleWithIdentifier(bundleId)
+  return [bundleId, appPath ? ObjC.unwrap(appPath) : null]
+})))`
+    const { stdout } = await execFileAsync(
+      '/usr/bin/osascript',
+      ['-l', 'JavaScript', '-e', script],
+      { timeout: 5_000 }
+    )
+    applicationPaths = JSON.parse(stdout) as Record<string, string | null>
+  } catch {
+    return []
+  }
   const found: InstalledAuthSource[] = []
   for (const definition of BROWSER_REGISTRY) {
-    let applicationPath: string | null = null
-    for (const bundleId of definition.bundleIds) {
-      try {
-        const { stdout } = await execFileAsync('/usr/bin/mdfind', [
-          `kMDItemCFBundleIdentifier == "${bundleId}"`,
-        ])
-        applicationPath =
-          stdout.split('\n').find((item) => item.endsWith('.app')) ?? null
-      } catch {}
-      if (applicationPath) break
-    }
+    const applicationPath =
+      definition.bundleIds
+        .map((bundleId) => applicationPaths[bundleId])
+        .find((item): item is string => Boolean(item)) ?? null
     if (!applicationPath) continue
     try {
       await access(applicationPath)
