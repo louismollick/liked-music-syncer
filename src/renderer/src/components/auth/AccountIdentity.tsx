@@ -12,8 +12,11 @@ export function AccountAvatar({
 }): JSX.Element {
   return (
     <Avatar className={`${className} rounded-lg after:rounded-lg`}>
-      {account.imageUrl ? (
-        <AvatarImage src={account.imageUrl} className="rounded-lg" />
+      {account.cachedImageUrl || account.imageUrl ? (
+        <AvatarImage
+          src={account.cachedImageUrl ?? account.imageUrl ?? undefined}
+          className="rounded-lg"
+        />
       ) : null}
       <AvatarFallback className="rounded-lg">
         {account.displayName.slice(0, 2).toUpperCase()}
@@ -27,7 +30,20 @@ export function AccountCount({
 }: {
   account: YouTubeMusicAccountView
 }): JSX.Element | null {
-  if (account.likedSongCountState === 'loading') return <Spinner />
+  if (account.likedSongCountState === 'loading')
+    return (
+      <span
+        role="status"
+        aria-label="Loading liked song count"
+        className="block text-xs text-text-muted"
+      >
+        <span
+          aria-hidden="true"
+          className="mr-1 inline-block h-2.5 w-5 animate-pulse rounded-sm bg-surface-tertiary align-middle"
+        />
+        liked songs
+      </span>
+    )
   if (
     account.likedSongCountState !== 'loaded' ||
     account.likedSongCount == null

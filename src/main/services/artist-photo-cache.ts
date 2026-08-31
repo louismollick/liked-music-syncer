@@ -7,6 +7,7 @@ import { buildArtistPhotoMediaUrl } from './artwork-protocol'
 const ARTIST_PHOTO_MAX_EDGE = 512
 
 type DownloadPhoto = (remoteUrl: string) => Promise<Buffer>
+type BuildMediaUrl = (cacheFileName: string) => string
 
 export function artistPhotoCacheFileName(remoteUrl: string): string {
   return `${createHash('sha256').update(`artist-photo|${remoteUrl}`).digest('hex')}.jpg`
@@ -48,7 +49,8 @@ export class ArtistPhotoCache {
 
   constructor(
     private readonly cacheDirectory: string,
-    private readonly downloadPhoto: DownloadPhoto = downloadPhotoAsJpeg
+    private readonly downloadPhoto: DownloadPhoto = downloadPhotoAsJpeg,
+    private readonly buildMediaUrl: BuildMediaUrl = buildArtistPhotoMediaUrl
   ) {
     fs.mkdirSync(this.cacheDirectory, { recursive: true })
   }
@@ -56,7 +58,7 @@ export class ArtistPhotoCache {
   resolvePhotoUrl(remoteUrl: string): string {
     const fileName = artistPhotoCacheFileName(remoteUrl)
     return fs.existsSync(path.join(this.cacheDirectory, fileName))
-      ? buildArtistPhotoMediaUrl(fileName)
+      ? this.buildMediaUrl(fileName)
       : remoteUrl
   }
 
@@ -101,6 +103,6 @@ export class ArtistPhotoCache {
     } finally {
       await fs.promises.unlink(temporaryPath).catch(() => undefined)
     }
-    return buildArtistPhotoMediaUrl(fileName)
+    return this.buildMediaUrl(fileName)
   }
 }

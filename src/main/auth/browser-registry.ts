@@ -20,6 +20,9 @@ interface BrowserDefinition {
   cookieBackend: string
 }
 
+// Only list browsers whose authenticated cookies the worker can read reliably.
+// Helium is intentionally omitted: it stores Chromium cookies that yt-dlp can
+// locate but cannot decrypt, so presenting it would misreport that as sign-out.
 export const BROWSER_REGISTRY: BrowserDefinition[] = [
   {
     id: 'chrome',
@@ -69,22 +72,12 @@ export const BROWSER_REGISTRY: BrowserDefinition[] = [
     browserName: 'Zen',
     cookieBackend: 'zen',
   },
-  {
-    id: 'helium',
-    bundleIds: ['net.imput.helium'],
-    browserName: 'Helium',
-    cookieBackend: 'helium',
-  },
 ]
 
 async function profileName(
   source: InstalledAuthSource
 ): Promise<string | null> {
-  if (
-    !['chrome', 'brave', 'edge', 'vivaldi', 'opera', 'helium'].includes(
-      source.id
-    )
-  )
+  if (!['chrome', 'brave', 'edge', 'vivaldi', 'opera'].includes(source.id))
     return null
   const roots: Record<string, string> = {
     chrome: 'Google/Chrome',
@@ -92,7 +85,6 @@ async function profileName(
     edge: 'Microsoft Edge',
     vivaldi: 'Vivaldi',
     opera: 'com.operasoftware.Opera',
-    helium: 'net.imput.helium',
   }
   try {
     const state = JSON.parse(

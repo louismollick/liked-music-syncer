@@ -7,6 +7,7 @@ import { createDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc'
 import { ArtistPhotoCache } from './services/artist-photo-cache'
 import {
+  buildAccountImageMediaUrl,
   registerArtworkProtocol,
   registerArtworkSchemePrivileges,
 } from './services/artwork-protocol'
@@ -104,13 +105,26 @@ app.whenReady().then(async () => {
     app.getPath('userData'),
     'artist-photo-cache'
   )
+  const accountImageCacheDirectory = path.join(
+    app.getPath('userData'),
+    'account-image-cache'
+  )
   const artworkService = new ArtworkService(
     db,
     pythonWorkerService,
     artworkCacheDirectory
   )
   const artistPhotoCache = new ArtistPhotoCache(artistPhotoCacheDirectory)
-  registerArtworkProtocol(artworkCacheDirectory, artistPhotoCacheDirectory)
+  const accountImageCache = new ArtistPhotoCache(
+    accountImageCacheDirectory,
+    undefined,
+    buildAccountImageMediaUrl
+  )
+  registerArtworkProtocol(
+    artworkCacheDirectory,
+    artistPhotoCacheDirectory,
+    accountImageCacheDirectory
+  )
   const libraryService = new LibraryService(
     db,
     settingsService,
@@ -147,7 +161,8 @@ app.whenReady().then(async () => {
       } catch {
         return null
       }
-    }
+    },
+    accountImageCache
   )
   syncService.setAuthCoordinator(authCoordinator)
   likedArtistsService.setAuthCoordinator(authCoordinator)

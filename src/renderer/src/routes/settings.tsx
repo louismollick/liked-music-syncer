@@ -6,6 +6,7 @@ import {
 import type { JSX } from 'react'
 import { useEffect } from 'react'
 import { useAppState } from '../App'
+import { refreshBrowserPicker } from '../auth/refreshBrowserPicker'
 import { SettingsView } from '../components/settings/SettingsView'
 import { rootRoute } from './root'
 
@@ -36,6 +37,11 @@ export function SettingsRouteComponent(): JSX.Element {
     runAction,
     showMessage,
   } = useAppState()
+  const browserPickerOpen = location.search.browserPicker === true
+
+  useEffect(() => {
+    void refreshBrowserPicker(browserPickerOpen, refreshAuth, showMessage)
+  }, [browserPickerOpen, refreshAuth, showMessage])
 
   useEffect(() => {
     if (
@@ -60,7 +66,7 @@ export function SettingsRouteComponent(): JSX.Element {
     <SettingsView
       settings={settings}
       authSession={authSession}
-      browserPickerOpen={location.search.browserPicker === true}
+      browserPickerOpen={browserPickerOpen}
       onBrowserPickerOpenChange={(open) => {
         void navigate({
           to: '/settings',
@@ -80,11 +86,6 @@ export function SettingsRouteComponent(): JSX.Element {
         void flushSettings(keys).then((result) => {
           if (!result.ok) showMessage(result.message)
         })
-      }}
-      onDiscoverAuthSources={() => {
-        void refreshAuth('all', 'picker_opened').catch((error) =>
-          showMessage(error instanceof Error ? error.message : String(error))
-        )
       }}
       onSelectSource={(id) => {
         void selectAuthSource(id).catch((error) =>

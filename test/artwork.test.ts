@@ -24,8 +24,10 @@ import {
 } from '../src/main/db/schema'
 import {
   ARTWORK_FILENAME_PATTERN,
+  buildAccountImageMediaUrl,
   buildArtistPhotoMediaUrl,
   buildArtworkMediaUrl,
+  resolveAccountImageCacheFileName,
   resolveArtistPhotoCacheFileName,
   resolveArtworkCacheFileName,
 } from '../src/main/services/artwork-protocol'
@@ -116,6 +118,14 @@ describe('app-media protocol path validation', () => {
     const fileName = `${'a'.repeat(64)}.jpg`
     const url = buildArtistPhotoMediaUrl(fileName)
     expect(resolveArtistPhotoCacheFileName(url, cacheDir)).toBe(fileName)
+    expect(resolveArtworkCacheFileName(url, cacheDir)).toBeNull()
+  })
+
+  it('keeps account images in their own media cache host', () => {
+    const fileName = `${'b'.repeat(64)}.jpg`
+    const url = buildAccountImageMediaUrl(fileName)
+    expect(resolveAccountImageCacheFileName(url, cacheDir)).toBe(fileName)
+    expect(resolveArtistPhotoCacheFileName(url, cacheDir)).toBeNull()
     expect(resolveArtworkCacheFileName(url, cacheDir)).toBeNull()
   })
 })

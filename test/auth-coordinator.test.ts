@@ -2,6 +2,193 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthCoordinator } from '../src/main/auth/auth-coordinator'
 
 describe('AuthCoordinator', () => {
+  it('preserves a loaded song count when account discovery refreshes the account', () => {
+    const coordinator = new AuthCoordinator(
+      {} as never,
+      {} as never,
+      async () => false
+    )
+    const internal = coordinator as unknown as {
+      snapshot: ReturnType<AuthCoordinator['getSnapshot']>
+      accountsFromResult: (
+        id: string,
+        result: unknown,
+        publish: boolean
+      ) => ReturnType<AuthCoordinator['getSnapshot']>['accounts']
+    }
+    const result = {
+      ok: true,
+      is_authenticated: true,
+      message: 'ok',
+      credential_json: 'credential',
+      accounts: [
+        {
+          display_name: 'Listener',
+          handle: '@listener',
+          auth_user: 0,
+          credential_json: 'credential',
+        },
+      ],
+    }
+    const [account] = internal.accountsFromResult('chrome', result, false)
+    internal.snapshot = {
+      ...coordinator.getSnapshot(),
+      activeAccount: {
+        ...account!,
+        likedSongCount: 321,
+        likedSongCountState: 'loaded',
+      },
+      accounts: [
+        {
+          ...account!,
+          likedSongCount: 321,
+          likedSongCountState: 'loaded',
+        },
+      ],
+    }
+
+    internal.accountsFromResult('chrome', result, true)
+
+    expect(coordinator.getSnapshot().accounts[0]).toMatchObject({
+      likedSongCount: 321,
+      likedSongCountState: 'loaded',
+    })
+  })
+
+  it('marks accounts incomplete while switching to another auth source', async () => {
+    const rememberedAccount = {
+      key: 'remembered',
+      displayName: 'Remembered',
+      handle: '@remembered',
+      imageUrl: null,
+      cachedImageUrl: null,
+      likedSongCount: null,
+      likedSongCountState: 'unrequested' as const,
+    }
+    const settings = {
+      setSelectedAuthSource: vi.fn(async () => undefined),
+      getRememberedAuthAccount: vi.fn(async () => rememberedAccount),
+    }
+    const worker = {
+      runJsonCommand: vi.fn(() => new Promise(() => undefined)),
+    }
+    const coordinator = new AuthCoordinator(
+      settings as never,
+      worker as never,
+      async () => false
+    )
+    const source = {
+      id: 'safari',
+      browserName: 'Safari',
+      applicationPath: '/Applications/Safari.app',
+      profileName: null,
+      cookieBackend: 'safari',
+    }
+    const internal = coordinator as unknown as {
+      sources: Map<string, typeof source>
+      rows: Map<string, unknown>
+      snapshot: { selectedSourceId: string; accountsComplete: boolean }
+      row: (source: typeof source) => unknown
+    }
+    internal.sources.set(source.id, source)
+    internal.rows.set(source.id, internal.row(source))
+    internal.snapshot.selectedSourceId = 'chrome'
+    internal.snapshot.accountsComplete = true
+
+    void coordinator.selectSource(source.id)
+    await vi.waitFor(() => {
+      expect(worker.runJsonCommand).toHaveBeenCalled()
+    })
+
+    expect(coordinator.getSnapshot().accountsComplete).toBe(false)
+  })
+
+  it('uses a persisted local account image when one is cached', () => {
+    const remoteUrl = 'https://example.test/avatar.jpg'
+    const accountImageCache = {
+      resolvePhotoUrl: vi.fn(() => 'app-media://account-image/cached.jpg'),
+      cacheRemotePhoto: vi.fn(),
+    }
+    const coordinator = new AuthCoordinator(
+      {} as never,
+      {} as never,
+      async () => false,
+      async () => null,
+      accountImageCache as never
+    )
+    const internal = coordinator as unknown as {
+      accountsFromResult: (
+        id: string,
+        result: unknown,
+        publish: boolean
+      ) => Array<{ cachedImageUrl: string | null }>
+    }
+
+    const accounts = internal.accountsFromResult(
+      'chrome',
+      {
+        ok: true,
+        is_authenticated: true,
+        message: 'ok',
+        credential_json: '{}',
+        account: {
+          display_name: 'Listener',
+          handle: '@listener',
+          image_url: remoteUrl,
+        },
+      },
+      false
+    )
+
+    expect(accountImageCache.resolvePhotoUrl).toHaveBeenCalledWith(remoteUrl)
+    expect(accounts[0]?.cachedImageUrl).toBe(
+      'app-media://account-image/cached.jpg'
+    )
+  })
+
+  it('publishes a local account image after caching the remote image', async () => {
+    const accountImageCache = {
+      resolvePhotoUrl: vi.fn((url: string) => url),
+      cacheRemotePhoto: vi.fn(async () => 'app-media://account-image/new.jpg'),
+    }
+    const coordinator = new AuthCoordinator(
+      {} as never,
+      {} as never,
+      async () => false,
+      async () => null,
+      accountImageCache as never
+    )
+    const internal = coordinator as unknown as {
+      accountsFromResult: (
+        id: string,
+        result: unknown,
+        publish: boolean
+      ) => unknown
+    }
+
+    internal.accountsFromResult(
+      'chrome',
+      {
+        ok: true,
+        is_authenticated: true,
+        message: 'ok',
+        credential_json: '{}',
+        account: {
+          display_name: 'Listener',
+          handle: '@listener',
+          image_url: 'https://example.test/avatar.jpg',
+        },
+      },
+      true
+    )
+
+    await vi.waitFor(() => {
+      expect(coordinator.getSnapshot().accounts[0]?.cachedImageUrl).toBe(
+        'app-media://account-image/new.jpg'
+      )
+    })
+  })
+
   it('checks only unchecked sources when the browser picker opens', async () => {
     const worker = {
       runJsonCommand: vi.fn(async () => ({

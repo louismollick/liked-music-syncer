@@ -9,6 +9,7 @@ import type {
   AuthSourceView,
   YouTubeMusicAccountView,
 } from '@shared/contracts'
+import type { ArtistPhotoCache } from '../services/artist-photo-cache'
 import type { PythonWorkerService } from '../services/python-worker'
 import type { SettingsService } from '../services/settings-service'
 import {
@@ -109,7 +110,11 @@ export class AuthCoordinator {
     private worker: PythonWorkerService,
     private jobsBusy: () => Promise<boolean>,
     private preferredBrowserPath: () => Promise<string | null> = async () =>
-      null
+      null,
+    private accountImageCache?: Pick<
+      ArtistPhotoCache,
+      'resolvePhotoUrl' | 'cacheRemotePhoto'
+    >
   ) {}
   getSnapshot = () => this.snapshot
   subscribe(listener: Listener) {
@@ -361,6 +366,12 @@ export class AuthCoordinator {
     publishAccounts: boolean,
     accountsComplete = true
   ) {
+    const previousAccounts = new Map(
+      [
+        ...this.snapshot.accounts,
+        ...(this.snapshot.activeAccount ? [this.snapshot.activeAccount] : []),
+      ].map((account) => [account.key, account])
+    )
     const rawAccounts =
       result.accounts?.length && result.accounts
         ? result.accounts
@@ -375,19 +386,46 @@ export class AuthCoordinator {
           : []
     const accounts = rawAccounts.map((raw): YouTubeMusicAccountView => {
       const key = this.accountKey(id, raw)
+      const previousAccount = previousAccounts.get(key)
       this.credentialsByAccountKey.set(key, raw.credential_json)
+      const cachedImageUrl = raw.image_url
+        ? this.accountImageCache?.resolvePhotoUrl(raw.image_url)
+        : null
       return {
         key,
         displayName: raw.display_name || 'YouTube Music',
         handle: raw.handle ?? null,
         imageUrl: raw.image_url ?? null,
-        cachedImageUrl: null,
-        likedSongCount: null,
-        likedSongCountState: 'unrequested',
+        cachedImageUrl:
+          cachedImageUrl && cachedImageUrl !== raw.image_url
+            ? cachedImageUrl
+            : null,
+        likedSongCount: previousAccount?.likedSongCount ?? null,
+        likedSongCountState:
+          previousAccount?.likedSongCountState ?? 'unrequested',
       }
     })
     if (publishAccounts) this.publish({ accounts, accountsComplete })
+    for (const account of accounts) void this.cacheAccountImage(account)
     return accounts
+  }
+  private async cacheAccountImage(account: YouTubeMusicAccountView) {
+    if (!account.imageUrl || !this.accountImageCache) return
+    try {
+      const cachedImageUrl = await this.accountImageCache.cacheRemotePhoto(
+        account.imageUrl
+      )
+      const update = (item: YouTubeMusicAccountView) =>
+        item.key === account.key ? { ...item, cachedImageUrl } : item
+      this.publish({
+        accounts: this.snapshot.accounts.map(update),
+        activeAccount: this.snapshot.activeAccount
+          ? update(this.snapshot.activeAccount)
+          : null,
+      })
+    } catch {
+      // Keep using the remote URL. A later account refresh will try the cache again.
+    }
   }
   private async commitAccount(
     id: string,
@@ -425,6 +463,7 @@ export class AuthCoordinator {
       activeAccount: remembered,
       selectedAccountKey: remembered?.key ?? null,
       accounts: remembered ? [remembered] : [],
+      accountsComplete: false,
       state: 'loading',
       issue: null,
     })

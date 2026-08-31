@@ -1,7 +1,11 @@
-import type { AuthSessionView } from '@shared/contracts'
+import type {
+  AuthSessionView,
+  YouTubeMusicAccountView,
+} from '@shared/contracts'
 import { useNavigate, useRouterState } from '@tanstack/react-router'
+import { LogInIcon, TriangleAlertIcon } from 'lucide-react'
 import type { JSX, ReactNode } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { type LibraryTab, libraryTabSchema } from '../../routes/library'
 import { AccountDiscoveryStatus } from '../auth/AccountDiscoveryStatus'
 import {
@@ -25,6 +29,52 @@ interface Props {
   onLoadAccountCounts: () => Promise<void>
   switchingAccountKey: string | null
   accountSwitchError: string | null
+}
+
+export function SidebarAccountOptions({
+  accounts,
+  accountsComplete,
+  selectedAccountKey,
+  switchingAccountKey,
+  onSelectAccount,
+  onSelected,
+}: {
+  accounts: YouTubeMusicAccountView[]
+  accountsComplete: boolean
+  selectedAccountKey: string | null
+  switchingAccountKey: string | null
+  onSelectAccount: (key: string) => Promise<boolean>
+  onSelected: () => void
+}): JSX.Element {
+  return (
+    <div className="divide-y divide-border/70 border-b border-border/80 empty:border-b-0">
+      {!accountsComplete ? <AccountDiscoveryStatus /> : null}
+      {accountsComplete
+        ? accounts
+            .filter((account) => account.key !== selectedAccountKey)
+            .map((account) => (
+              <button
+                key={account.key}
+                type="button"
+                disabled={switchingAccountKey !== null}
+                onClick={() => {
+                  void onSelectAccount(account.key).then((ok) => {
+                    if (ok) onSelected()
+                  })
+                }}
+                className="flex w-full items-center rounded-md p-2 text-left transition-colors hover:bg-surface-tertiary disabled:opacity-60"
+              >
+                <AccountIdentity
+                  account={account}
+                  avatarClassName="size-10"
+                  showHandle={false}
+                  switching={switchingAccountKey === account.key}
+                />
+              </button>
+            ))
+        : null}
+    </div>
+  )
 }
 
 function loadExpanded(): Set<SectionKey> {
@@ -153,6 +203,9 @@ export function Sidebar({
 }: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<SectionKey>>(loadExpanded)
   const [profileOpen, setProfileOpen] = useState(false)
+  useEffect(() => {
+    if (profileOpen && authSession.accountsComplete) void onLoadAccountCounts()
+  }, [profileOpen, authSession.accountsComplete, onLoadAccountCounts])
   const navigate = useNavigate()
   const location = useRouterState({
     select: (state) => state.location,
@@ -273,21 +326,20 @@ export function Sidebar({
             open={profileOpen}
             onOpenChange={(open) => {
               setProfileOpen(open)
-              if (open) void onLoadAccountCounts()
             }}
           >
             <PopoverTrigger
               render={
                 <button
                   type="button"
-                  className="group relative z-[60] flex w-full px-3 py-3 outline-none"
+                  className="group pointer-events-none relative z-[60] flex w-full px-3 py-3 outline-none"
                   aria-label="Open YouTube Music account menu"
                 />
               }
             >
               <AccountAvatar
                 account={authSession.activeAccount}
-                className={`size-10 transition-shadow group-hover:ring-2 group-hover:ring-text-secondary/70 group-focus-visible:ring-2 group-focus-visible:ring-ring ${
+                className={`pointer-events-auto size-10 transition-shadow group-hover:ring-2 group-hover:ring-text-secondary/70 group-focus-visible:ring-2 group-focus-visible:ring-ring ${
                   profileOpen ? 'ring-2 ring-text-secondary/70' : ''
                 }`}
               />
@@ -320,35 +372,14 @@ export function Sidebar({
                     : ''}
                 </button>
               ) : null}
-              <div className="divide-y divide-border/70 border-b border-border/80 empty:border-b-0">
-                {!authSession.accountsComplete ? (
-                  <AccountDiscoveryStatus />
-                ) : null}
-                {authSession.accounts
-                  .filter(
-                    (account) => account.key !== authSession.selectedAccountKey
-                  )
-                  .map((account) => (
-                    <button
-                      key={account.key}
-                      type="button"
-                      disabled={switchingAccountKey !== null}
-                      onClick={() => {
-                        void onSelectAccount(account.key).then((ok) => {
-                          if (ok) setProfileOpen(false)
-                        })
-                      }}
-                      className="flex w-full items-center rounded-md p-2 text-left transition-colors hover:bg-surface-tertiary disabled:opacity-60"
-                    >
-                      <AccountIdentity
-                        account={account}
-                        avatarClassName="size-10"
-                        showHandle={false}
-                        switching={switchingAccountKey === account.key}
-                      />
-                    </button>
-                  ))}
-              </div>
+              <SidebarAccountOptions
+                accounts={authSession.accounts}
+                accountsComplete={authSession.accountsComplete}
+                selectedAccountKey={authSession.selectedAccountKey}
+                switchingAccountKey={switchingAccountKey}
+                onSelectAccount={onSelectAccount}
+                onSelected={() => setProfileOpen(false)}
+              />
               {accountSwitchError ? (
                 <p className="px-2 py-1 text-xs text-error">
                   {accountSwitchError}
@@ -375,8 +406,16 @@ export function Sidebar({
                 },
               })
             }
-            className="m-3 w-[calc(100%-1.5rem)] rounded-lg px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary"
+            className="m-3 flex w-[calc(100%-1.5rem)] items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary"
           >
+            {authSession.state === 'signed_out' ? (
+              <LogInIcon aria-hidden="true" className="size-4 flex-shrink-0" />
+            ) : (
+              <TriangleAlertIcon
+                aria-hidden="true"
+                className="size-4 flex-shrink-0"
+              />
+            )}
             {authSession.state === 'signed_out' ? 'Sign In' : 'Auth Issue'}
           </button>
         )}

@@ -329,11 +329,14 @@ def test_capture_probes_all_five_slots_across_gaps_and_deduplicates(monkeypatch)
     assert [account["auth_user"] for account in result.accounts] == [0, 2]
 
 
-def test_liked_song_count_reads_playlist_metadata(monkeypatch) -> None:
+def test_liked_song_count_counts_tracks_available_to_sync(monkeypatch) -> None:
     class Client:
-        def get_liked_songs(self, limit: int) -> dict[str, int]:
-            assert limit == 1
-            return {"trackCount": 1234}
+        def get_liked_songs(self, limit: int) -> dict[str, object]:
+            assert limit == 5000
+            return {
+                "trackCount": 1491,
+                "tracks": [{"videoId": f"track-{index}"} for index in range(1340)],
+            }
 
     monkeypatch.setattr(
         auth_module,
@@ -341,7 +344,39 @@ def test_liked_song_count_reads_playlist_metadata(monkeypatch) -> None:
         lambda raw: (raw, Client()),
     )
 
-    assert auth_module.fetch_liked_song_count('{}') == {"ok": True, "count": 1234}
+    assert auth_module.fetch_liked_song_count('{}') == {"ok": True, "count": 1340}
+
+
+def test_auth_status_retries_transient_account_metadata_failure(monkeypatch) -> None:
+    calls = 0
+
+    class Client:
+        def get_account_info(self) -> dict[str, str]:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("temporary account metadata failure")
+            return {
+                "accountName": "Listener",
+                "channelHandle": "@listener",
+                "accountPhotoUrl": "https://example.test/avatar.jpg",
+            }
+
+    monkeypatch.setattr(
+        auth_module,
+        "_create_validated_browser_auth_client",
+        lambda raw: (raw, Client()),
+    )
+
+    result = auth_module.check_browser_auth_status('{}')
+
+    assert calls == 2
+    assert result.ok is True
+    assert result.account == {
+        "display_name": "Listener",
+        "handle": "@listener",
+        "image_url": "https://example.test/avatar.jpg",
+    }
 
 
 def test_zen_uses_firefox_extraction_with_zen_profile(monkeypatch) -> None:

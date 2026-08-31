@@ -325,9 +325,11 @@ def capture_browser_auth_from_browser(
 def fetch_liked_song_count(browser_auth_input: str) -> dict[str, Any]:
     try:
         _, client = _create_validated_browser_auth_client(browser_auth_input)
-        liked = client.get_liked_songs(limit=1)
-        count = liked.get("trackCount") if isinstance(liked, dict) else None
-        return {"ok": isinstance(count, int), "count": count if isinstance(count, int) else None}
+        liked = client.get_liked_songs(limit=5000)
+        tracks = liked.get("tracks") if isinstance(liked, dict) else None
+        if not isinstance(tracks, list):
+            return {"ok": False, "count": None}
+        return {"ok": True, "count": sum(isinstance(track, dict) for track in tracks)}
     except Exception:
         return {"ok": False, "count": None}
 
@@ -349,10 +351,13 @@ def _get_safe_account(client: Any) -> dict[str, str | None]:
     getter = getattr(client, "get_account_info", None)
     if not callable(getter):
         return _safe_account(None)
-    try:
-        return _safe_account(getter())
-    except Exception:  # Account metadata must not invalidate usable credentials.
-        return _safe_account(None)
+    for _ in range(2):
+        try:
+            return _safe_account(getter())
+        except Exception:
+            pass
+    # Account metadata must not invalidate usable credentials.
+    return _safe_account(None)
 
 
 def _get_required_account(client: Any) -> dict[str, str | None]:

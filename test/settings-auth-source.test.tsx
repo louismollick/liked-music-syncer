@@ -2,7 +2,9 @@ import type { AppSettingsView, AuthSessionView } from '@shared/contracts'
 import { createElement, isValidElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import { refreshBrowserPicker } from '../src/renderer/src/auth/refreshBrowserPicker'
 import { AccountDiscoveryStatus } from '../src/renderer/src/components/auth/AccountDiscoveryStatus'
+import { AccountCount } from '../src/renderer/src/components/auth/AccountIdentity'
 import {
   getSelectableAuthSources,
   SettingsView,
@@ -67,6 +69,22 @@ const authSession: AuthSessionView = {
 }
 
 describe('Settings authentication source', () => {
+  it('uses a skeleton only for the number while the liked-song count loads', () => {
+    const markup = renderToStaticMarkup(
+      createElement(AccountCount, {
+        account: {
+          ...authSession.activeAccount!,
+          likedSongCount: null,
+          likedSongCountState: 'loading',
+        },
+      })
+    )
+
+    expect(markup).toContain('animate-pulse')
+    expect(markup).toContain('liked songs')
+    expect(markup).not.toContain('animate-spin')
+  })
+
   it('uses the shared account discovery status', () => {
     const markup = renderToStaticMarkup(createElement(AccountDiscoveryStatus))
 
@@ -92,16 +110,14 @@ describe('Settings authentication source', () => {
     ).toEqual(['safari'])
   })
 
-  it('refreshes browser statuses when the browser picker opens', () => {
+  it('opens the controlled browser picker without owning its scan lifecycle', () => {
     const onBrowserPickerOpenChange = vi.fn()
-    const onDiscoverAuthSources = vi.fn()
     const view = SettingsView({
       settings,
       authSession,
       browserPickerOpen: false,
       onBrowserPickerOpenChange,
       onChange: vi.fn(),
-      onDiscoverAuthSources,
       onSelectSource: vi.fn(),
       onSelectAccount: vi.fn(),
       onLoadAccountCounts: vi.fn(),
@@ -136,7 +152,14 @@ describe('Settings authentication source', () => {
     findBrowserSelect(view)?.()
 
     expect(onBrowserPickerOpenChange.mock.calls).toEqual([[true], [false]])
-    expect(onDiscoverAuthSources).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts browser scans when settings mounts with the picker already open', async () => {
+    const refreshAuth = vi.fn().mockResolvedValue(undefined)
+
+    await refreshBrowserPicker(true, refreshAuth, vi.fn())
+
+    expect(refreshAuth).toHaveBeenCalledWith('all', 'picker_opened')
   })
 
   it('renders the selected browser status in the closed select trigger', () => {
@@ -147,7 +170,6 @@ describe('Settings authentication source', () => {
         browserPickerOpen: false,
         onBrowserPickerOpenChange: vi.fn(),
         onChange: vi.fn(),
-        onDiscoverAuthSources: vi.fn(),
         onSelectSource: vi.fn(),
         onSelectAccount: vi.fn(),
         onLoadAccountCounts: vi.fn(),

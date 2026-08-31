@@ -7,6 +7,7 @@ import { logMain } from './logger'
 export const APP_MEDIA_SCHEME = 'app-media'
 const ARTWORK_CACHE_SEGMENT = 'artwork'
 const ARTIST_PHOTO_CACHE_SEGMENT = 'artist-photo'
+const ACCOUNT_IMAGE_CACHE_SEGMENT = 'account-image'
 
 export const ARTWORK_FILENAME_PATTERN = /^[a-f0-9]{64}\.jpg$/u
 
@@ -27,6 +28,10 @@ export function buildArtworkMediaUrl(cacheFileName: string): string {
 
 export function buildArtistPhotoMediaUrl(cacheFileName: string): string {
   return `${APP_MEDIA_SCHEME}://${ARTIST_PHOTO_CACHE_SEGMENT}/${cacheFileName}`
+}
+
+export function buildAccountImageMediaUrl(cacheFileName: string): string {
+  return `${APP_MEDIA_SCHEME}://${ACCOUNT_IMAGE_CACHE_SEGMENT}/${cacheFileName}`
 }
 
 export function resolveArtworkCacheFileName(
@@ -90,21 +95,56 @@ export function resolveArtistPhotoCacheFileName(
     : null
 }
 
+export function resolveAccountImageCacheFileName(
+  requestUrl: string,
+  cacheDirectory: string
+): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(requestUrl)
+  } catch {
+    return null
+  }
+  if (
+    parsed.protocol !== `${APP_MEDIA_SCHEME}:` ||
+    parsed.hostname !== ACCOUNT_IMAGE_CACHE_SEGMENT
+  ) {
+    return null
+  }
+  const fileName = path.basename(parsed.pathname)
+  if (!ARTWORK_FILENAME_PATTERN.test(fileName)) return null
+  const resolvedCacheDirectory = path.resolve(cacheDirectory)
+  const resolvedFilePath = path.resolve(resolvedCacheDirectory, fileName)
+  return resolvedFilePath.startsWith(`${resolvedCacheDirectory}${path.sep}`)
+    ? fileName
+    : null
+}
+
 export function registerArtworkProtocol(
   cacheDirectory: string,
-  artistPhotoCacheDirectory?: string
+  artistPhotoCacheDirectory?: string,
+  accountImageCacheDirectory?: string
 ) {
   protocol.handle(APP_MEDIA_SCHEME, async (request) => {
+    const accountImageFileName = accountImageCacheDirectory
+      ? resolveAccountImageCacheFileName(
+          request.url,
+          accountImageCacheDirectory
+        )
+      : null
     const artistPhotoFileName = artistPhotoCacheDirectory
       ? resolveArtistPhotoCacheFileName(request.url, artistPhotoCacheDirectory)
       : null
     const fileName =
+      accountImageFileName ??
       artistPhotoFileName ??
       resolveArtworkCacheFileName(request.url, cacheDirectory)
     const selectedCacheDirectory =
-      artistPhotoFileName && artistPhotoCacheDirectory
-        ? artistPhotoCacheDirectory
-        : cacheDirectory
+      accountImageFileName && accountImageCacheDirectory
+        ? accountImageCacheDirectory
+        : artistPhotoFileName && artistPhotoCacheDirectory
+          ? artistPhotoCacheDirectory
+          : cacheDirectory
     if (!fileName) {
       logProtocolOnce(`reject:${request.url}`, {
         level: 'debug',

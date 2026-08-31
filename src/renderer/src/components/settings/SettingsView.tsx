@@ -31,7 +31,6 @@ interface Props {
     options?: { immediate?: boolean }
   ) => void
   onFlush: (keys: Array<keyof AppSettingsView>) => void
-  onDiscoverAuthSources: () => void
   onSelectSource: (sourceId: string) => void
   onSelectAccount: (accountKey: string) => void
   onLoadAccountCounts: () => void
@@ -81,7 +80,6 @@ export function SettingsView({
   onBrowserPickerOpenChange,
   onChange,
   onFlush,
-  onDiscoverAuthSources,
   onSelectSource,
   onSelectAccount,
   onLoadAccountCounts,
@@ -149,7 +147,6 @@ export function SettingsView({
               onValueChange={(value) => value && onSelectSource(value)}
               onOpenChange={(open) => {
                 onBrowserPickerOpenChange(open)
-                if (open) onDiscoverAuthSources()
               }}
               disabled={Boolean(authSession.switchingDisabledReason)}
             >

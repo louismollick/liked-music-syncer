@@ -18,6 +18,6 @@ On launch, a saved account is restored immediately while the app scans the selec
 
 Browser and account switching are disabled while sync work is queued or running. This prevents a job from starting with one account and continuing with another.
 
-Opening either account picker lazily requests the Liked Music playlist's `trackCount` for the accounts in the selected browser. Count failures do not affect authentication or prevent switching. Counts remain in memory and are fetched again after relaunch.
+Opening either account picker lazily enumerates up to 5,000 Liked Music tracks for the accounts in the selected browser. The displayed count is the number of track records YouTube Music makes available to sync, not the playlist metadata's `trackCount`, which can include unavailable entries. Count failures do not affect authentication or prevent switching. Counts remain in memory and are fetched again after relaunch.
 
 The app does not call Google `ListAccounts`, enumerate Brand Accounts, or use YouTube's `onBehalfOfUser` selector.
