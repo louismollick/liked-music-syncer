@@ -69,6 +69,9 @@ interface WorkerArtistImageResponse {
   ok: boolean
   message?: string
   artist: WorkerArtistImage | null
+  error_type?: string
+  error_message?: string
+  attempts?: number
 }
 
 export class LikedArtistsService {
@@ -626,7 +629,11 @@ export class LikedArtistsService {
               context: {
                 artistId: artist.id,
                 artistName: artist.name,
+                channelId: artist.channelId,
                 workerMessage: payload.message ?? null,
+                errorType: payload.error_type ?? null,
+                errorMessage: payload.error_message ?? null,
+                attempts: payload.attempts ?? null,
                 durationMs: Date.now() - artistStartedAt,
               },
             })
@@ -645,10 +652,11 @@ export class LikedArtistsService {
             logMain({
               level: 'debug',
               source: 'liked-artists',
-              message: 'No artist image found',
+              message: 'Artist page returned no usable image',
               context: {
                 artistId: artist.id,
                 artistName: artist.name,
+                channelId: artist.channelId,
                 workerMessage: payload.message ?? null,
                 durationMs: Date.now() - artistStartedAt,
               },

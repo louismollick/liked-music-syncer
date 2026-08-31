@@ -3,6 +3,7 @@ import { useNavigate, useRouterState } from '@tanstack/react-router'
 import type { JSX, ReactNode } from 'react'
 import { useState } from 'react'
 import { type LibraryTab, libraryTabSchema } from '../../routes/library'
+import { AccountDiscoveryStatus } from '../auth/AccountDiscoveryStatus'
 import {
   AccountAvatar,
   AccountCount,
@@ -247,7 +248,7 @@ export function Sidebar({
           onClick={() =>
             void navigate({
               to: '/settings',
-              search: { detectAuth: undefined },
+              search: { detectAuth: undefined, browserPicker: undefined },
             })
           }
           icon={
@@ -258,11 +259,11 @@ export function Sidebar({
           }
         />
       </nav>
-      <div className="border-t border-border p-3">
+      <div>
         {authSession.state === 'loading' && !authSession.activeAccount ? (
           <div
             role="status"
-            className="size-10 animate-pulse rounded-lg bg-surface-tertiary"
+            className="m-3 size-10 animate-pulse rounded-lg bg-surface-tertiary"
             aria-label="Checking YouTube Music account"
           />
         ) : (authSession.state === 'signed_in' ||
@@ -279,64 +280,83 @@ export function Sidebar({
               render={
                 <button
                   type="button"
-                  className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="group relative z-[60] flex w-full px-3 py-3 outline-none"
                   aria-label="Open YouTube Music account menu"
                 />
               }
             >
               <AccountAvatar
                 account={authSession.activeAccount}
-                className="size-10"
+                className={`size-10 transition-shadow group-hover:ring-2 group-hover:ring-text-secondary/70 group-focus-visible:ring-2 group-focus-visible:ring-ring ${
+                  profileOpen ? 'ring-2 ring-text-secondary/70' : ''
+                }`}
               />
             </PopoverTrigger>
             <PopoverContent
               side="top"
               align="start"
-              sideOffset={-40}
-              className="w-64 gap-1 p-1.5"
+              collisionAvoidance={{ side: 'none', align: 'none' }}
+              sideOffset={-64}
+              className="max-h-screen w-56 gap-0 overflow-y-auto rounded-none p-1 shadow-none ring-0 border-t border-border"
             >
               {selectedSource ? (
-                <p className="px-2 py-1 text-xs text-text-muted">
-                  {selectedSource.browserName}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProfileOpen(false)
+                    void navigate({
+                      to: '/settings',
+                      search: {
+                        detectAuth: undefined,
+                        browserPicker: true,
+                      },
+                    })
+                  }}
+                  className="m-1 mb-0 rounded-md px-2 py-1.5 text-left text-xs font-medium text-text-secondary transition-colors hover:bg-surface-tertiary hover:text-text-primary"
+                >
+                  From browser: {selectedSource.browserName}
                   {selectedSource.profileName
                     ? ` (${selectedSource.profileName})`
                     : ''}
-                </p>
+                </button>
               ) : null}
-              {authSession.accounts
-                .filter(
-                  (account) => account.key !== authSession.selectedAccountKey
-                )
-                .map((account) => (
-                  <button
-                    key={account.key}
-                    type="button"
-                    disabled={switchingAccountKey !== null}
-                    onClick={() => {
-                      void onSelectAccount(account.key).then((ok) => {
-                        if (ok) setProfileOpen(false)
-                      })
-                    }}
-                    className="flex w-full items-center gap-2 rounded-md p-2 text-left hover:bg-surface-tertiary disabled:opacity-60"
-                  >
-                    <AccountIdentity
-                      account={account}
-                      avatarClassName="size-10"
-                      switching={switchingAccountKey === account.key}
-                    />
-                  </button>
-                ))}
+              <div className="divide-y divide-border/70 border-b border-border/80 empty:border-b-0">
+                {!authSession.accountsComplete ? (
+                  <AccountDiscoveryStatus />
+                ) : null}
+                {authSession.accounts
+                  .filter(
+                    (account) => account.key !== authSession.selectedAccountKey
+                  )
+                  .map((account) => (
+                    <button
+                      key={account.key}
+                      type="button"
+                      disabled={switchingAccountKey !== null}
+                      onClick={() => {
+                        void onSelectAccount(account.key).then((ok) => {
+                          if (ok) setProfileOpen(false)
+                        })
+                      }}
+                      className="flex w-full items-center rounded-md p-2 text-left transition-colors hover:bg-surface-tertiary disabled:opacity-60"
+                    >
+                      <AccountIdentity
+                        account={account}
+                        avatarClassName="size-10"
+                        showHandle={false}
+                        switching={switchingAccountKey === account.key}
+                      />
+                    </button>
+                  ))}
+              </div>
               {accountSwitchError ? (
                 <p className="px-2 py-1 text-xs text-error">
                   {accountSwitchError}
                 </p>
               ) : null}
-              <div className="min-h-10 pl-12 pr-2 py-1">
+              <div className="-mb-1 h-16 pt-3 pl-14 pr-2">
                 <p className="truncate text-sm font-medium text-text-primary">
                   {authSession.activeAccount.displayName}
-                </p>
-                <p className="truncate text-xs text-text-muted">
-                  {authSession.activeAccount.handle ?? 'YouTube Music'}
                 </p>
                 <AccountCount account={authSession.activeAccount} />
               </div>
@@ -351,10 +371,11 @@ export function Sidebar({
                 search: {
                   detectAuth:
                     authSession.state === 'signed_out' ? true : undefined,
+                  browserPicker: undefined,
                 },
               })
             }
-            className="w-full rounded-lg px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary"
+            className="m-3 w-[calc(100%-1.5rem)] rounded-lg px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface-tertiary hover:text-text-primary"
           >
             {authSession.state === 'signed_out' ? 'Sign In' : 'Auth Issue'}
           </button>

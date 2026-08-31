@@ -162,10 +162,12 @@ export class AuthCoordinator {
             ...checked,
             credential_json: credential,
           },
-          true
+          true,
+          false
         )
         const account = accounts[0]
-        if (account) await this.commitAccount(selected, account)
+        if (account) await this.commitAccount(selected, account, false)
+        void this.refresh('selected', 'startup').catch(() => undefined)
         return this.snapshot
       }
     }
@@ -204,7 +206,7 @@ export class AuthCoordinator {
     }
   }
 
-  async refresh(scope: 'selected' | 'all', _reason: AuthRefreshReason) {
+  async refresh(scope: 'selected' | 'all', reason: AuthRefreshReason) {
     const priorSelection = this.snapshot.selectedSourceId
     if (scope === 'all') await this.discover()
     if (scope === 'all' && this.sources.size === 0) {
@@ -236,10 +238,13 @@ export class AuthCoordinator {
         issue: null,
       })
     }
-    const ids =
+    let ids =
       scope === 'selected'
         ? ([this.snapshot.selectedSourceId].filter(Boolean) as string[])
         : [...this.sources.keys()]
+    if (reason === 'picker_opened')
+      ids = ids.filter((id) => this.rows.get(id)?.status === 'unchecked')
+    if (!ids.length) return this.snapshot
     this.publish({ isRefreshing: true })
     try {
       for (const id of ids) {
@@ -353,7 +358,8 @@ export class AuthCoordinator {
   private accountsFromResult(
     id: string,
     result: WorkerResult,
-    publishAccounts: boolean
+    publishAccounts: boolean,
+    accountsComplete = true
   ) {
     const rawAccounts =
       result.accounts?.length && result.accounts
@@ -380,10 +386,14 @@ export class AuthCoordinator {
         likedSongCountState: 'unrequested',
       }
     })
-    if (publishAccounts) this.publish({ accounts, accountsComplete: true })
+    if (publishAccounts) this.publish({ accounts, accountsComplete })
     return accounts
   }
-  private async commitAccount(id: string, account: YouTubeMusicAccountView) {
+  private async commitAccount(
+    id: string,
+    account: YouTubeMusicAccountView,
+    accountsComplete = true
+  ) {
     const credential = this.credentialsByAccountKey.get(account.key)
     if (!credential)
       throw new Error('The selected account is no longer available.')
@@ -396,13 +406,14 @@ export class AuthCoordinator {
       accounts: this.snapshot.accounts.map((item) =>
         item.key === account.key ? account : item
       ),
-      accountsComplete: true,
+      accountsComplete,
       issue: null,
     })
   }
   async selectSource(id: string) {
     if (!this.sources.has(id))
       throw new Error('That browser is not installed or supported.')
+    if (id === this.snapshot.selectedSourceId) return this.snapshot
     if (await this.jobsBusy())
       throw new Error(
         'Browser switching is disabled while sync work is queued or running.'

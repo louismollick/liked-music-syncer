@@ -14,6 +14,7 @@ export const settingsRoute = createRoute({
   path: 'settings',
   validateSearch: (search: Record<string, unknown>) => ({
     detectAuth: search.detectAuth === true ? true : undefined,
+    browserPicker: search.browserPicker === true ? true : undefined,
   }),
   component: SettingsRouteComponent,
 })
@@ -42,14 +43,14 @@ export function SettingsRouteComponent(): JSX.Element {
       location.search.detectAuth !== true
     )
       return
-    void refreshAuth('all')
+    void refreshAuth('all', 'retry')
       .catch((error) =>
         showMessage(error instanceof Error ? error.message : String(error))
       )
       .finally(() => {
         void navigate({
           to: '/settings',
-          search: { detectAuth: undefined },
+          search: { detectAuth: undefined, browserPicker: undefined },
           replace: true,
         })
       })
@@ -59,6 +60,17 @@ export function SettingsRouteComponent(): JSX.Element {
     <SettingsView
       settings={settings}
       authSession={authSession}
+      browserPickerOpen={location.search.browserPicker === true}
+      onBrowserPickerOpenChange={(open) => {
+        void navigate({
+          to: '/settings',
+          search: {
+            detectAuth: undefined,
+            browserPicker: open ? true : undefined,
+          },
+          replace: true,
+        })
+      }}
       onChange={(partial) => {
         void updateSettings(partial).then((result) => {
           if (!result.ok) showMessage(result.message)
@@ -69,8 +81,8 @@ export function SettingsRouteComponent(): JSX.Element {
           if (!result.ok) showMessage(result.message)
         })
       }}
-      onRefreshAuth={() => {
-        void refreshAuth('all').catch((error) =>
+      onDiscoverAuthSources={() => {
+        void refreshAuth('all', 'picker_opened').catch((error) =>
           showMessage(error instanceof Error ? error.message : String(error))
         )
       }}

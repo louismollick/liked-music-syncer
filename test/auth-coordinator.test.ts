@@ -2,6 +2,195 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthCoordinator } from '../src/main/auth/auth-coordinator'
 
 describe('AuthCoordinator', () => {
+  it('checks only unchecked sources when the browser picker opens', async () => {
+    const worker = {
+      runJsonCommand: vi.fn(async () => ({
+        ok: false,
+        is_authenticated: false,
+        message: 'No session',
+        issue_code: 'no_session',
+      })),
+    }
+    const coordinator = new AuthCoordinator(
+      {} as never,
+      worker as never,
+      async () => false
+    )
+    const zen = {
+      id: 'zen',
+      browserName: 'Zen',
+      applicationPath: '/Applications/Zen.app',
+      profileName: null,
+      cookieBackend: 'zen',
+    }
+    const firefox = {
+      ...zen,
+      id: 'firefox',
+      browserName: 'Firefox',
+      applicationPath: '/Applications/Firefox.app',
+      cookieBackend: 'firefox',
+    }
+    const internal = coordinator as unknown as {
+      sources: Map<string, typeof zen>
+      rows: Map<string, ReturnType<(typeof internal)['row']>>
+      discover: () => Promise<void>
+      row: (source: typeof zen) => {
+        status: 'unchecked' | 'signed_in'
+        [key: string]: unknown
+      }
+    }
+    internal.sources.set(zen.id, zen)
+    internal.sources.set(firefox.id, firefox)
+    internal.rows.set(zen.id, {
+      ...internal.row(zen),
+      status: 'signed_in',
+    })
+    internal.rows.set(firefox.id, internal.row(firefox))
+    internal.discover = vi.fn(async () => undefined)
+
+    await coordinator.refresh('all', 'picker_opened')
+
+    expect(worker.runJsonCommand).toHaveBeenCalledTimes(1)
+    expect(worker.runJsonCommand).toHaveBeenCalledWith(
+      'auth-capture-browser',
+      expect.objectContaining({ browser: 'firefox' })
+    )
+  })
+
+  it('does nothing when selecting the already-selected source', async () => {
+    const worker = { runJsonCommand: vi.fn() }
+    const settings = {
+      setSelectedAuthSource: vi.fn(),
+      getRememberedAuthAccount: vi.fn(),
+    }
+    const jobsBusy = vi.fn(async () => false)
+    const coordinator = new AuthCoordinator(
+      settings as never,
+      worker as never,
+      jobsBusy
+    )
+    const source = {
+      id: 'zen',
+      browserName: 'Zen',
+      applicationPath: '/Applications/Zen.app',
+      profileName: null,
+      cookieBackend: 'zen',
+    }
+    const internal = coordinator as unknown as {
+      sources: Map<string, typeof source>
+      snapshot: ReturnType<AuthCoordinator['getSnapshot']>
+    }
+    internal.sources.set(source.id, source)
+    internal.snapshot = {
+      ...coordinator.getSnapshot(),
+      state: 'signed_in',
+      selectedSourceId: source.id,
+    }
+    const before = coordinator.getSnapshot()
+
+    await expect(coordinator.selectSource(source.id)).resolves.toBe(before)
+
+    expect(jobsBusy).not.toHaveBeenCalled()
+    expect(settings.setSelectedAuthSource).not.toHaveBeenCalled()
+    expect(settings.getRememberedAuthAccount).not.toHaveBeenCalled()
+    expect(worker.runJsonCommand).not.toHaveBeenCalled()
+    expect(coordinator.getSnapshot().state).toBe('signed_in')
+  })
+
+  it('starts enumerating the selected browser after restoring a saved account', async () => {
+    let finishEnumeration: ((value: unknown) => void) | undefined
+    const persistedAccount = {
+      key: 'saved',
+      displayName: 'Saved',
+      handle: '@saved',
+      imageUrl: null,
+      cachedImageUrl: null,
+      likedSongCount: null,
+      likedSongCountState: 'unrequested' as const,
+    }
+    const worker = {
+      runJsonCommand: vi.fn(async (command: string) => {
+        if (command === 'auth-status')
+          return {
+            ok: true,
+            is_authenticated: true,
+            message: 'ok',
+            account: { display_name: 'Saved', handle: '@saved' },
+          }
+        return new Promise((resolve) => {
+          finishEnumeration = resolve
+        })
+      }),
+    }
+    const settings = {
+      getAuthSelection: vi.fn(async () => ({
+        sourceId: 'zen',
+        account: persistedAccount,
+      })),
+      getStoredYtMusicBrowserAuth: vi.fn(async () => '{"saved":true}'),
+      commitAuthSelection: vi.fn(async () => undefined),
+    }
+    const coordinator = new AuthCoordinator(
+      settings as never,
+      worker as never,
+      async () => false
+    )
+    const source = {
+      id: 'zen',
+      browserName: 'Zen',
+      applicationPath: '/Applications/Zen.app',
+      profileName: null,
+      cookieBackend: 'zen',
+    }
+    const internal = coordinator as unknown as {
+      sources: Map<string, typeof source>
+      rows: Map<string, unknown>
+      discover: () => Promise<void>
+      row: (source: typeof source) => unknown
+    }
+    internal.discover = vi.fn(async () => {
+      internal.sources.set(source.id, source)
+      internal.rows.set(source.id, internal.row(source))
+    })
+
+    await coordinator.bootstrap()
+
+    expect(coordinator.getSnapshot()).toMatchObject({
+      state: 'signed_in',
+      accountsComplete: false,
+      isRefreshing: true,
+    })
+    expect(worker.runJsonCommand).toHaveBeenCalledWith(
+      'auth-capture-browser',
+      expect.objectContaining({ browser: 'zen' })
+    )
+
+    finishEnumeration?.({
+      ok: true,
+      is_authenticated: true,
+      message: 'ok',
+      credential_json: '{"saved":true}',
+      accounts: [
+        {
+          display_name: 'Saved',
+          handle: '@saved',
+          auth_user: 0,
+          credential_json: '{"saved":true}',
+        },
+        {
+          display_name: 'Other',
+          handle: '@other',
+          auth_user: 1,
+          credential_json: '{"other":true}',
+        },
+      ],
+    })
+    await vi.waitFor(() => {
+      expect(coordinator.getSnapshot().accountsComplete).toBe(true)
+    })
+    expect(coordinator.getSnapshot().accounts).toHaveLength(2)
+  })
+
   it('commits a selected source when its picker scan is already in flight', async () => {
     let finishProbe: ((value: unknown) => void) | undefined
     const worker = {

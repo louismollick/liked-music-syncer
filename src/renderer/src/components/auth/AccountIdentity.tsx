@@ -44,10 +44,12 @@ export function AccountCount({
 export function AccountIdentity({
   account,
   avatarClassName,
+  showHandle = true,
   switching = false,
 }: {
   account: YouTubeMusicAccountView
   avatarClassName?: string
+  showHandle?: boolean
   switching?: boolean
 }): JSX.Element {
   return (
@@ -57,9 +59,11 @@ export function AccountIdentity({
         <span className="block truncate text-sm text-text-primary">
           {account.displayName}
         </span>
-        <span className="block truncate text-xs text-text-muted">
-          {account.handle ?? 'YouTube Music'}
-        </span>
+        {showHandle ? (
+          <span className="block truncate text-xs text-text-muted">
+            {account.handle ?? 'YouTube Music'}
+          </span>
+        ) : null}
         <AccountCount account={account} />
       </span>
       {switching ? <Spinner /> : null}

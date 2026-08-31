@@ -72,3 +72,117 @@ def test_fetch_artist_image_without_channel_id_does_not_search(monkeypatch) -> N
         "message": "No trusted artist image available.",
         "artist": None,
     }
+
+
+def test_fetch_artist_image_retries_transient_failure(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    class FakeYTMusic:
+        def get_artist(self, _channel_id: str) -> dict[str, Any]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("temporary failure")
+            return {
+                "thumbnails": [
+                    {
+                        "url": "https://img.test/recovered.jpg",
+                        "width": 544,
+                        "height": 544,
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(
+        liked_artists, "build_browser_auth_client", lambda _auth: FakeYTMusic()
+    )
+    monkeypatch.setattr(liked_artists.time, "sleep", sleeps.append)
+
+    result = liked_artists.fetch_artist_image(
+        {
+            "ytmusic_browser_auth": "auth",
+            "artist": {
+                "id": "artist_channel_RECOVERED",
+                "channel_id": "RECOVERED",
+                "name": "Recovered Artist",
+            },
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["artist"]["photo_url"] == "https://img.test/recovered.jpg"
+    assert attempts == 2
+    assert sleeps == [0.5]
+
+
+def test_fetch_artist_image_reports_exhausted_failure(monkeypatch) -> None:
+    attempts = 0
+    sleeps: list[float] = []
+
+    class FakeYTMusic:
+        def get_artist(self, _channel_id: str) -> dict[str, Any]:
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError("temporary\nfailure")
+
+    monkeypatch.setattr(
+        liked_artists, "build_browser_auth_client", lambda _auth: FakeYTMusic()
+    )
+    monkeypatch.setattr(liked_artists.time, "sleep", sleeps.append)
+
+    result = liked_artists.fetch_artist_image(
+        {
+            "ytmusic_browser_auth": "auth",
+            "artist": {
+                "id": "artist_channel_FAILING",
+                "channel_id": "FAILING",
+                "name": "Failing Artist",
+            },
+        }
+    )
+
+    assert result == {
+        "ok": False,
+        "message": "Artist image lookup failed after 3 attempts.",
+        "artist": None,
+        "error_type": "RuntimeError",
+        "error_message": "temporary failure",
+        "attempts": 3,
+    }
+    assert attempts == 3
+    assert sleeps == [0.5, 1.5]
+
+
+def test_fetch_artist_image_does_not_retry_successful_response_without_image(
+    monkeypatch,
+) -> None:
+    attempts = 0
+
+    class FakeYTMusic:
+        def get_artist(self, _channel_id: str) -> dict[str, Any]:
+            nonlocal attempts
+            attempts += 1
+            return {"thumbnails": []}
+
+    monkeypatch.setattr(
+        liked_artists, "build_browser_auth_client", lambda _auth: FakeYTMusic()
+    )
+
+    result = liked_artists.fetch_artist_image(
+        {
+            "ytmusic_browser_auth": "auth",
+            "artist": {
+                "id": "artist_channel_NO_IMAGE",
+                "channel_id": "NO_IMAGE",
+                "name": "No Image Artist",
+            },
+        }
+    )
+
+    assert result == {
+        "ok": True,
+        "message": "Artist page returned no usable image.",
+        "artist": None,
+    }
+    assert attempts == 1

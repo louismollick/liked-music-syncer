@@ -1907,6 +1907,74 @@ describe('liked artists service', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
+  it('does not cache transient artist image failures as missing', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    await db.insert(likedArtistsTable).values({
+      id: 'artist_channel_channel_1',
+      channelId: 'channel_1',
+      name: 'Artist',
+      normalizedName: 'artist',
+      photoUrl: null,
+      likedTrackCount: 1,
+      lastRefreshedAt: '2026-05-18T00:00:00.000Z',
+      isFavorite: false,
+      favoritedAt: null,
+      lastCatalogRefreshedAt: null,
+      catalogTrackCount: null,
+      createdAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    })
+    const runJsonCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        is_authenticated: true,
+        message: 'ok',
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        artist: null,
+        message: 'Artist image lookup failed after 3 attempts.',
+        error_type: 'RuntimeError',
+        error_message: 'temporary failure',
+        attempts: 3,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        is_authenticated: true,
+        message: 'ok',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        artist: {
+          id: 'artist_channel_channel_1',
+          channel_id: 'channel_1',
+          photo_url: 'https://example.test/artist.jpg',
+        },
+      })
+    const service = new LikedArtistsService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          ytmusicBrowserAuth: 'auth',
+        }),
+        saveYtMusicBrowserAuth: vi.fn(),
+      } as never,
+      { runJsonCommand } as never
+    )
+
+    await service.refreshArtistImages()
+    const [afterFailure] = await db.select().from(likedArtistsTable)
+    expect(afterFailure?.photoUrl).toBeNull()
+
+    await service.refreshArtistImages()
+    const [afterRetry] = await service.listArtists()
+    expect(afterRetry?.photoUrl).toBe('https://example.test/artist.jpg')
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it('publishes artist photo updates as each image is cached', async () => {
     const { db, sqlite, dir } = makeTempDb()
     await db.insert(likedArtistsTable).values({

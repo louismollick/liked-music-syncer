@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import re
+import time
 from typing import Any
 
 from .auth import build_browser_auth_client
@@ -13,6 +14,8 @@ def _normalize_name(value: str) -> str:
 
 _ARTIST_THUMB_MIN_EDGE = 200
 _ARTIST_THUMB_UPGRADE_EDGE = 544
+_ARTIST_IMAGE_RETRY_DELAYS = (0.5, 1.5)
+_ARTIST_IMAGE_ERROR_MESSAGE_LIMIT = 500
 
 
 def _upgrade_thumbnail_url(url: str) -> str:
@@ -164,10 +167,7 @@ def _lookup_artist_image_row(
     ):
         return None
 
-    try:
-        artist_payload = ytmusic.get_artist(channel_id)
-    except Exception:
-        return None
+    artist_payload = ytmusic.get_artist(channel_id)
 
     photo_url = _best_thumbnail_url(
         artist_payload.get("thumbnails")
@@ -185,21 +185,57 @@ def _lookup_artist_image_row(
     }
 
 
+def _sanitized_error_message(error: Exception) -> str:
+    message = re.sub(r"\s+", " ", str(error)).strip()
+    return message[:_ARTIST_IMAGE_ERROR_MESSAGE_LIMIT]
+
+
 def fetch_artist_image(payload: dict[str, Any]) -> dict[str, Any]:
     browser_auth_input = str(payload.get("ytmusic_browser_auth", ""))
     artist = payload.get("artist")
     if not isinstance(artist, dict):
         return {"ok": False, "message": "Missing artist payload.", "artist": None}
 
-    ytmusic = build_browser_auth_client(browser_auth_input)
-    row = _lookup_artist_image_row(ytmusic, artist)
-    if row is None:
+    artist_id = artist.get("id")
+    channel_id = artist.get("channel_id")
+    if (
+        not isinstance(artist_id, str)
+        or not isinstance(channel_id, str)
+        or not channel_id
+    ):
         return {
             "ok": True,
             "message": "No trusted artist image available.",
             "artist": None,
         }
-    return {"ok": True, "message": "Artist image resolved.", "artist": row}
+
+    ytmusic = build_browser_auth_client(browser_auth_input)
+    attempts = len(_ARTIST_IMAGE_RETRY_DELAYS) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            row = _lookup_artist_image_row(ytmusic, artist)
+        except Exception as error:
+            if attempt < attempts:
+                time.sleep(_ARTIST_IMAGE_RETRY_DELAYS[attempt - 1])
+                continue
+            return {
+                "ok": False,
+                "message": f"Artist image lookup failed after {attempts} attempts.",
+                "artist": None,
+                "error_type": type(error).__name__,
+                "error_message": _sanitized_error_message(error),
+                "attempts": attempts,
+            }
+
+        if row is None:
+            return {
+                "ok": True,
+                "message": "Artist page returned no usable image.",
+                "artist": None,
+            }
+        return {"ok": True, "message": "Artist image resolved.", "artist": row}
+
+    raise AssertionError("artist image retry loop did not return")
 
 
 def fetch_artist_images(
@@ -209,7 +245,10 @@ def fetch_artist_images(
     rows: list[dict[str, Any]] = []
 
     for artist in artists:
-        row = _lookup_artist_image_row(ytmusic, artist)
+        try:
+            row = _lookup_artist_image_row(ytmusic, artist)
+        except Exception:
+            continue
         if row is not None:
             rows.append(row)
 

@@ -1,9 +1,11 @@
 import type {
   AppSettingsView,
   AuthSessionView,
+  AuthSourceView,
   CommandResult,
 } from '@shared/contracts'
 import type { JSX } from 'react'
+import { AccountDiscoveryStatus } from '../auth/AccountDiscoveryStatus'
 import { AccountIdentity } from '../auth/AccountIdentity'
 import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
@@ -22,12 +24,14 @@ import { SettingsSection } from './SettingsSection'
 interface Props {
   settings: AppSettingsView
   authSession: AuthSessionView
+  browserPickerOpen: boolean
+  onBrowserPickerOpenChange: (open: boolean) => void
   onChange: (
     next: Partial<AppSettingsView>,
     options?: { immediate?: boolean }
   ) => void
   onFlush: (keys: Array<keyof AppSettingsView>) => void
-  onRefreshAuth: () => void
+  onDiscoverAuthSources: () => void
   onSelectSource: (sourceId: string) => void
   onSelectAccount: (accountKey: string) => void
   onLoadAccountCounts: () => void
@@ -36,12 +40,48 @@ interface Props {
   onAction: (action: Promise<CommandResult>) => void
 }
 
+function BrowserSourceSummary({ source }: { source: AuthSourceView }) {
+  return (
+    <span className="flex items-center gap-2">
+      {source.status === 'checking' ? (
+        <Spinner />
+      ) : (
+        <span
+          className={`size-2 rounded-full ${source.status === 'signed_in' ? 'bg-success' : source.status === 'unchecked' ? 'bg-text-muted' : 'bg-error'}`}
+        />
+      )}
+      <span>
+        {source.browserName}
+        {source.profileName ? ` (${source.profileName})` : ''}
+      </span>
+      <span className="text-text-muted">
+        {source.status === 'signed_in'
+          ? `${source.accountCount ?? 0} ${source.accountCount === 1 ? 'account' : 'accounts'} found`
+          : source.status === 'signed_out'
+            ? 'Signed out'
+            : source.status === 'issue'
+              ? 'Issue getting auth'
+              : 'Checking'}
+      </span>
+    </span>
+  )
+}
+
+export function getSelectableAuthSources(
+  sources: AuthSourceView[],
+  selectedSourceId: string | null
+) {
+  return sources.filter((source) => source.id !== selectedSourceId)
+}
+
 export function SettingsView({
   settings,
   authSession,
+  browserPickerOpen,
+  onBrowserPickerOpenChange,
   onChange,
   onFlush,
-  onRefreshAuth,
+  onDiscoverAuthSources,
   onSelectSource,
   onSelectAccount,
   onLoadAccountCounts,
@@ -56,17 +96,21 @@ export function SettingsView({
   const selectedBrowser = authSession.sources.find(
     (source) => source.id === authSession.selectedSourceId
   )
-  const selectedBrowserLabel = selectedBrowser
-    ? `${selectedBrowser.browserName}${selectedBrowser.profileName ? ` (${selectedBrowser.profileName})` : ''}`
-    : undefined
+  const selectableBrowsers = getSelectableAuthSources(
+    authSession.sources,
+    authSession.selectedSourceId
+  )
   const accountItems = authSession.accounts.map((account) => ({
-    label: `${account.displayName}${account.handle ? ` ${account.handle}` : ''}`,
+    label: account.displayName,
     value: account.key,
   }))
   const selectedAccount =
     authSession.accounts.find(
       (account) => account.key === authSession.selectedAccountKey
     ) ?? authSession.activeAccount
+  const selectableAccounts = authSession.accounts.filter(
+    (account) => account.key !== selectedAccount?.key
+  )
 
   const pickDirectory = async () => {
     const picked = await window.api.settings.pickOutputDirectory()
@@ -96,56 +140,44 @@ export function SettingsView({
             className={`w-2 h-2 rounded-full flex-shrink-0 ${authSession.state === 'signed_in' ? 'bg-success' : 'bg-error'}`}
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <div className="flex-1">
             <Select
               items={browserItems}
+              open={browserPickerOpen}
               value={authSession.selectedSourceId ?? undefined}
               onValueChange={(value) => value && onSelectSource(value)}
               onOpenChange={(open) => {
-                if (open) onRefreshAuth()
+                onBrowserPickerOpenChange(open)
+                if (open) onDiscoverAuthSources()
               }}
               disabled={Boolean(authSession.switchingDisabledReason)}
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select a browser">
-                  {selectedBrowserLabel}
+                <SelectValue
+                  className="text-text-primary"
+                  placeholder="Select a browser"
+                >
+                  {selectedBrowser ? (
+                    <BrowserSourceSummary source={selectedBrowser} />
+                  ) : null}
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                align="start"
+                alignItemWithTrigger={false}
+                sideOffset={6}
+                className="min-w-(--anchor-width)"
+              >
                 <SelectGroup>
-                  {authSession.sources.map((source) => (
+                  {selectableBrowsers.map((source) => (
                     <SelectItem key={source.id} value={source.id}>
-                      <span className="flex items-center gap-2">
-                        {source.status === 'checking' ? (
-                          <Spinner />
-                        ) : (
-                          <span
-                            className={`size-2 rounded-full ${source.status === 'signed_in' ? 'bg-success' : source.status === 'unchecked' ? 'bg-text-muted' : 'bg-error'}`}
-                          />
-                        )}
-                        <span>
-                          {source.browserName}
-                          {source.profileName ? ` (${source.profileName})` : ''}
-                        </span>
-                        <span className="text-text-muted">
-                          {source.status === 'signed_in'
-                            ? `${source.accountCount ?? 0} ${source.accountCount === 1 ? 'account' : 'accounts'} found`
-                            : source.status === 'signed_out'
-                              ? 'Signed out'
-                              : source.status === 'issue'
-                                ? 'Issue getting auth'
-                                : 'Checking'}
-                        </span>
-                      </span>
+                      <BrowserSourceSummary source={source} />
                     </SelectItem>
                   ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-text-muted">
-              Checked the first 5 browser account slots.
-            </p>
           </div>
           {authSession.state === 'signed_out' ? (
             <Button
@@ -156,9 +188,7 @@ export function SettingsView({
             >
               Open YouTube Music
             </Button>
-          ) : (
-            <Button onClick={onRefreshAuth}>Retry</Button>
-          )}
+          ) : null}
         </div>
         {selectedAccount ? (
           <div className="flex flex-col gap-1">
@@ -174,10 +204,11 @@ export function SettingsView({
                 switchingAccountKey !== null
               }
             >
-              <SelectTrigger className="h-auto min-h-12 w-full">
+              <SelectTrigger className="h-auto min-h-14 w-full px-3 py-2">
                 <SelectValue placeholder="Select an account">
                   <AccountIdentity
                     account={selectedAccount}
+                    showHandle={false}
                     switching={switchingAccountKey === selectedAccount.key}
                   />
                 </SelectValue>
@@ -186,15 +217,19 @@ export function SettingsView({
                 alignItemWithTrigger={false}
                 className="min-w-(--anchor-width)"
               >
-                <SelectGroup>
-                  {authSession.accounts.map((account) => (
+                <SelectGroup className="p-0">
+                  {!authSession.accountsComplete ? (
+                    <AccountDiscoveryStatus />
+                  ) : null}
+                  {selectableAccounts.map((account) => (
                     <SelectItem
                       key={account.key}
                       value={account.key}
-                      className="py-2"
+                      className="h-(--anchor-height) min-h-0 rounded-lg"
                     >
                       <AccountIdentity
                         account={account}
+                        showHandle={false}
                         switching={switchingAccountKey === account.key}
                       />
                     </SelectItem>

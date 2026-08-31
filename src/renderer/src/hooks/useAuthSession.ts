@@ -1,4 +1,8 @@
-import type { AuthSessionView, ElectronApi } from '@shared/contracts'
+import type {
+  AuthRefreshReason,
+  AuthSessionView,
+  ElectronApi,
+} from '@shared/contracts'
 import { useCallback, useEffect, useState } from 'react'
 
 type AuthApi = Pick<ElectronApi['auth'], 'getSnapshot' | 'subscribe'>
@@ -43,13 +47,8 @@ export function useAuthSession() {
     return subscribeToAuthSession(window.api.auth, setSession)
   }, [])
   const refresh = useCallback(
-    async (scope: 'selected' | 'all') =>
-      setSession(
-        await window.api.auth.refresh(
-          scope,
-          scope === 'all' ? 'picker_opened' : 'retry'
-        )
-      ),
+    async (scope: 'selected' | 'all', reason: AuthRefreshReason = 'retry') =>
+      setSession(await window.api.auth.refresh(scope, reason)),
     []
   )
   const selectSource = useCallback(
