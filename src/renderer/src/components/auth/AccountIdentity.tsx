@@ -1,0 +1,88 @@
+import type { YouTubeMusicAccountView } from '@shared/contracts'
+import type { JSX } from 'react'
+import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar'
+import { Spinner } from '../ui/spinner'
+
+export function AccountAvatar({
+  account,
+  className = 'size-9',
+}: {
+  account: YouTubeMusicAccountView
+  className?: string
+}): JSX.Element {
+  return (
+    <Avatar className={`${className} rounded-lg after:rounded-lg`}>
+      {account.cachedImageUrl || account.imageUrl ? (
+        <AvatarImage
+          src={account.cachedImageUrl ?? account.imageUrl ?? undefined}
+          className="rounded-lg"
+        />
+      ) : null}
+      <AvatarFallback className="rounded-lg">
+        {account.displayName.slice(0, 2).toUpperCase()}
+      </AvatarFallback>
+    </Avatar>
+  )
+}
+
+export function AccountCount({
+  account,
+}: {
+  account: YouTubeMusicAccountView
+}): JSX.Element | null {
+  if (account.likedSongCountState === 'loading')
+    return (
+      <span
+        role="status"
+        aria-label="Loading liked song count"
+        className="block text-xs text-text-muted"
+      >
+        <span
+          aria-hidden="true"
+          className="mr-1 inline-block h-2.5 w-5 animate-pulse rounded-sm bg-surface-tertiary align-middle"
+        />
+        liked songs
+      </span>
+    )
+  if (
+    account.likedSongCountState !== 'loaded' ||
+    account.likedSongCount == null
+  )
+    return null
+  return (
+    <span className="block text-xs text-text-muted">
+      {account.likedSongCount.toLocaleString()} liked{' '}
+      {account.likedSongCount === 1 ? 'song' : 'songs'}
+    </span>
+  )
+}
+
+export function AccountIdentity({
+  account,
+  avatarClassName,
+  showHandle = true,
+  switching = false,
+}: {
+  account: YouTubeMusicAccountView
+  avatarClassName?: string
+  showHandle?: boolean
+  switching?: boolean
+}): JSX.Element {
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2">
+      <AccountAvatar account={account} className={avatarClassName} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm text-text-primary">
+          {account.displayName}
+        </span>
+        {showHandle ? (
+          <span className="block truncate text-xs text-text-muted">
+            {account.handle ?? 'YouTube Music'}
+          </span>
+        ) : null}
+        <AccountCount account={account} />
+      </span>
+      {switching ? <Spinner /> : null}
+    </span>
+  )
+}

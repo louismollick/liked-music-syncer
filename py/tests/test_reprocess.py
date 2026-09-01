@@ -247,6 +247,67 @@ def test_preview_reprocess_sets_target_lrc_path_none_for_plain_lyrics(
     assert preview["payload"]["target_lrc_path"] is None
 
 
+@pytest.mark.parametrize(
+    ("candidate_overrides", "expected_diff_key"),
+    [
+        ({"artist_credits": []}, "artistCredits"),
+        ({"tag_schema_version": 3}, "tagSchemaVersion"),
+    ],
+)
+def test_preview_reprocess_updates_same_video_for_managed_tag_changes(
+    tmp_path: Path,
+    monkeypatch,
+    candidate_overrides: dict[str, object],
+    expected_diff_key: str,
+) -> None:
+    monkeypatch.setattr(reprocess_module, "_build_ytmusic_client", lambda auth: object())
+
+    def resolve_exact_catalog(_ytmusic: object, item: object) -> None:
+        item.artist_credits = [
+            {"name": "Artist", "channel_id": "trusted-channel-id"}
+        ]
+        item.resolved_youtube_music_track_id = "resolved123"
+        return None
+
+    monkeypatch.setattr(reprocess_module, "_resolve_exact_catalog", resolve_exact_catalog)
+    monkeypatch.setattr(reprocess_module, "_should_run_musicbrainz", lambda item: False)
+    monkeypatch.setattr(
+        reprocess_module,
+        "_resolve_best_lyrics",
+        lambda *args, **kwargs: (None, None),
+    )
+
+    current_output = tmp_path / "out" / "Artist" / "Album" / "01 Song.m4a"
+    candidate = {
+        "track_work_id": "track_1",
+        "youtube_music_track_id": "liked123",
+        "resolved_youtube_music_track_id": "resolved123",
+        "artist_credits": [
+            {"name": "Artist", "channel_id": "trusted-channel-id"}
+        ],
+        "tag_schema_version": 4,
+        "title": "Song",
+        "artist": "Artist",
+        "album": "Album",
+        "album_artist": "Artist",
+        "source_url": "https://music.youtube.com/watch?v=liked123",
+        "lyrics_status": "missing",
+        "current_output_path": str(current_output),
+        "current_lrc_path": None,
+        "cover_art_present": False,
+        **candidate_overrides,
+    }
+
+    result = reprocess_module.preview_reprocess(
+        {**_config_payload(tmp_path), "items": [candidate]}
+    )
+
+    preview = result["items"][0]
+    assert preview["same_video"] is True
+    assert preview["action_kind"] == "update"
+    assert expected_diff_key in preview["diff"]
+
+
 def test_apply_reprocess_same_video_plain_lyrics_deletes_old_lrc(
     tmp_path: Path, monkeypatch
 ) -> None:

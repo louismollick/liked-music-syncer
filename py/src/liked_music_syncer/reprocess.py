@@ -13,8 +13,8 @@ from ytmusicapi import YTMusic
 from .album_identity import canonical_album_name
 from .cover_art import make_square_cover
 from .lyrics_language import detect_primary_lyrics_language
-from .media_tags import write_media_tags
-from .models import SyncConfig, SyncItemState
+from .media_tags import LMS_TAG_SCHEMA_VERSION, write_media_tags
+from .models import SyncConfig, SyncItemState, normalize_artist_credits
 from .json_io import emit_event
 from .lyrics import classify_lyrics_text, lyrics_sidecar_text
 from .sync_engine import (
@@ -100,6 +100,7 @@ def _candidate_to_item(candidate: dict[str, Any]) -> SyncItemState:
             or f"https://music.youtube.com/watch?v={candidate.get('youtube_music_track_id') or ''}"
         ),
         cover_art_url=None,
+        artist_credits=normalize_artist_credits(candidate.get("artist_credits")),
         track_number=_int_or_none(candidate.get("track_number")),
         track_total=_int_or_none(candidate.get("track_total")),
         disc_number=_int_or_none(candidate.get("disc_number")),
@@ -150,6 +151,7 @@ def _item_from_payload(item_payload: dict[str, Any]) -> SyncItemState:
             "mb_releasegroup_id": item_payload.get("mb_releasegroup_id"),
             "lyrics_status": item_payload.get("lyrics_status"),
             "source_url": item_payload.get("source_url"),
+            "artist_credits": item_payload.get("artist_credits"),
         }
     )
     item.cover_art_url = _string_or_none(item_payload.get("cover_art_url"))
@@ -234,6 +236,8 @@ def _preview_one(
     )
 
     before = {
+        "artistCredits": normalize_artist_credits(candidate.get("artist_credits")),
+        "tagSchemaVersion": _int_or_none(candidate.get("tag_schema_version")),
         "title": candidate.get("title"),
         "artist": candidate.get("artist"),
         "album": candidate.get("album"),
@@ -264,6 +268,8 @@ def _preview_one(
         "coverArtPresent": bool(candidate.get("cover_art_present")),
     }
     after = {
+        "artistCredits": normalize_artist_credits(item.artist_credits),
+        "tagSchemaVersion": LMS_TAG_SCHEMA_VERSION,
         "title": item.title,
         "artist": item.artist,
         "album": item.album,

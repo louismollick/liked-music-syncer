@@ -93,4 +93,41 @@ describe('settings persistence', () => {
     fs.rmSync(second.dir, { recursive: true, force: true })
     fs.rmSync(settingsDir, { recursive: true, force: true })
   })
+
+  it('serializes partial updates so concurrent fields are retained', async () => {
+    const service = new SettingsService(
+      {} as never,
+      '/tmp/unused-settings.json'
+    )
+    let current = {
+      outputDirectory: '/music',
+      remoteCopyEnabled: false,
+      outputFormat: 'm4a' as const,
+      rcloneRemote: '',
+      remoteMusicRoot: '',
+      lyricsApiBaseUrl: '',
+      hasYtMusicBrowserAuth: false,
+      ytDlpCookiesBrowser: 'chrome' as const,
+      folderTemplate: '{albumartist}/{album}',
+      fileTemplate: '{track:02d} {title}',
+      embedUnsyncedLyrics: true,
+      writeLrcSidecar: true,
+    }
+    vi.spyOn(service, 'getView').mockImplementation(async () => current)
+    vi.spyOn(service, 'save').mockImplementation(async (next) => {
+      await Promise.resolve()
+      current = { ...current, ...next }
+      return { ok: true, message: 'saved' }
+    })
+
+    await Promise.all([
+      service.update({ rcloneRemote: 'vps' }),
+      service.update({ remoteMusicRoot: '/srv/music' }),
+    ])
+
+    expect(current).toMatchObject({
+      rcloneRemote: 'vps',
+      remoteMusicRoot: '/srv/music',
+    })
+  })
 })

@@ -1,3 +1,5 @@
+import type { ArtistCredit } from './artist-credit'
+
 export type SyncStage =
   | 'idle'
   | 'ytmusic_auth'
@@ -71,6 +73,72 @@ export interface AuthStatus {
   lastError: string | null
 }
 
+export type AuthSourceCheckState =
+  | 'unchecked'
+  | 'checking'
+  | 'signed_in'
+  | 'signed_out'
+  | 'issue'
+export type AuthSessionState =
+  | 'loading'
+  | 'signed_in'
+  | 'signed_out'
+  | 'issue'
+  | 'no_supported_browser'
+export type AuthRefreshReason =
+  | 'startup'
+  | 'picker_opened'
+  | 'retry'
+  | 'focus_return'
+  | 'credential_rejected'
+export type AuthIssueCode =
+  | 'cookie_store_unreadable'
+  | 'keychain_denied'
+  | 'permission_denied'
+  | 'browser_profile_missing'
+  | 'network_unavailable'
+  | 'credential_rejected'
+  | 'account_enumeration_failed'
+  | 'unexpected_response'
+
+export interface AuthIssueView {
+  code: AuthIssueCode
+  message: string
+  recovery: string
+}
+export interface AuthSourceView {
+  id: string
+  browserName: string
+  browserLogoUrl: string
+  applicationPath: string
+  profileName: string | null
+  status: AuthSourceCheckState
+  accountCount: number | null
+  accountsComplete: boolean
+  issue: AuthIssueView | null
+}
+export interface YouTubeMusicAccountView {
+  key: string
+  displayName: string
+  handle: string | null
+  imageUrl: string | null
+  cachedImageUrl: string | null
+  likedSongCount: number | null
+  likedSongCountState: 'unrequested' | 'loading' | 'loaded' | 'unavailable'
+}
+export interface AuthSessionView {
+  state: AuthSessionState
+  selectedSourceId: string | null
+  selectedAccountKey: string | null
+  activeAccount: YouTubeMusicAccountView | null
+  sources: AuthSourceView[]
+  accounts: YouTubeMusicAccountView[]
+  accountsComplete: boolean
+  isRefreshing: boolean
+  switchingDisabledReason: string | null
+  issue: AuthIssueView | null
+}
+
 export interface AppSettingsView {
   outputDirectory: string
   remoteCopyEnabled: boolean
@@ -99,6 +167,9 @@ export interface SaveSettingsInput {
   embedUnsyncedLyrics: boolean
   writeLrcSidecar: boolean
 }
+export type UpdateSettingsInput = Partial<
+  Omit<SaveSettingsInput, 'ytmusicBrowserAuth' | 'ytDlpCookiesBrowser'>
+>
 
 export interface CommandResult {
   ok: boolean
@@ -204,6 +275,7 @@ export interface LibraryTrackView {
   spotifyTrackId: string | null
   soundcloudTrackId: string | null
   resolvedYoutubeMusicTrackId: string | null
+  artistCredits: ArtistCredit[]
   sourceOrigin: string | null
   catalogReleaseBrowseId: string | null
   catalogReleaseTitle: string | null
@@ -293,15 +365,20 @@ export interface LikedArtistView {
 
 export interface ElectronApi {
   auth: {
-    getStatus: () => Promise<AuthStatus>
-    captureBrowserAuth: (
-      browser: YtDlpCookiesBrowser
-    ) => Promise<BrowserAuthCaptureResult>
-    disconnect: () => Promise<CommandResult>
+    getSnapshot: () => Promise<AuthSessionView>
+    refresh: (
+      scope: 'selected' | 'all',
+      reason: AuthRefreshReason
+    ) => Promise<AuthSessionView>
+    selectSource: (sourceId: string) => Promise<AuthSessionView>
+    selectAccount: (accountKey: string) => Promise<AuthSessionView>
+    loadAccountCounts: () => Promise<AuthSessionView>
+    openSignIn: () => Promise<void>
+    subscribe: (listener: (snapshot: AuthSessionView) => void) => () => void
   }
   settings: {
     get: () => Promise<AppSettingsView>
-    save: (input: SaveSettingsInput) => Promise<SettingsSaveResult>
+    update: (input: UpdateSettingsInput) => Promise<CommandResult>
     testBinaries: () => Promise<BinaryStatus>
     testRemote: () => Promise<CommandResult>
     pickOutputDirectory: () => Promise<string | null>
@@ -325,6 +402,7 @@ export interface ElectronApi {
     refreshArtists: () => Promise<CommandResult>
     listArtists: () => Promise<LikedArtistView[]>
     refreshArtistImages: () => Promise<CommandResult>
+    clearArtistImageCache: () => Promise<CommandResult>
     subscribeArtists: (listener: () => void) => () => void
     subscribeArtistPhotos: (
       listener: (update: ArtistPhotoUpdate) => void

@@ -6,6 +6,7 @@ import {
   remoteStatusLabel,
   songSortValue,
 } from '../src/renderer/src/components/library/library-utils'
+import { artistCreditId } from '../src/shared/artist-credit'
 import type { LibraryTrackView } from '../src/shared/contracts'
 
 function makeTrack(
@@ -21,6 +22,7 @@ function makeTrack(
     spotifyTrackId: null,
     soundcloudTrackId: null,
     resolvedYoutubeMusicTrackId: 'track_1',
+    artistCredits: [{ name: 'Artist Name', channelId: 'UC_ARTIST_NAME' }],
     sourceOrigin: null,
     catalogReleaseBrowseId: null,
     catalogReleaseTitle: null,
@@ -57,10 +59,26 @@ function makeTrack(
 }
 
 describe('library view utils', () => {
-  it('matches artist filters against artist or album artist', () => {
-    expect(matchesArtistFilter(makeTrack(), 'artist name')).toBe(true)
-    expect(matchesArtistFilter(makeTrack(), 'album artist')).toBe(true)
-    expect(matchesArtistFilter(makeTrack(), 'someone else')).toBe(false)
+  it('preserves Unicode artist names in fallback identities', () => {
+    expect(artistCreditId({ name: '宇多田ヒカル', channelId: null })).toBe(
+      'local_artist_宇多田ヒカル'
+    )
+  })
+
+  it('matches artist filters by trusted identity', () => {
+    expect(
+      matchesArtistFilter(makeTrack(), 'artist_channel_UC_ARTIST_NAME')
+    ).toBe(true)
+    expect(
+      matchesArtistFilter(makeTrack(), 'artist_channel_OTHER_ARTIST')
+    ).toBe(false)
+    expect(
+      matchesArtistFilter(
+        makeTrack({ artistCredits: [] }),
+        'local_artist_artist_name',
+        'artist name'
+      )
+    ).toBe(true)
   })
 
   it('matches album filters by album key', () => {

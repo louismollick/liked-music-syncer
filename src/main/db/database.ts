@@ -4,10 +4,11 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
 
-const SCHEMA_VERSION = '12'
+const SCHEMA_VERSION = '13'
 
 const ALL_TABLES = [
   'library_files',
+  'library_track_artists',
   'library_tracks',
   'library_roots',
   'sync_job_tracks',
@@ -74,6 +75,7 @@ function resetSchema(sqlite: Database.Database) {
       spotify_track_id TEXT,
       soundcloud_track_id TEXT,
       resolved_youtube_music_track_id TEXT,
+      artist_credits_json TEXT NOT NULL DEFAULT '[]',
       title TEXT NOT NULL,
       artist TEXT NOT NULL,
       album TEXT NOT NULL,
@@ -145,6 +147,7 @@ function resetSchema(sqlite: Database.Database) {
       spotify_track_id TEXT,
       soundcloud_track_id TEXT,
       resolved_youtube_music_track_id TEXT,
+      artist_credits_json TEXT NOT NULL DEFAULT '[]',
       source_origin TEXT,
       catalog_release_browse_id TEXT,
       catalog_release_title TEXT,
@@ -178,6 +181,15 @@ function resetSchema(sqlite: Database.Database) {
 
     CREATE UNIQUE INDEX library_tracks_identity_key_unique
       ON library_tracks (identity_kind, identity_value);
+
+    CREATE TABLE library_track_artists (
+      track_id TEXT NOT NULL,
+      artist_id TEXT NOT NULL,
+      position INTEGER NOT NULL
+    );
+
+    CREATE UNIQUE INDEX library_track_artists_unique
+      ON library_track_artists (track_id, artist_id);
 
     CREATE TABLE library_files (
       id TEXT PRIMARY KEY,

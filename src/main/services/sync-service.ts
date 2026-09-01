@@ -1,6 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import path from 'node:path'
+import {
+  normalizeArtistCredits,
+  parseArtistCreditsJson,
+  stringifyArtistCredits,
+} from '@shared/artist-credit'
 import type {
   CommandResult,
   LikedArtistView,
@@ -16,10 +21,12 @@ import type {
 } from '@shared/contracts'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { execa } from 'execa'
+import type { AuthCoordinator } from '../auth/auth-coordinator'
 import type { AppDatabase } from '../db/database'
 import {
   libraryFilesTable,
   libraryRootsTable,
+  libraryTrackArtistsTable,
   libraryTracksTable,
   syncJobsTable,
   syncJobTracksTable,
@@ -51,6 +58,7 @@ interface WorkerTrackPayload {
   spotify_track_id?: string | null
   soundcloud_track_id?: string | null
   resolved_youtube_music_track_id?: string | null
+  artist_credits?: Array<{ name: string; channel_id: string | null }>
   title: string
   artist: string
   album: string
@@ -134,6 +142,8 @@ interface ReprocessCandidatePayload {
   spotify_track_id: string | null
   soundcloud_track_id: string | null
   resolved_youtube_music_track_id: string | null
+  artist_credits: Array<{ name: string; channel_id: string | null }>
+  tag_schema_version: number | null
   source_origin: string | null
   catalog_release_browse_id: string | null
   catalog_release_title: string | null
@@ -379,6 +389,16 @@ def text(row, *names):
     current = value(row, *names)
     return str(current) if current is not None else None
 
+def json_array(row, *names):
+    current = text(row, *names)
+    if not current:
+        return []
+    try:
+        parsed = json.loads(current)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError):
+        return []
+
 def binary_hash(current):
     if not isinstance(current, str):
         return None
@@ -412,6 +432,7 @@ for index in range(0, len(paths), 100):
             "-LMS_CATALOG_RELEASE_BROWSE_ID",
             "-LMS_CATALOG_RELEASE_TITLE",
             "-LMS_CATALOG_RELEASE_KIND",
+            "-LMS_ARTIST_CREDITS",
             "-Title", "-Artist", "-Album", "-AlbumArtist",
             "-TrackNumber", "-TrackTotal", "-DiscNumber", "-DiscTotal", "-DiskNumber", "-DiskTotal",
             "-Year", "-ContentCreateDate", "-Genre", "-Language", "-ISRC",
@@ -444,6 +465,7 @@ for index in range(0, len(paths), 100):
             "catalog_release_browse_id": text(row, "LMS_CATALOG_RELEASE_BROWSE_ID"),
             "catalog_release_title": text(row, "LMS_CATALOG_RELEASE_TITLE"),
             "catalog_release_kind": text(row, "LMS_CATALOG_RELEASE_KIND"),
+            "artist_credits": json_array(row, "LMS_ARTIST_CREDITS"),
             "title": text(row, "Title"), "artist": text(row, "Artist"),
             "album": text(row, "Album"), "album_artist": text(row, "AlbumArtist"),
             "track_number": integer(row, "TrackNumber"), "track_total": integer(row, "TrackTotal"),
@@ -514,6 +536,7 @@ export class SyncService {
   private schedulerRunning = false
   private readonly poTokenService: PoTokenService
   private readonly getBundledFfmpegPath: () => string
+  private authCoordinator: AuthCoordinator | null = null
 
   constructor(
     private readonly db: AppDatabase,
@@ -544,6 +567,41 @@ export class SyncService {
   subscribe(listener: SyncListener) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  setAuthCoordinator(authCoordinator: AuthCoordinator) {
+    this.authCoordinator = authCoordinator
+  }
+
+  private async getValidatedBrowserAuth(
+    runtime: RuntimeSettingsLike
+  ): Promise<string> {
+    if (this.authCoordinator) {
+      return this.authCoordinator.getValidatedCredential()
+    }
+    if (!runtime.ytmusicBrowserAuth) {
+      throw new Error('Pull YT Music auth from your browser first.')
+    }
+    const result =
+      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
+        'auth-status',
+        { browser_auth_input: runtime.ytmusicBrowserAuth }
+      )
+    if (!result.ok || !result.is_authenticated) {
+      throw new Error(result.message || 'YT Music auth check failed.')
+    }
+    const credential = result.credential_json ?? runtime.ytmusicBrowserAuth
+    if (result.credential_json) {
+      await this.settingsService.saveYtMusicBrowserAuth(result.credential_json)
+    }
+    return credential
+  }
+
+  async hasQueuedOrRunningJobs(): Promise<boolean> {
+    const row = await this.db.query.syncJobsTable.findFirst({
+      where: inArray(syncJobsTable.status, ['queued', 'running']),
+    })
+    return Boolean(row)
   }
 
   async recoverInterruptedJobs() {
@@ -980,28 +1038,13 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
-      logMain({
-        level: 'warn',
-        source: 'sync',
-        message: 'startRun blocked: missing YT Music auth',
-        context: { kind: input.kind },
-      })
+    let browserAuthInput: string
+    try {
+      browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+    } catch (error) {
       return {
         ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
-
-    const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        { browser_auth_input: runtime.ytmusicBrowserAuth }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
-      return {
-        ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
+        message: error instanceof Error ? error.message : String(error),
       }
     }
 
@@ -1017,14 +1060,6 @@ export class SyncService {
 
     await this.poTokenService.ensureReady()
     const poTokenBundle = this.getPoTokenBundle()
-    const browserAuthInput =
-      authResult.credential_json ?? runtime.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
-
     const jobId = await this.createJob({
       kind: input.kind,
       scope: input.scope,
@@ -1092,22 +1127,13 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
+    let browserAuthInput: string
+    try {
+      browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+    } catch (error) {
       return {
         ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
-
-    const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        { browser_auth_input: runtime.ytmusicBrowserAuth }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
-      return {
-        ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
+        message: error instanceof Error ? error.message : String(error),
       }
     }
 
@@ -1116,14 +1142,6 @@ export class SyncService {
 
     await this.poTokenService.ensureReady()
     const poTokenBundle = this.getPoTokenBundle()
-    const browserAuthInput =
-      authResult.credential_json ?? runtime.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
-
     const jobId = sourceJob.id
     const retryItems = failedTracks.map((track, index) => {
       const trackWorkId = track.id
@@ -1258,35 +1276,20 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
-      return {
-        ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
     const reconcileResult = await this.libraryService.reconcileLocalLibrary()
     if (!reconcileResult.ok) return reconcileResult
-    const authResult =
-      await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-        'auth-status',
-        { browser_auth_input: runtime.ytmusicBrowserAuth }
-      )
-    if (!authResult.ok || !authResult.is_authenticated) {
+    let browserAuthInput: string
+    try {
+      browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+    } catch (error) {
       return {
         ok: false,
-        message: authResult.message || 'YT Music auth check failed.',
+        message: error instanceof Error ? error.message : String(error),
       }
     }
 
     await this.poTokenService.ensureReady()
     const poTokenBundle = this.getPoTokenBundle()
-    const browserAuthInput =
-      authResult.credential_json ?? runtime.ytmusicBrowserAuth
-    if (authResult.credential_json) {
-      await this.settingsService.saveYtMusicBrowserAuth(
-        authResult.credential_json
-      )
-    }
     const candidates = failedTracks.map((track) => ({
       track_work_id: track.id,
       library_track_id: track.libraryTrackId ?? '',
@@ -1294,6 +1297,10 @@ export class SyncService {
       spotify_track_id: track.spotifyTrackId,
       soundcloud_track_id: track.soundcloudTrackId,
       resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+        (credit) => ({ name: credit.name, channel_id: credit.channelId })
+      ),
+      tag_schema_version: null,
       source_origin: track.sourceOrigin,
       catalog_release_browse_id: track.catalogReleaseBrowseId,
       catalog_release_title: track.catalogReleaseTitle,
@@ -1555,6 +1562,9 @@ export class SyncService {
       spotify_track_id: track.spotifyTrackId,
       soundcloud_track_id: track.soundcloudTrackId,
       resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+        (credit) => ({ name: credit.name, channel_id: credit.channelId })
+      ),
       title: track.title,
       artist: track.artist,
       album: track.album,
@@ -1598,7 +1608,11 @@ export class SyncService {
       soundcloudTrackId: item.soundcloud_track_id,
       title: item.title,
       artist: item.artist,
-      artists: [{ name: item.artist }],
+      artists: normalizeArtistCredits(item.artist_credits).map((credit) => ({
+        name: credit.name,
+        id: credit.channelId,
+      })),
+      artistCredits: item.artist_credits,
       album: { name: item.album },
       albumArtist: item.album_artist,
       sourceUrl: item.source_url,
@@ -1909,6 +1923,7 @@ export class SyncService {
         candidate.resolved_youtube_music_track_id,
       title: candidate.title ?? 'Unknown Title',
       artist: candidate.artist ?? 'Unknown Artist',
+      artist_credits: candidate.artist_credits,
       album: candidate.album ?? 'Unknown Album',
       album_artist: candidate.album_artist ?? candidate.artist ?? 'Unknown',
       source_url: `https://music.youtube.com/watch?v=${youtubeMusicTrackId}`,
@@ -1990,13 +2005,6 @@ export class SyncService {
         message: 'Output directory must be configured first.',
       }
     }
-    if (!runtime.ytmusicBrowserAuth) {
-      return {
-        ok: false,
-        message: 'Pull YT Music auth from your browser first.',
-      }
-    }
-
     const jobId = await this.createJob({
       kind: 'reprocess',
       scope,
@@ -2015,29 +2023,19 @@ export class SyncService {
         return reconcileResult
       }
 
-      const authResult =
-        await this.pythonWorker.runJsonCommand<WorkerAuthStatusResponse>(
-          'auth-status',
-          { browser_auth_input: runtime.ytmusicBrowserAuth }
-        )
-      if (!authResult.ok || !authResult.is_authenticated) {
+      let browserAuthInput: string
+      try {
+        browserAuthInput = await this.getValidatedBrowserAuth(runtime)
+      } catch (error) {
         await this.failPreparingJob(jobId)
         return {
           ok: false,
-          message: authResult.message || 'YT Music auth check failed.',
+          message: error instanceof Error ? error.message : String(error),
         }
       }
 
       await this.poTokenService.ensureReady()
       const poTokenBundle = this.getPoTokenBundle()
-      const browserAuthInput =
-        authResult.credential_json ?? runtime.ytmusicBrowserAuth
-      if (authResult.credential_json) {
-        await this.settingsService.saveYtMusicBrowserAuth(
-          authResult.credential_json
-        )
-      }
-
       const candidates = await this.buildReprocessCandidates(selectedArtists)
       if (candidates.length === 0) {
         await this.db
@@ -2604,6 +2602,7 @@ export class SyncService {
       spotifyTrackId: item.spotify_track_id ?? null,
       soundcloudTrackId: item.soundcloud_track_id ?? null,
       resolvedYoutubeMusicTrackId: item.resolved_youtube_music_track_id ?? null,
+      artistCreditsJson: stringifyArtistCredits(item.artist_credits),
       title: item.title,
       artist: item.artist,
       album: item.album,
@@ -2840,13 +2839,22 @@ export class SyncService {
     )
     if (!localRoot) return []
 
-    const [tracks, files] = await Promise.all([
+    const [tracks, files, trackArtists] = await Promise.all([
       this.db.select().from(libraryTracksTable),
       this.db
         .select()
         .from(libraryFilesTable)
         .where(eq(libraryFilesTable.rootId, localRoot.id)),
+      this.db.select().from(libraryTrackArtistsTable),
     ])
+    const selectedArtistIds = new Set(
+      selectedArtists.map((artist) => artist.id)
+    )
+    const selectedTrackIds = new Set(
+      trackArtists
+        .filter((link) => selectedArtistIds.has(link.artistId))
+        .map((link) => link.trackId)
+    )
     const filesByTrackId = new Map<string, typeof files>()
     for (const file of files) {
       const current = filesByTrackId.get(file.trackId) ?? []
@@ -2857,10 +2865,7 @@ export class SyncService {
     const candidates: ReprocessCandidatePayload[] = []
     for (const track of tracks) {
       if (!this.isReprocessEligibleTrack(track)) continue
-      if (
-        selectedArtists.length > 0 &&
-        !this.trackMatchesSelectedArtists(track.artist, selectedArtists)
-      ) {
+      if (selectedArtists.length > 0 && !selectedTrackIds.has(track.id)) {
         continue
       }
       const localFiles = filesByTrackId.get(track.id) ?? []
@@ -2892,6 +2897,10 @@ export class SyncService {
         spotify_track_id: track.spotifyTrackId,
         soundcloud_track_id: track.soundcloudTrackId,
         resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+        artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+          (credit) => ({ name: credit.name, channel_id: credit.channelId })
+        ),
+        tag_schema_version: track.tagSchemaVersion,
         source_origin: track.sourceOrigin,
         catalog_release_browse_id: track.catalogReleaseBrowseId,
         catalog_release_title: track.catalogReleaseTitle,
@@ -2995,6 +3004,9 @@ export class SyncService {
       spotify_track_id: track.spotifyTrackId,
       soundcloud_track_id: track.soundcloudTrackId,
       resolved_youtube_music_track_id: track.resolvedYoutubeMusicTrackId,
+      artist_credits: parseArtistCreditsJson(track.artistCreditsJson).map(
+        (credit) => ({ name: credit.name, channel_id: credit.channelId })
+      ),
       title: track.title ?? track.identityValue,
       artist: track.artist ?? 'Unknown artist',
       album: track.album ?? 'Unknown album',
@@ -3093,41 +3105,22 @@ export class SyncService {
       )
   }
 
-  private normalizeArtistName(value: string) {
-    return value
-      .toLowerCase()
-      .replace(/[^\w\s]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-  }
-
-  private trackMatchesSelectedArtists(
-    artist: string | null,
-    selected: LikedArtistView[]
-  ) {
-    if (!artist) return false
-    const parts = artist
-      .split(',')
-      .map((part) => this.normalizeArtistName(part))
-      .filter(Boolean)
-    if (parts.length === 0) return false
-    const wanted = new Set(
-      selected.map((item) => this.normalizeArtistName(item.name))
-    )
-    return parts.some((part) => wanted.has(part))
-  }
-
   private async getManagedFilesForArtists(
     selected: LikedArtistView[]
   ): Promise<ManagedFileRow[]> {
-    const tracks = await this.db.select().from(libraryTracksTable)
+    const [tracks, trackArtists] = await Promise.all([
+      this.db.select().from(libraryTracksTable),
+      this.db.select().from(libraryTrackArtistsTable),
+    ])
+    const selectedArtistIds = new Set(selected.map((artist) => artist.id))
+    const linkedTrackIds = new Set(
+      trackArtists
+        .filter((link) => selectedArtistIds.has(link.artistId))
+        .map((link) => link.trackId)
+    )
     const matchedTrackIds = new Set(
       tracks
-        .filter(
-          (track) =>
-            track.managedByApp &&
-            this.trackMatchesSelectedArtists(track.artist, selected)
-        )
+        .filter((track) => track.managedByApp && linkedTrackIds.has(track.id))
         .map((track) => track.id)
     )
     if (matchedTrackIds.size === 0) return []

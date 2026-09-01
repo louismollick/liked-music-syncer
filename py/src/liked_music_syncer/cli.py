@@ -10,6 +10,7 @@ from .artwork import extract_embedded_cover_thumbnail
 from .auth import (
     check_browser_auth_status,
     capture_browser_auth_from_browser,
+    fetch_liked_song_count,
 )
 from .json_io import read_stdin_json, write_json
 from .liked_artists import (
@@ -74,8 +75,17 @@ def main() -> int:
         write_json(
             capture_browser_auth_from_browser(
                 browser_name=str(payload.get("browser", "firefox")),
+                profile_name=(
+                    str(payload["profile_name"])
+                    if payload.get("profile_name")
+                    else None
+                ),
             )
         )
+        return 0
+
+    if command == "auth-liked-song-count":
+        write_json(fetch_liked_song_count(str(payload.get("browser_auth_input", ""))))
         return 0
 
     if command == "doctor":

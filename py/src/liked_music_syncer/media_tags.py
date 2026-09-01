@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from pathlib import Path
@@ -9,7 +10,7 @@ from mediafile import Image, MP4StorageStyle, MediaField, MediaFile
 
 from .models import SyncItemState
 
-LMS_TAG_SCHEMA_VERSION = 3
+LMS_TAG_SCHEMA_VERSION = 4
 LMS_CUSTOM_FIELDS: dict[str, MediaField] = {
     "lms_tag_schema_version": MediaField(
         MP4StorageStyle("----:com.apple.iTunes:LMS_TAG_SCHEMA_VERSION")
@@ -40,6 +41,9 @@ LMS_CUSTOM_FIELDS: dict[str, MediaField] = {
     ),
     "lms_catalog_release_kind": MediaField(
         MP4StorageStyle("----:com.apple.iTunes:LMS_CATALOG_RELEASE_KIND")
+    ),
+    "lms_artist_credits": MediaField(
+        MP4StorageStyle("----:com.apple.iTunes:LMS_ARTIST_CREDITS")
     ),
 }
 
@@ -131,6 +135,9 @@ def write_media_tags(
     media.lms_catalog_release_browse_id = item.catalog_release_browse_id or ""
     media.lms_catalog_release_title = item.catalog_release_title or ""
     media.lms_catalog_release_kind = item.catalog_release_kind or ""
+    media.lms_artist_credits = json.dumps(
+        item.artist_credits, ensure_ascii=False, separators=(",", ":")
+    )
     media.comments = None
     media.save()
 

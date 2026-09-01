@@ -5,6 +5,8 @@ import type {
   BinaryStatus,
   CommandResult,
   SaveSettingsInput,
+  UpdateSettingsInput,
+  YouTubeMusicAccountView,
   YtDlpCookiesBrowser,
 } from '@shared/contracts'
 import { eq } from 'drizzle-orm'
@@ -21,7 +23,7 @@ const DEFAULT_SETTINGS: AppSettingsView = {
   remoteMusicRoot: '',
   lyricsApiBaseUrl: '',
   hasYtMusicBrowserAuth: false,
-  ytDlpCookiesBrowser: 'firefox',
+  ytDlpCookiesBrowser: 'chrome',
   folderTemplate: '{albumartist}/{album}',
   fileTemplate: '{track:02d} {title}',
   embedUnsyncedLyrics: true,
@@ -61,6 +63,8 @@ export interface RuntimeSettings {
 }
 
 export class SettingsService {
+  private updateQueue: Promise<void> = Promise.resolve()
+
   constructor(
     private readonly db: AppDatabase,
     private readonly settingsFile: string
@@ -142,6 +146,70 @@ export class SettingsService {
       ok: true,
       message: 'Settings saved.',
     }
+  }
+
+  async update(input: UpdateSettingsInput): Promise<CommandResult> {
+    const run = this.updateQueue.then(async () => {
+      const current = await this.getView()
+      await this.save({
+        outputDirectory: input.outputDirectory ?? current.outputDirectory,
+        remoteCopyEnabled: input.remoteCopyEnabled ?? current.remoteCopyEnabled,
+        ytDlpCookiesBrowser: current.ytDlpCookiesBrowser,
+        rcloneRemote: input.rcloneRemote ?? current.rcloneRemote,
+        remoteMusicRoot: input.remoteMusicRoot ?? current.remoteMusicRoot,
+        lyricsApiBaseUrl: input.lyricsApiBaseUrl ?? current.lyricsApiBaseUrl,
+        folderTemplate: input.folderTemplate ?? current.folderTemplate,
+        fileTemplate: input.fileTemplate ?? current.fileTemplate,
+        embedUnsyncedLyrics:
+          input.embedUnsyncedLyrics ?? current.embedUnsyncedLyrics,
+        writeLrcSidecar: input.writeLrcSidecar ?? current.writeLrcSidecar,
+      })
+    })
+    this.updateQueue = run.catch(() => undefined)
+    await run
+    return { ok: true, message: 'Setting updated.' }
+  }
+
+  async getStoredYtMusicBrowserAuth() {
+    return (await this.getSecretOrPlain('ytmusicBrowserAuth')) ?? ''
+  }
+  async getAuthSelection(): Promise<{
+    sourceId: string | null
+    account: YouTubeMusicAccountView | null
+  }> {
+    const sourceId = await this.getSecretOrPlain('selectedAuthSource')
+    const raw = await this.getSecretOrPlain('activeAuthAccount')
+    try {
+      return {
+        sourceId,
+        account: raw ? (JSON.parse(raw) as YouTubeMusicAccountView) : null,
+      }
+    } catch {
+      return { sourceId, account: null }
+    }
+  }
+  async setSelectedAuthSource(sourceId: string) {
+    await this.writeValue('selectedAuthSource', sourceId)
+  }
+  async getRememberedAuthAccount(
+    sourceId: string
+  ): Promise<YouTubeMusicAccountView | null> {
+    const raw = await this.getSecretOrPlain(`authAccount:${sourceId}`)
+    try {
+      return raw ? (JSON.parse(raw) as YouTubeMusicAccountView) : null
+    } catch {
+      return null
+    }
+  }
+  async commitAuthSelection(
+    sourceId: string,
+    credential: string,
+    account: YouTubeMusicAccountView
+  ) {
+    await this.writeSecret('ytmusicBrowserAuth', credential)
+    await this.writeValue('selectedAuthSource', sourceId)
+    await this.writeSecret('activeAuthAccount', JSON.stringify(account))
+    await this.writeSecret(`authAccount:${sourceId}`, JSON.stringify(account))
   }
 
   async getRuntimeSettings(): Promise<RuntimeSettings> {

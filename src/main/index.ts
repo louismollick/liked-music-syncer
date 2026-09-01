@@ -2,10 +2,12 @@ import path, { join } from 'node:path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { app, BrowserWindow, shell } from 'electron'
 import icon from '../../resources/icon.png?asset'
+import { AuthCoordinator } from './auth/auth-coordinator'
 import { createDatabase } from './db/database'
 import { registerIpcHandlers } from './ipc'
 import { ArtistPhotoCache } from './services/artist-photo-cache'
 import {
+  buildAccountImageMediaUrl,
   registerArtworkProtocol,
   registerArtworkSchemePrivileges,
 } from './services/artwork-protocol'
@@ -103,13 +105,26 @@ app.whenReady().then(async () => {
     app.getPath('userData'),
     'artist-photo-cache'
   )
+  const accountImageCacheDirectory = path.join(
+    app.getPath('userData'),
+    'account-image-cache'
+  )
   const artworkService = new ArtworkService(
     db,
     pythonWorkerService,
     artworkCacheDirectory
   )
   const artistPhotoCache = new ArtistPhotoCache(artistPhotoCacheDirectory)
-  registerArtworkProtocol(artworkCacheDirectory, artistPhotoCacheDirectory)
+  const accountImageCache = new ArtistPhotoCache(
+    accountImageCacheDirectory,
+    undefined,
+    buildAccountImageMediaUrl
+  )
+  registerArtworkProtocol(
+    artworkCacheDirectory,
+    artistPhotoCacheDirectory,
+    accountImageCacheDirectory
+  )
   const libraryService = new LibraryService(
     db,
     settingsService,
@@ -133,61 +148,106 @@ app.whenReady().then(async () => {
     poTokenService,
     getBundledFfmpegPath
   )
+  const authCoordinator = new AuthCoordinator(
+    settingsService,
+    pythonWorkerService,
+    () => syncService.hasQueuedOrRunningJobs(),
+    async () => {
+      if (process.platform !== 'darwin') return null
+      try {
+        return (
+          await app.getApplicationInfoForProtocol('https://music.youtube.com')
+        ).path
+      } catch {
+        return null
+      }
+    },
+    accountImageCache
+  )
+  syncService.setAuthCoordinator(authCoordinator)
+  likedArtistsService.setAuthCoordinator(authCoordinator)
   await syncService.recoverInterruptedJobs()
+  authCoordinator.setSwitchingDisabled(
+    await syncService.hasQueuedOrRunningJobs()
+  )
+  syncService.subscribe((snapshot) => {
+    authCoordinator.setSwitchingDisabled(
+      snapshot.jobs.some(
+        (job) => job.status === 'queued' || job.status === 'running'
+      )
+    )
+  })
 
   createWindow()
   registerIpcHandlers(
     mainWindow!,
     settingsService,
     authService,
+    authCoordinator,
     syncService,
     libraryService,
     likedArtistsService,
     artworkService,
     getBundledFfmpegPath
   )
-  void libraryService.reconcileLocalLibrary().then(async (result) => {
-    if (!result.ok) {
-      logMain({
-        level: 'error',
-        source: 'startup',
-        message: 'Startup library reconcile failed',
-        context: { error: result.message },
-      })
-      return
-    }
-    await likedArtistsService.refreshArtists()
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('library:artistsUpdated')
-    }
-    void likedArtistsService
-      .refreshArtistImages()
-      .then((result) => {
-        logMain({
-          level: result.ok ? 'info' : 'warn',
-          source: 'startup',
-          message: 'Startup artist image refresh complete',
-          context: {
-            ok: result.ok,
-            message: result.message,
-            details: result.details ?? null,
-          },
-        })
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('library:artistsUpdated')
-        }
-      })
-      .catch((error) => {
+  authCoordinator.subscribe((snapshot) => {
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send('auth:snapshot', snapshot)
+  })
+  const authBootstrap = authCoordinator.bootstrap().catch((error) => {
+    logMain({
+      level: 'error',
+      source: 'startup',
+      message: 'Authentication bootstrap failed',
+      context: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    })
+  })
+  void authBootstrap
+    .then(() => libraryService.reconcileLocalLibrary())
+    .then(async (result) => {
+      if (!result.ok) {
         logMain({
           level: 'error',
           source: 'startup',
-          message: 'Startup artist image refresh failed',
-          context: {
-            error: error instanceof Error ? error.message : String(error),
-          },
+          message: 'Startup library reconcile failed',
+          context: { error: result.message },
         })
-      })
-  })
+        return
+      }
+      await likedArtistsService.refreshArtists()
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('library:artistsUpdated')
+      }
+      void likedArtistsService
+        .refreshArtistImages()
+        .then((result) => {
+          logMain({
+            level: result.ok ? 'info' : 'warn',
+            source: 'startup',
+            message: 'Startup artist image refresh complete',
+            context: {
+              ok: result.ok,
+              message: result.message,
+              details: result.details ?? null,
+            },
+          })
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('library:artistsUpdated')
+          }
+        })
+        .catch((error) => {
+          logMain({
+            level: 'error',
+            source: 'startup',
+            message: 'Startup artist image refresh failed',
+            context: {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
+        })
+    })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -1,4 +1,8 @@
-import type { LibraryTrackView, LikedArtistView } from '@shared/contracts'
+import type {
+  AuthSessionView,
+  LibraryTrackView,
+  LikedArtistView,
+} from '@shared/contracts'
 import type { JSX, ReactNode } from 'react'
 import type { AlbumGroup } from '../library/library-utils'
 import { SearchBar } from '../search/SearchBar'
@@ -11,6 +15,12 @@ interface Props {
     completed: number
     failed: number
   }
+  authSession: AuthSessionView
+  onSelectAccount: (key: string) => Promise<boolean>
+  onLoadAccountCounts: () => Promise<void>
+  onError: (message: string) => void
+  switchingAccountKey: string | null
+  accountSwitchError: string | null
   artists: LikedArtistView[]
   tracks: LibraryTrackView[]
   onSearchArtist: (artist: LikedArtistView) => void
@@ -21,6 +31,12 @@ interface Props {
 
 export function MainLayout({
   counts,
+  authSession,
+  onSelectAccount,
+  onLoadAccountCounts,
+  onError,
+  switchingAccountKey,
+  accountSwitchError,
   artists,
   tracks,
   onSearchArtist,
@@ -30,7 +46,15 @@ export function MainLayout({
 }: Props): JSX.Element {
   return (
     <div className="flex h-screen bg-surface-primary overflow-hidden">
-      <Sidebar counts={counts} />
+      <Sidebar
+        counts={counts}
+        authSession={authSession}
+        onSelectAccount={onSelectAccount}
+        onLoadAccountCounts={onLoadAccountCounts}
+        onError={onError}
+        switchingAccountKey={switchingAccountKey}
+        accountSwitchError={accountSwitchError}
+      />
       <div className="flex-1 flex flex-col overflow-hidden">
         <SearchBar
           artists={artists}

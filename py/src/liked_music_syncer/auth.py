@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Any, Iterator
@@ -44,7 +45,9 @@ def _custom_browser_profile(browser_name: str) -> Path | None:
     return profiles.get(browser_name)
 
 
-def _extract_browser_cookies(browser_name: str) -> tuple[CookieJar, tuple[str, ...]]:
+def _extract_browser_cookies(
+    browser_name: str, profile_name: str | None = None
+) -> tuple[CookieJar, tuple[str, ...]]:
     normalized = browser_name.strip().lower()
     profile = _custom_browser_profile(normalized)
     if normalized == "zen":
@@ -55,18 +58,26 @@ def _extract_browser_cookies(browser_name: str) -> tuple[CookieJar, tuple[str, .
         )
     if normalized == "helium":
         assert profile is not None
+        selected_profile = Path(profile_name) if profile_name else profile
         errors: list[str] = []
         for backend in HELIUM_BACKENDS:
             try:
-                jar = extract_cookies_from_browser(backend, profile=str(profile))
+                jar = extract_cookies_from_browser(
+                    backend, profile=str(selected_profile)
+                )
                 _get_cookie_header(jar, YTMUSIC_ORIGIN)
-                return jar, (backend, str(profile))
+                return jar, (backend, str(selected_profile))
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{backend}: {exc}")
         raise ValueError(
             "Could not decrypt YouTube Music cookies from Helium. "
             "Make sure you are signed in at music.youtube.com and fully quit Helium. "
             f"Tried compatible Chromium keychains ({'; '.join(errors)})."
+        )
+    if profile_name:
+        return extract_cookies_from_browser(normalized, profile=profile_name), (
+            normalized,
+            profile_name,
         )
     return extract_cookies_from_browser(normalized), (normalized,)
 
@@ -191,9 +202,7 @@ def _get_cookie_header(cookie_jar: CookieJar, url: str) -> str:
     return cookie_header
 
 
-def build_browser_auth_from_browser_cookies(browser_name: str) -> str:
-    cookie_jar, _ = _extract_browser_cookies(browser_name)
-    cookie_header = _get_cookie_header(cookie_jar, YTMUSIC_ORIGIN)
+def _build_browser_auth_from_cookie_header(cookie_header: str, auth_user: int) -> str:
     try:
         sapisid = sapisid_from_cookie(cookie_header)
     except KeyError as exc:
@@ -206,43 +215,184 @@ def build_browser_auth_from_browser_cookies(browser_name: str) -> str:
         {
             "authorization": get_authorization(f"{sapisid} {YTMUSIC_ORIGIN}"),
             "cookie": cookie_header,
-            "x-goog-authuser": "0",
+            "x-goog-authuser": str(auth_user),
             "x-origin": YTMUSIC_ORIGIN,
         }
     )
     return json.dumps(headers)
 
 
+def build_browser_auth_from_browser_cookies(browser_name: str, auth_user: int = 0) -> str:
+    cookie_jar, _ = _extract_browser_cookies(browser_name)
+    return _build_browser_auth_from_cookie_header(
+        _get_cookie_header(cookie_jar, YTMUSIC_ORIGIN), auth_user
+    )
+
+
 def check_browser_auth_status(browser_auth_input: str) -> AuthStatusResult:
     try:
-        normalized, _ = _create_validated_browser_auth_client(browser_auth_input)
+        normalized, client = _create_validated_browser_auth_client(browser_auth_input)
+        account = _get_safe_account(client)
         return AuthStatusResult(
             ok=True,
             is_authenticated=True,
             message="Browser auth check succeeded.",
             credential_json=normalized,
+            account=account,
         )
     except Exception as exc:  # noqa: BLE001
         return AuthStatusResult(
             ok=False,
             is_authenticated=False,
             message=str(exc),
+            issue_code=_classify_auth_error(exc),
         )
 
 
-def capture_browser_auth_from_browser(browser_name: str) -> AuthStatusResult:
+def capture_browser_auth_from_browser(
+    browser_name: str, profile_name: str | None = None
+) -> AuthStatusResult:
     try:
-        browser_auth = build_browser_auth_from_browser_cookies(browser_name)
-        normalized, _ = _create_validated_browser_auth_client(browser_auth)
+        cookie_jar, _ = (
+            _extract_browser_cookies(browser_name, profile_name)
+            if profile_name
+            else _extract_browser_cookies(browser_name)
+        )
+        cookie_header = _get_cookie_header(cookie_jar, YTMUSIC_ORIGIN)
+
+        def probe(auth_user: int) -> tuple[int, str, dict[str, str | None]] | Exception:
+            try:
+                candidate = _build_browser_auth_from_cookie_header(cookie_header, auth_user)
+                normalized, client = _create_validated_browser_auth_client(candidate)
+                return auth_user, normalized, _get_required_account(client)
+            except Exception as exc:  # noqa: BLE001
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            probed = list(executor.map(probe, range(5)))
+
+        accounts: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for result in probed:
+            if isinstance(result, Exception):
+                continue
+            auth_user, credential, account = result
+            identity = (
+                account.get("handle") or "",
+                account.get("display_name") or "",
+                account.get("image_url") or "",
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            accounts.append(
+                {
+                    **account,
+                    "auth_user": auth_user,
+                    "credential_json": credential,
+                }
+            )
+
+        if not accounts:
+            failures = [result for result in probed if isinstance(result, Exception)]
+            non_session = [
+                failure
+                for failure in failures
+                if _classify_auth_error(failure, browser_name) != "no_session"
+            ]
+            if non_session:
+                raise non_session[0]
+            raise ValueError("No valid YouTube Music session found in browser account slots 0 through 4.")
+        first = accounts[0]
         return AuthStatusResult(
             ok=True,
             is_authenticated=True,
             message=f"Loaded YT Music browser auth from {browser_name}.",
-            credential_json=normalized,
+            credential_json=str(first["credential_json"]),
+            account={
+                "display_name": first.get("display_name"),
+                "handle": first.get("handle"),
+                "image_url": first.get("image_url"),
+            },
+            accounts=accounts,
         )
     except Exception as exc:  # noqa: BLE001
         return AuthStatusResult(
             ok=False,
             is_authenticated=False,
             message=str(exc),
+            issue_code=_classify_auth_error(exc, browser_name),
         )
+
+
+def fetch_liked_song_count(browser_auth_input: str) -> dict[str, Any]:
+    try:
+        _, client = _create_validated_browser_auth_client(browser_auth_input)
+        liked = client.get_liked_songs(limit=5000)
+        tracks = liked.get("tracks") if isinstance(liked, dict) else None
+        if not isinstance(tracks, list):
+            return {"ok": False, "count": None}
+        return {"ok": True, "count": sum(isinstance(track, dict) for track in tracks)}
+    except Exception:
+        return {"ok": False, "count": None}
+
+
+def _safe_account(value: Any) -> dict[str, str | None]:
+    if not isinstance(value, dict):
+        return {"display_name": "YouTube Music", "handle": None, "image_url": None}
+    name = value.get("accountName") or value.get("name") or "YouTube Music"
+    handle = value.get("channelHandle") or value.get("handle")
+    image = value.get("accountPhotoUrl") or value.get("imageUrl")
+    return {
+        "display_name": str(name),
+        "handle": str(handle) if isinstance(handle, str) else None,
+        "image_url": str(image) if isinstance(image, str) else None,
+    }
+
+
+def _get_safe_account(client: Any) -> dict[str, str | None]:
+    getter = getattr(client, "get_account_info", None)
+    if not callable(getter):
+        return _safe_account(None)
+    for _ in range(2):
+        try:
+            return _safe_account(getter())
+        except Exception:
+            pass
+    # Account metadata must not invalidate usable credentials.
+    return _safe_account(None)
+
+
+def _get_required_account(client: Any) -> dict[str, str | None]:
+    getter = getattr(client, "get_account_info", None)
+    if not callable(getter):
+        raise ValueError("YouTube Music account metadata is unavailable.")
+    value = getter()
+    if not isinstance(value, dict):
+        raise ValueError("YouTube Music account metadata returned an unexpected response.")
+    account = _safe_account(value)
+    if account["display_name"] == "YouTube Music" and account["handle"] is None:
+        raise ValueError("YouTube Music account metadata returned an unexpected response.")
+    return account
+
+
+def _classify_auth_error(exc: Exception, browser_name: str | None = None) -> str:
+    message = str(exc).lower()
+    if (
+        "no youtube music cookies" in message
+        or "missing the __secure" in message
+        or "sign-in prompt" in message
+        or "no valid youtube music session" in message
+    ):
+        return "no_session"
+    if "keychain" in message or "decrypt" in message:
+        return "keychain_denied"
+    if browser_name == "safari" and ("permission" in message or "operation not permitted" in message):
+        return "permission_denied"
+    if "profile" in message and ("missing" in message or "not found" in message):
+        return "browser_profile_missing"
+    if "network" in message or "timed out" in message or "urlopen" in message:
+        return "network_unavailable"
+    if "unexpected response" in message:
+        return "unexpected_response"
+    return "cookie_store_unreadable"

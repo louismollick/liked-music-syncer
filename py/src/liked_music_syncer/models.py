@@ -5,12 +5,41 @@ from pathlib import Path
 from typing import Any
 
 
+ArtistCredit = dict[str, str | None]
+
+
+def normalize_artist_credits(value: Any) -> list[ArtistCredit]:
+    if not isinstance(value, list):
+        return []
+    credits: list[ArtistCredit] = []
+    seen: set[tuple[str, str | None]] = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name")
+        channel_id = raw.get("channel_id") or raw.get("id")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        normalized_channel_id = (
+            channel_id if isinstance(channel_id, str) and channel_id else None
+        )
+        key = (name.strip(), normalized_channel_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        credits.append({"name": key[0], "channel_id": key[1]})
+    return credits
+
+
 @dataclass(slots=True)
 class AuthStatusResult:
     ok: bool
     is_authenticated: bool
     message: str
     credential_json: str | None = None
+    account: dict[str, str | None] | None = None
+    accounts: list[dict[str, Any]] | None = None
+    issue_code: str | None = None
 
 
 @dataclass(slots=True)
@@ -123,6 +152,7 @@ class SyncItemState:
     album_artist: str
     source_url: str
     cover_art_url: str | None
+    artist_credits: list[ArtistCredit] = field(default_factory=list)
     youtube_music_track_id: str = ""
     spotify_track_id: str | None = None
     soundcloud_track_id: str | None = None
@@ -185,6 +215,7 @@ class SyncItemState:
             "album_artist": self.album_artist,
             "source_url": self.source_url,
             "cover_art_url": self.cover_art_url,
+            "artist_credits": self.artist_credits,
             "status": self.status,
             "stage": self.stage,
             "reason_code": self.reason_code,

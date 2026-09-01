@@ -50,4 +50,17 @@ describe('ArtistPhotoCache', () => {
       Buffer.from('jpeg-data')
     )
   })
+
+  it('clears only files in the artist photo cache directory', async () => {
+    const cacheDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'lms-artist-photo-cache-')
+    )
+    cacheDirs.push(cacheDir)
+    fs.writeFileSync(path.join(cacheDir, 'first.jpg'), 'first')
+    fs.writeFileSync(path.join(cacheDir, 'second.tmp'), 'second')
+    const cache = new ArtistPhotoCache(cacheDir, vi.fn())
+
+    await expect(cache.clear()).resolves.toBe(2)
+    expect(fs.readdirSync(cacheDir)).toEqual([])
+  })
 })

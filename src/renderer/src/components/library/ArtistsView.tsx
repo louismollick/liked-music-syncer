@@ -1,4 +1,3 @@
-import { isLowResArtistPhotoUrl } from '@shared/artist-photo-url'
 import type {
   AuthStatus,
   CommandResult,
@@ -8,6 +7,10 @@ import type { JSX } from 'react'
 import { useEffect, useRef } from 'react'
 import { useElementSize } from '../../hooks/useElementSize'
 import { ArtistGrid } from './ArtistGrid'
+import {
+  getArtistImageRefreshKey,
+  shouldRequestArtistImageRefresh,
+} from './artist-image-refresh'
 import { LibraryActionButtons } from './LibraryActionButtons'
 
 interface Props {
@@ -37,57 +40,40 @@ export function ArtistsView({
   onClearSelected,
   onInitialRender,
 }: Props): JSX.Element {
-  const imageRefreshStarted = useRef(false)
+  const lastImageRefreshKey = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const { width, height } = useElementSize(scrollRef)
 
   useEffect(() => {
     if (!isActive) return
 
-    const withPhoto = artists.filter((artist) =>
-      Boolean(artist.photoUrl)
-    ).length
-    const needsRefresh = artists.filter((artist) =>
-      isLowResArtistPhotoUrl(artist.photoUrl)
-    ).length
+    const candidateKey = getArtistImageRefreshKey(artists)
 
-    console.info('[artist-image] Artists tab active', {
-      totalArtists: artists.length,
-      withPhotoUrl: withPhoto,
-      needsImageRefresh: needsRefresh,
-      authenticated: authStatus.isAuthenticated,
-    })
-
-    if (needsRefresh === 0) {
-      console.info(
-        '[artist-image] skip refresh — all artist photos meet quality threshold'
-      )
+    if (
+      !shouldRequestArtistImageRefresh({
+        candidateKey,
+        isAuthenticated: authStatus.isAuthenticated,
+        lastRequestedKey: lastImageRefreshKey.current,
+      })
+    ) {
       return
     }
-
-    if (imageRefreshStarted.current) {
-      return
-    }
-    imageRefreshStarted.current = true
-
-    console.info('[artist-image] requesting main-process refresh', {
-      needsImageRefresh: needsRefresh,
-    })
+    lastImageRefreshKey.current = candidateKey
 
     void window.api.library
       .refreshArtistImages()
       .then((result) => {
-        console.info('[artist-image] refresh settled', {
-          ok: result.ok,
-          message: result.message,
-          details: result.details ?? null,
-        })
+        if (!result.ok && lastImageRefreshKey.current === candidateKey) {
+          lastImageRefreshKey.current = null
+        }
       })
       .catch((error: unknown) => {
+        if (lastImageRefreshKey.current === candidateKey) {
+          lastImageRefreshKey.current = null
+        }
         console.error('[artist-image] refresh failed', {
           error: error instanceof Error ? error.message : String(error),
         })
-        imageRefreshStarted.current = false
       })
   }, [artists, authStatus.isAuthenticated, isActive])
 
