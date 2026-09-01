@@ -95,11 +95,11 @@ def test_m4a_standard_and_custom_tag_round_trip(tmp_path: Path) -> None:
     assert file_data["language"] == "en"
     assert file_data["isrc"] == "USABC1234567"
     assert file_data["mb_track_id"] == "mb-track"
-    assert file_data["mb_album_id"] == "mb-album"
-    assert file_data["mb_releasegroup_id"] == "mb-release-group"
+    assert file_data["mb_album_id"] is None
+    assert file_data["mb_releasegroup_id"] is None
     assert file_data["youtube_music_track_id"] == "liked123"
     assert file_data["resolved_youtube_music_track_id"] == "catalog456"
-    assert file_data["tag_schema_version"] == 4
+    assert file_data["tag_schema_version"] == 5
     assert file_data["artist_credits"] == [
         {"name": "Artist Name", "channel_id": "UC_ARTIST"},
         {"name": "Guest Artist", "channel_id": "UC_GUEST"},
@@ -129,6 +129,32 @@ def test_comments_migration_parses_legacy_source_url(tmp_path: Path) -> None:
     assert migrated.lms_youtube_music_track_id == "legacy123"
     assert migrated.lms_resolved_youtube_music_track_id == "catalog456"
     assert migrated.comments in (None, "")
+
+
+def test_write_media_tags_removes_existing_album_musicbrainz_ids(
+    tmp_path: Path,
+) -> None:
+    register_lms_mediafile_fields()
+    audio_path = tmp_path / "previously-tagged.m4a"
+    _make_m4a(audio_path)
+
+    previous = MediaFile(str(audio_path))
+    previous.mb_albumid = "old-album-id"
+    previous.mb_releasegroupid = "old-release-group-id"
+    previous.save()
+
+    item = _item()
+    item.mb_track_id = "recording-id"
+    item.mb_album_id = "old-album-id"
+    item.mb_releasegroup_id = "old-release-group-id"
+    write_media_tags(audio_path, item, None, None)
+
+    rewritten = MediaFile(str(audio_path))
+    assert rewritten.mb_trackid == "recording-id"
+    assert rewritten.mb_albumid in (None, "")
+    assert rewritten.mb_releasegroupid in (None, "")
+    assert "----:com.apple.iTunes:MusicBrainz Album Id" not in rewritten.mgfile
+    assert "----:com.apple.iTunes:MusicBrainz Release Group Id" not in rewritten.mgfile
 
 
 def test_comment_changes_do_not_change_managed_metadata_fingerprint(tmp_path: Path) -> None:

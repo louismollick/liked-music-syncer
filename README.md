@@ -8,7 +8,7 @@ It can:
 - pull liked videos
 - optionally keep only `categoryId === "10"`
 - try to match each track to a better YouTube Music source
-- enrich every confidently matched song with MusicBrainz IDs and genre
+- enrich confidently matched songs with a MusicBrainz recording ID and genre
 - try synced lyrics via Spotify-match + lyrics API
 - download audio with `yt-dlp`
 - convert/tag output with `ffmpeg`
@@ -21,6 +21,8 @@ It can:
 - skip liked-video duplicates against existing managed songs by normalized title + primary artist
 - keep trusted YT Music title/artist/album metadata while using MusicBrainz to
   fill genre in all resolution paths and release metadata only as fallback
+- omit MusicBrainz album and release-group tags because a wrong release ID makes
+  Navidrome split tracks that otherwise share the same album metadata
 
 ## Library index behavior
 

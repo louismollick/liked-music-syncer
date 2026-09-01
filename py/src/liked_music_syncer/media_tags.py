@@ -10,7 +10,7 @@ from mediafile import Image, MP4StorageStyle, MediaField, MediaFile
 
 from .models import SyncItemState
 
-LMS_TAG_SCHEMA_VERSION = 4
+LMS_TAG_SCHEMA_VERSION = 5
 LMS_CUSTOM_FIELDS: dict[str, MediaField] = {
     "lms_tag_schema_version": MediaField(
         MP4StorageStyle("----:com.apple.iTunes:LMS_TAG_SCHEMA_VERSION")
@@ -98,6 +98,7 @@ def write_media_tags(
     cover_bytes: bytes | None,
     lyrics_text: str | None,
 ) -> None:
+    apply_managed_musicbrainz_policy(item)
     register_lms_mediafile_fields()
     media = MediaFile(str(output_path))
 
@@ -115,8 +116,8 @@ def write_media_tags(
     media.language = item.language
     media.isrc = item.isrc
     media.mb_trackid = item.mb_track_id
-    media.mb_albumid = item.mb_album_id
-    media.mb_releasegroupid = item.mb_releasegroup_id
+    del media.mb_albumid
+    del media.mb_releasegroupid
     media.lyrics = lyrics_text
     media.images = [Image(data=cover_bytes)] if cover_bytes else []
 
@@ -140,6 +141,12 @@ def write_media_tags(
     )
     media.comments = None
     media.save()
+
+
+def apply_managed_musicbrainz_policy(item: SyncItemState) -> None:
+    """Keep recording identity without letting uncertain releases split albums."""
+    item.mb_album_id = None
+    item.mb_releasegroup_id = None
 
 
 def _parse_release_date(value: str | None) -> date | None:

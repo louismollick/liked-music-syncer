@@ -252,6 +252,14 @@ def test_preview_reprocess_sets_target_lrc_path_none_for_plain_lyrics(
     [
         ({"artist_credits": []}, "artistCredits"),
         ({"tag_schema_version": 3}, "tagSchemaVersion"),
+        (
+            {
+                "tag_schema_version": 5,
+                "mb_album_id": "old-album-id",
+                "mb_releasegroup_id": "old-release-group-id",
+            },
+            "mbAlbumId",
+        ),
     ],
 )
 def test_preview_reprocess_updates_same_video_for_managed_tag_changes(
@@ -306,6 +314,9 @@ def test_preview_reprocess_updates_same_video_for_managed_tag_changes(
     assert preview["same_video"] is True
     assert preview["action_kind"] == "update"
     assert expected_diff_key in preview["diff"]
+    if expected_diff_key == "mbAlbumId":
+        assert preview["diff"]["mbAlbumId"]["after"] is None
+        assert preview["diff"]["mbReleaseGroupId"]["after"] is None
 
 
 def test_apply_reprocess_same_video_plain_lyrics_deletes_old_lrc(
