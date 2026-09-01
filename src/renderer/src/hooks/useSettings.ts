@@ -27,6 +27,7 @@ const TEXT_KEYS = new Set<keyof AppSettingsView>([
 
 type PendingTextWrite = {
   value: string
+  previous: string
   timer: ReturnType<typeof setTimeout>
   resolve: (result: CommandResult) => void
 }
@@ -94,6 +95,7 @@ export function useSettings() {
     async (keys?: Array<keyof AppSettingsView>): Promise<CommandResult> => {
       const selectedKeys = keys ?? [...pendingText.current.keys()]
       const partial: Partial<AppSettingsView> = {}
+      const previous: Partial<AppSettingsView> = {}
       const writes: PendingTextWrite[] = []
       for (const key of selectedKeys) {
         const queued = pendingText.current.get(key)
@@ -102,10 +104,11 @@ export function useSettings() {
         for (const item of queued) clearTimeout(item.timer)
         const latest = queued.at(-1)!
         setPartialValue(partial, key, latest.value)
+        setPartialValue(previous, key, queued[0]!.previous)
         writes.push(...queued)
       }
       if (!writes.length) return { ok: true, message: 'Settings unchanged.' }
-      const result = await persist(partial, {}, false)
+      const result = await persist(partial, previous, true)
       for (const write of writes) write.resolve(result)
       return result
     },
@@ -149,7 +152,12 @@ export function useSettings() {
           void flush([key])
         }, 400)
         for (const item of queued) item.timer = timer
-        queued.push({ value, timer, resolve })
+        queued.push({
+          value,
+          previous: String(previous[key] ?? ''),
+          timer,
+          resolve,
+        })
         pendingText.current.set(key, queued)
       })
     },

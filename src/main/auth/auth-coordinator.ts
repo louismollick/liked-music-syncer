@@ -160,7 +160,7 @@ export class AuthCoordinator {
         'auth-status',
         { browser_auth_input: credential }
       )
-      if (checked.ok) {
+      if (checked.ok && checked.is_authenticated) {
         const accounts = this.accountsFromResult(
           selected,
           {
