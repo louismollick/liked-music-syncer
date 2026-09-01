@@ -218,6 +218,7 @@ export function AppShell(): JSX.Element {
         authSession={auth.session}
         onSelectAccount={auth.selectAccount}
         onLoadAccountCounts={auth.loadAccountCounts}
+        onError={setMessage}
         switchingAccountKey={auth.switchingAccountKey}
         accountSwitchError={auth.accountSwitchError}
         artists={artists}

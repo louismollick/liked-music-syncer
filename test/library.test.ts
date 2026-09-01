@@ -1697,7 +1697,7 @@ describe('liked artists service', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('refreshes artists from local library tracks and preserves favorite fields', async () => {
+  it('does not transfer a trusted favorite to a same-name unidentified artist', async () => {
     const { db, sqlite, dir } = makeTempDb()
     await db.insert(likedArtistsTable).values({
       id: 'artist_channel_1',
@@ -1758,12 +1758,16 @@ describe('liked artists service', () => {
     const artists = await service.listArtists()
     expect(artists.map((artist) => artist.id)).toEqual([
       'local_artist_artist_name',
+      'artist_channel_1',
     ])
-    const [artist] = artists
-    expect(artist).toMatchObject({
+    expect(artists[0]).toMatchObject({
       id: 'local_artist_artist_name',
       name: 'Artist Name',
       likedTrackCount: 2,
+      isFavorite: false,
+    })
+    expect(artists[1]).toMatchObject({
+      id: 'artist_channel_1',
       isFavorite: true,
       favoritedAt: '2026-05-18T00:01:00.000Z',
       lastCatalogRefreshedAt: '2026-05-18T00:02:00.000Z',

@@ -3,7 +3,7 @@ export interface ArtistCredit {
   channelId: string | null
 }
 
-function normalizeArtistName(value: string): string {
+export function normalizeArtistName(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^\p{L}\p{M}\p{N}_\s]+/gu, ' ')

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 import re
 import time
 from typing import Any
@@ -80,7 +79,6 @@ def fetch_liked_artists(browser_auth_input: str) -> dict[str, list[dict[str, Any
     tracks = liked.get("tracks") if isinstance(liked, dict) else []
     artist_rows: dict[str, dict[str, Any]] = {}
     rep_thumbs: dict[str, str | None] = {}
-    name_to_id_keys: dict[str, list[str]] = defaultdict(list)
 
     if not isinstance(tracks, list):
         tracks = []
@@ -116,20 +114,6 @@ def fetch_liked_artists(browser_auth_input: str) -> dict[str, list[dict[str, Any
             artist_rows[key]["liked_track_count"] += 1
             if track_thumb and key not in rep_thumbs:
                 rep_thumbs[key] = track_thumb
-            if channel_id:
-                name_to_id_keys[normalized].append(key)
-
-    for key, row in list(artist_rows.items()):
-        if row["channel_id"] is not None:
-            continue
-        id_backed = name_to_id_keys.get(row["normalized_name"], [])
-        if not id_backed:
-            continue
-        target_key = id_backed[0]
-        artist_rows[target_key]["liked_track_count"] += row["liked_track_count"]
-        if rep_thumbs.get(key) and not rep_thumbs.get(target_key):
-            rep_thumbs[target_key] = rep_thumbs[key]
-        del artist_rows[key]
 
     for row in artist_rows.values():
         channel_id = row["channel_id"]

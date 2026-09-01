@@ -18,6 +18,7 @@ interface Props {
   authSession: AuthSessionView
   onSelectAccount: (key: string) => Promise<boolean>
   onLoadAccountCounts: () => Promise<void>
+  onError: (message: string) => void
   switchingAccountKey: string | null
   accountSwitchError: string | null
   artists: LikedArtistView[]
@@ -33,6 +34,7 @@ export function MainLayout({
   authSession,
   onSelectAccount,
   onLoadAccountCounts,
+  onError,
   switchingAccountKey,
   accountSwitchError,
   artists,
@@ -49,6 +51,7 @@ export function MainLayout({
         authSession={authSession}
         onSelectAccount={onSelectAccount}
         onLoadAccountCounts={onLoadAccountCounts}
+        onError={onError}
         switchingAccountKey={switchingAccountKey}
         accountSwitchError={accountSwitchError}
       />

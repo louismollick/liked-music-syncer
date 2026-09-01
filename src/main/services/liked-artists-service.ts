@@ -5,7 +5,11 @@ import type {
   LikedArtistView,
 } from '@shared/contracts'
 import { asc, eq } from 'drizzle-orm'
-import { parseArtistCreditsJson } from '../../shared/artist-credit'
+import {
+  artistCreditId,
+  normalizeArtistName,
+  parseArtistCreditsJson,
+} from '../../shared/artist-credit'
 import type { AuthCoordinator } from '../auth/auth-coordinator'
 import type { AppDatabase } from '../db/database'
 import {
@@ -30,18 +34,6 @@ function decodeStoredArtistPhotoUrl(photoUrl: string | null): string | null {
 
 function isKnownMissingArtistPhoto(photoUrl: string | null): boolean {
   return photoUrl === MISSING_ARTIST_PHOTO_SENTINEL
-}
-
-function normalizeArtistName(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^\w\s]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function localArtistId(normalizedName: string): string {
-  return `local_artist_${normalizedName.replace(/\s+/g, '_')}`
 }
 
 interface LocalArtist {
@@ -291,7 +283,7 @@ export class LikedArtistsService {
           localArtistsByName.set(artistKey, {
             id: credit.channelId
               ? `artist_channel_${credit.channelId}`
-              : localArtistId(normalizedName),
+              : artistCreditId(credit),
             channelId: credit.channelId,
             name: credit.name,
             normalizedName,
@@ -304,9 +296,6 @@ export class LikedArtistsService {
 
     const existingRows = await this.db.select().from(likedArtistsTable)
     const existingById = new Map(existingRows.map((row) => [row.id, row]))
-    const existingByNormalizedName = new Map(
-      existingRows.map((row) => [row.normalizedName, row])
-    )
     const existingByChannelId = new Map(
       existingRows
         .filter((row) => row.channelId)
@@ -322,16 +311,9 @@ export class LikedArtistsService {
 
     const persistedArtistIdByKey = new Map<string, string>()
     for (const [artistKey, artist] of localArtistsByName) {
-      const legacyMatches = existingRows.filter(
-        (row) =>
-          row.channelId == null && row.normalizedName === artist.normalizedName
-      )
-      const legacyMatch = legacyMatches.length === 1 ? legacyMatches[0] : null
       const existing =
         existingById.get(artist.id) ??
-        (artist.channelId
-          ? (existingByChannelId.get(artist.channelId) ?? legacyMatch)
-          : existingByNormalizedName.get(artist.normalizedName))
+        (artist.channelId ? existingByChannelId.get(artist.channelId) : null)
       const persistedId = artist.id
       persistedArtistIdByKey.set(artistKey, persistedId)
       if (decodeStoredArtistPhotoUrl(existing?.photoUrl ?? null)) {

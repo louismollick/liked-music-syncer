@@ -448,6 +448,28 @@ def test_helium_tries_chromium_keychains_until_youtube_cookies_work(monkeypatch)
     assert source == ("vivaldi", "/profiles/helium/Default")
 
 
+def test_helium_uses_selected_profile(monkeypatch) -> None:
+    jar = CookieJar()
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(auth_module, "HELIUM_BACKENDS", ("chromium",))
+    monkeypatch.setattr(
+        auth_module, "_get_cookie_header", lambda _jar, _origin: "cookie"
+    )
+    monkeypatch.setattr(
+        auth_module,
+        "extract_cookies_from_browser",
+        lambda browser_name, profile=None: calls.append((browser_name, profile)) or jar,
+    )
+
+    extracted, source = auth_module._extract_browser_cookies(
+        "helium", "/profiles/helium/Profile 2"
+    )
+
+    assert extracted is jar
+    assert calls == [("chromium", "/profiles/helium/Profile 2")]
+    assert source == ("chromium", "/profiles/helium/Profile 2")
+
+
 def test_permission_error_is_only_a_privacy_permission_issue_for_safari() -> None:
     error = PermissionError("Operation not permitted")
 

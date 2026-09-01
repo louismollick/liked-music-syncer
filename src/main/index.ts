@@ -171,7 +171,11 @@ app.whenReady().then(async () => {
     await syncService.hasQueuedOrRunningJobs()
   )
   syncService.subscribe((snapshot) => {
-    authCoordinator.setSwitchingDisabled(snapshot.counts.inProgress > 0)
+    authCoordinator.setSwitchingDisabled(
+      snapshot.jobs.some(
+        (job) => job.status === 'queued' || job.status === 'running'
+      )
+    )
   })
 
   createWindow()

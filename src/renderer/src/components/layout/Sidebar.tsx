@@ -27,6 +27,7 @@ interface Props {
   authSession: AuthSessionView
   onSelectAccount: (key: string) => Promise<boolean>
   onLoadAccountCounts: () => Promise<void>
+  onError: (message: string) => void
   switchingAccountKey: string | null
   accountSwitchError: string | null
 }
@@ -198,14 +199,19 @@ export function Sidebar({
   authSession,
   onSelectAccount,
   onLoadAccountCounts,
+  onError,
   switchingAccountKey,
   accountSwitchError,
 }: Props): JSX.Element {
   const [expanded, setExpanded] = useState<Set<SectionKey>>(loadExpanded)
   const [profileOpen, setProfileOpen] = useState(false)
   useEffect(() => {
-    if (profileOpen && authSession.accountsComplete) void onLoadAccountCounts()
-  }, [profileOpen, authSession.accountsComplete, onLoadAccountCounts])
+    if (profileOpen && authSession.accountsComplete) {
+      void onLoadAccountCounts().catch((error) =>
+        onError(error instanceof Error ? error.message : String(error))
+      )
+    }
+  }, [profileOpen, authSession.accountsComplete, onLoadAccountCounts, onError])
   const navigate = useNavigate()
   const location = useRouterState({
     select: (state) => state.location,

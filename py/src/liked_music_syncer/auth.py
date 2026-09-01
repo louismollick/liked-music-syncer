@@ -58,12 +58,15 @@ def _extract_browser_cookies(
         )
     if normalized == "helium":
         assert profile is not None
+        selected_profile = Path(profile_name) if profile_name else profile
         errors: list[str] = []
         for backend in HELIUM_BACKENDS:
             try:
-                jar = extract_cookies_from_browser(backend, profile=str(profile))
+                jar = extract_cookies_from_browser(
+                    backend, profile=str(selected_profile)
+                )
                 _get_cookie_header(jar, YTMUSIC_ORIGIN)
-                return jar, (backend, str(profile))
+                return jar, (backend, str(selected_profile))
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"{backend}: {exc}")
         raise ValueError(

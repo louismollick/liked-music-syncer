@@ -5,6 +5,48 @@ from typing import Any
 from liked_music_syncer import liked_artists
 
 
+def test_fetch_liked_artists_keeps_same_name_trusted_and_unidentified_rows(
+    monkeypatch,
+) -> None:
+    class FakeYTMusic:
+        def get_liked_songs(self, limit: int) -> dict[str, Any]:
+            assert limit == 5000
+            return {
+                "tracks": [
+                    {"artists": [{"name": "Phoenix", "id": "UC_TRUSTED"}]},
+                    {"artists": [{"name": "Phoenix"}]},
+                ]
+            }
+
+        def get_artist(self, _channel_id: str) -> dict[str, Any]:
+            return {}
+
+    monkeypatch.setattr(
+        liked_artists, "build_browser_auth_client", lambda _auth: FakeYTMusic()
+    )
+
+    result = liked_artists.fetch_liked_artists("auth")
+
+    assert result["artists"] == [
+        {
+            "id": "artist_channel_UC_TRUSTED",
+            "channel_id": "UC_TRUSTED",
+            "name": "Phoenix",
+            "normalized_name": "phoenix",
+            "photo_url": None,
+            "liked_track_count": 1,
+        },
+        {
+            "id": "artist_name_phoenix",
+            "channel_id": None,
+            "name": "Phoenix",
+            "normalized_name": "phoenix",
+            "photo_url": None,
+            "liked_track_count": 1,
+        },
+    ]
+
+
 def test_fetch_artist_image_uses_trusted_channel_id_without_search(monkeypatch) -> None:
     class FakeYTMusic:
         def search(self, *_args: object, **_kwargs: object) -> list[dict[str, Any]]:

@@ -305,7 +305,8 @@ export class AuthCoordinator {
           const selected =
             accounts.find(
               (account) =>
-                remembered?.handle && account.handle === remembered.handle
+                account.key === remembered?.key ||
+                (remembered?.handle && account.handle === remembered.handle)
             ) ?? accounts[0]
           if (selected) {
             await this.commitAccount(id, selected)

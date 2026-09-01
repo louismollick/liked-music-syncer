@@ -118,6 +118,7 @@ describe('Settings authentication source', () => {
       browserPickerOpen: false,
       onBrowserPickerOpenChange,
       onChange: vi.fn(),
+      onFlush: vi.fn(),
       onSelectSource: vi.fn(),
       onSelectAccount: vi.fn(),
       onLoadAccountCounts: vi.fn(),

@@ -49,17 +49,22 @@ export function SettingsRouteComponent(): JSX.Element {
       location.search.detectAuth !== true
     )
       return
+    let active = true
     void refreshAuth('all', 'retry')
       .catch((error) =>
         showMessage(error instanceof Error ? error.message : String(error))
       )
       .finally(() => {
+        if (!active) return
         void navigate({
           to: '/settings',
           search: { detectAuth: undefined, browserPicker: undefined },
           replace: true,
         })
       })
+    return () => {
+      active = false
+    }
   }, [location.pathname, location.search, navigate, refreshAuth, showMessage])
 
   return (
