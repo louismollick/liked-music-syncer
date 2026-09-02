@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  poem: false
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  finishing_touches:
+    docstrings:
+      enabled: false
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        Do not request docstrings or treat docstring coverage as a quality signal.
+        Prioritize correctness, regressions, data integrity, and failures across
+        the Electron-to-Python pipeline.
+    - path: "**/*.{ts,tsx}"
+      instructions: |
+        Prioritize correctness, regressions, data integrity, and failures across
+        the renderer, preload, IPC, service, database, and Python-worker pipeline.

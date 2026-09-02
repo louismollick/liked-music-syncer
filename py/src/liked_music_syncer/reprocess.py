@@ -13,7 +13,11 @@ from ytmusicapi import YTMusic
 from .album_identity import canonical_album_name
 from .cover_art import make_square_cover
 from .lyrics_language import detect_primary_lyrics_language
-from .media_tags import LMS_TAG_SCHEMA_VERSION, write_media_tags
+from .media_tags import (
+    LMS_TAG_SCHEMA_VERSION,
+    apply_managed_musicbrainz_policy,
+    write_media_tags,
+)
 from .models import SyncConfig, SyncItemState, normalize_artist_credits
 from .json_io import emit_event
 from .lyrics import classify_lyrics_text, lyrics_sidecar_text
@@ -214,6 +218,7 @@ def _preview_one(
             _musicbrainz_enrich(item)
         except Exception:
             pass
+    apply_managed_musicbrainz_policy(item)
 
     try:
         lyrics_text, lyrics_source = _resolve_best_lyrics(

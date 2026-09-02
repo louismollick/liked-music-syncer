@@ -17,7 +17,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../ui/select'
+} from '../ui/Select'
 import { Spinner } from '../ui/spinner'
 import { SettingsSection } from './SettingsSection'
 

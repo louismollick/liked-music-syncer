@@ -952,6 +952,96 @@ def test_resolve_exact_catalog_strips_omv_title_noise_and_matches_bilingual_song
     assert item.selected_source_url == "https://music.youtube.com/watch?v=catalog456"
 
 
+def test_resolve_exact_catalog_uses_original_youtube_title_for_localized_catalog_title(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, str]:
+            return {"title": "摩耗", "author_name": "kirye - Topic"}
+
+    def fake_get(url: str, **kwargs: object) -> FakeResponse:
+        assert url == "https://www.youtube.com/oembed"
+        assert kwargs["params"] == {
+            "url": "https://www.youtube.com/watch?v=BFObECIH-ok",
+            "format": "json",
+        }
+        return FakeResponse()
+
+    monkeypatch.setattr("liked_music_syncer.sync_engine.httpx.get", fake_get)
+    queries: list[str] = []
+
+    class FakeYTMusic:
+        def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:
+            assert limit == 1
+            if videoId == "source123":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "source123",
+                            "title": "キリエ / kirye 『摩耗』MV",
+                            "artists": [{"name": "kirye (キリエ)", "id": "official-channel"}],
+                            "videoType": "MUSIC_VIDEO_TYPE_OMV",
+                            "length": "2:39",
+                        }
+                    ],
+                    "lyrics": None,
+                }
+            if videoId == "BFObECIH-ok":
+                return {
+                    "tracks": [
+                        {
+                            "videoId": "BFObECIH-ok",
+                            "title": "Mamou",
+                            "artists": [{"name": "kirye", "id": "topic-channel"}],
+                            "album": {"name": "NETAMI", "id": "album123"},
+                            "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                            "length": "2:34",
+                        }
+                    ],
+                    "lyrics": None,
+                }
+            raise AssertionError(videoId)
+
+        def search(self, query: str, **kwargs: object) -> list[dict[str, object]]:
+            queries.append(query)
+            return [
+                {
+                    "videoId": "BFObECIH-ok",
+                    "title": "Mamou",
+                    "artists": [{"name": "kirye", "id": "topic-channel"}],
+                    "album": {"name": "NETAMI", "id": "album123"},
+                    "videoType": "MUSIC_VIDEO_TYPE_ATV",
+                    "duration": "2:34",
+                }
+            ]
+
+        def get_album(self, browseId: str) -> dict[str, object]:
+            assert browseId == "album123"
+            return {
+                "title": "NETAMI",
+                "artists": [{"name": "kirye"}],
+                "year": "2020",
+                "tracks": [
+                    {"videoId": "other", "title": "HELIX"},
+                    {"videoId": "BFObECIH-ok", "title": "Mamou"},
+                ],
+            }
+
+    item = _item(title="キリエ / kirye 『摩耗』MV", artist="kirye (キリエ)")
+
+    _resolve_exact_catalog(FakeYTMusic(), item)
+
+    assert "摩耗 kirye (キリエ)" in queries
+    assert item.resolution_method == "search_song_exact"
+    assert item.album == "NETAMI"
+    assert item.track_number == 2
+    assert item.resolved_youtube_music_track_id == "BFObECIH-ok"
+    assert item.selected_source_url == "https://music.youtube.com/watch?v=BFObECIH-ok"
+
+
 def test_resolve_exact_catalog_allows_small_omv_intro_duration_gap() -> None:
     class FakeYTMusic:
         def get_watch_playlist(self, videoId: str, limit: int = 1) -> dict[str, object]:

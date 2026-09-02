@@ -29,7 +29,7 @@ from .cover_art import make_square_cover
 from .json_io import emit_event
 from .lyrics import classify_lyrics_text, is_zero_timestamp_only_lrc, lyrics_sidecar_text
 from .lyrics_language import detect_primary_lyrics_language
-from .media_tags import write_media_tags
+from .media_tags import apply_managed_musicbrainz_policy, write_media_tags
 from .models import SyncConfig, SyncItemState, normalize_artist_credits
 from .templating import OutputLayout
 
@@ -62,6 +62,8 @@ CATALOG_SEARCH_RESULT_LIMIT = 20
 CATALOG_SEARCH_QUERY_LIMIT = 6
 CATALOG_MV_DURATION_TOLERANCE_SECONDS = 60
 CATALOG_DEFAULT_DURATION_TOLERANCE_SECONDS = 45
+CATALOG_ORIGINAL_TITLE_LOOKUP_LIMIT = 3
+YOUTUBE_OEMBED_URL = "https://www.youtube.com/oembed"
 _VERSION_MARKER_PATTERNS: dict[str, re.Pattern[str]] = {
     "cover": re.compile(r"\bcover\b|カバー|弾いてみた|歌ってみた", re.IGNORECASE),
     "live": re.compile(r"\blive\b|ライブ", re.IGNORECASE),
@@ -474,6 +476,33 @@ def _text_similarity(left: str | None, right: str | None) -> float:
     return SequenceMatcher(None, normalized_left, normalized_right).ratio()
 
 
+def _identity_scores_match(title_score: float, artist_score: float) -> bool:
+    return (title_score >= 0.96 and artist_score >= 0.88) or (
+        title_score >= 0.88 and artist_score >= 0.82
+    )
+
+
+def _youtube_original_title(video_id: str) -> str | None:
+    try:
+        response = httpx.get(
+            YOUTUBE_OEMBED_URL,
+            params={
+                "url": f"https://www.youtube.com/watch?v={video_id}",
+                "format": "json",
+            },
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError, TypeError):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    title = payload.get("title")
+    return title.strip() if isinstance(title, str) and title.strip() else None
+
+
 def _version_markers(value: str | None) -> set[str]:
     if not value:
         return set()
@@ -809,6 +838,7 @@ def _search_song_candidate(
 
     ranked_candidates: list[tuple[tuple[float, ...], dict[str, Any]]] = []
     candidate_logs: list[dict[str, Any]] = []
+    original_title_lookups = 0
 
     for result in results_by_video_id.values():
         candidate_video_id = result.get("videoId")
@@ -851,12 +881,48 @@ def _search_song_candidate(
         video_type = str(result.get("videoType")) if result.get("videoType") else None
         same_source_video = isinstance(candidate_video_id, str) and candidate_video_id == item.source_video_id
         missing_album_id = not (isinstance(candidate_album_id, str) and candidate_album_id)
-        target_title, target_artist, match_method = best_identity or (item.title, item.artist, "fallback")
         version_matches = _version_compatible(item.title, item.artist, result)
-        identity_matches = (
-            (title_score >= 0.96 and artist_score >= 0.88)
-            or (title_score >= 0.88 and artist_score >= 0.82)
+        identity_matches = _identity_scores_match(title_score, artist_score)
+        original_youtube_title: str | None = None
+        if (
+            not identity_matches
+            and isinstance(candidate_video_id, str)
+            and candidate_video_id
+            and not missing_album_id
+            and artist_score >= 0.88
+            and duration_matches
+            and version_matches
+            and original_title_lookups < CATALOG_ORIGINAL_TITLE_LOOKUP_LIMIT
+        ):
+            original_title_lookups += 1
+            original_youtube_title = _youtube_original_title(candidate_video_id)
+            for target_title, target_artist, method in identities:
+                alternate_title_score = _text_similarity(original_youtube_title, target_title)
+                alternate_artist_score = max(
+                    (
+                        _text_similarity(candidate_artist, target_artist)
+                        for candidate_artist in candidate_artist_names
+                    ),
+                    default=0.0,
+                )
+                alternate_identity_score = (
+                    alternate_title_score + alternate_artist_score,
+                    alternate_title_score,
+                    alternate_artist_score,
+                )
+                if alternate_identity_score > best_identity_score:
+                    best_identity_score = alternate_identity_score
+                    best_identity = (target_title, target_artist, f"{method}_youtube_title")
+
+        _, title_score, artist_score = best_identity_score
+        if artist_id_matches:
+            artist_score = 1.0
+        target_title, target_artist, match_method = best_identity or (
+            item.title,
+            item.artist,
+            "fallback",
         )
+        identity_matches = _identity_scores_match(title_score, artist_score)
         accepted = bool(
             isinstance(candidate_video_id, str)
             and not missing_album_id
@@ -879,6 +945,7 @@ def _search_song_candidate(
                 {
                     "video_id": candidate_video_id,
                     "title": candidate_title,
+                    "original_youtube_title": original_youtube_title,
                     "album_id": candidate_album_id,
                     "video_type": video_type,
                     "accepted": accepted,
@@ -2223,6 +2290,7 @@ def run_sync(config: SyncConfig) -> None:
                     item.stage = "musicbrainz_enrich"
                     stage = item.stage
                     _musicbrainz_enrich(item)
+                    apply_managed_musicbrainz_policy(item)
                     _emit_item(config.job_id, item)
             except Exception as exc:  # noqa: BLE001
                 _log(config.job_id, item, item.stage, "warn", "musicbrainz", str(exc))

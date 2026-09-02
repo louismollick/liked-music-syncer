@@ -208,8 +208,16 @@ export function registerIpcHandlers(
   })
   ipcMain.handle(
     'library:setArtistFavorite',
-    (_event, artistId: string, isFavorite: boolean) =>
-      likedArtistsService.setArtistFavorite(artistId, isFavorite)
+    async (_event, artistId: string, isFavorite: boolean) => {
+      const result = await likedArtistsService.setArtistFavorite(
+        artistId,
+        isFavorite
+      )
+      if (result.ok && !window.isDestroyed()) {
+        window.webContents.send('library:artistsUpdated')
+      }
+      return result
+    }
   )
   ipcMain.handle('library:listTracks', (_event, filter) =>
     libraryService.listTracks(filter)
