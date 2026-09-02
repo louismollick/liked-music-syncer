@@ -476,6 +476,12 @@ def _text_similarity(left: str | None, right: str | None) -> float:
     return SequenceMatcher(None, normalized_left, normalized_right).ratio()
 
 
+def _identity_scores_match(title_score: float, artist_score: float) -> bool:
+    return (title_score >= 0.96 and artist_score >= 0.88) or (
+        title_score >= 0.88 and artist_score >= 0.82
+    )
+
+
 def _youtube_original_title(video_id: str) -> str | None:
     try:
         response = httpx.get(
@@ -875,12 +881,8 @@ def _search_song_candidate(
         video_type = str(result.get("videoType")) if result.get("videoType") else None
         same_source_video = isinstance(candidate_video_id, str) and candidate_video_id == item.source_video_id
         missing_album_id = not (isinstance(candidate_album_id, str) and candidate_album_id)
-        target_title, target_artist, match_method = best_identity or (item.title, item.artist, "fallback")
         version_matches = _version_compatible(item.title, item.artist, result)
-        identity_matches = (
-            (title_score >= 0.96 and artist_score >= 0.88)
-            or (title_score >= 0.88 and artist_score >= 0.82)
-        )
+        identity_matches = _identity_scores_match(title_score, artist_score)
         original_youtube_title: str | None = None
         if (
             not identity_matches
@@ -912,18 +914,15 @@ def _search_song_candidate(
                     best_identity_score = alternate_identity_score
                     best_identity = (target_title, target_artist, f"{method}_youtube_title")
 
-            _, title_score, artist_score = best_identity_score
-            if artist_id_matches:
-                artist_score = 1.0
-            target_title, target_artist, match_method = best_identity or (
-                item.title,
-                item.artist,
-                "fallback",
-            )
-            identity_matches = (
-                (title_score >= 0.96 and artist_score >= 0.88)
-                or (title_score >= 0.88 and artist_score >= 0.82)
-            )
+        _, title_score, artist_score = best_identity_score
+        if artist_id_matches:
+            artist_score = 1.0
+        target_title, target_artist, match_method = best_identity or (
+            item.title,
+            item.artist,
+            "fallback",
+        )
+        identity_matches = _identity_scores_match(title_score, artist_score)
         accepted = bool(
             isinstance(candidate_video_id, str)
             and not missing_album_id
