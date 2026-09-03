@@ -30,6 +30,7 @@ describe('utilities', () => {
     expect(sanitizePathSegmentUtil('  YOASOBI / Idol: Live  ', '_')).toBe(
       'YOASOBI _ Idol_ Live'
     )
+    expect(sanitizePathSegmentUtil('プラスチック', '_')).toBe('プラスチック')
     expect(
       buildLibraryPathUtil(
         '/music',

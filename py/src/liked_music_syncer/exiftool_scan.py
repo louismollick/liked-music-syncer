@@ -125,10 +125,6 @@ def _normalize_date(current: str | None) -> str | None:
     if not current:
         return None
     rendered = current[:10].replace(":", "-")
-    if re.fullmatch(r"\d{4}", rendered):
-        return f"{rendered}-01-01"
-    if re.fullmatch(r"\d{4}-\d{2}", rendered):
-        return f"{rendered}-01"
     return rendered
 
 
@@ -273,10 +269,16 @@ def _run_exiftool(paths: list[Path], exiftool_path: str) -> list[dict[str, Any]]
                 *(str(path) for path in batch),
             ],
             capture_output=True,
-            check=True,
+            check=False,
             text=True,
         )
-        parsed = json.loads(result.stdout or "[]")
+        try:
+            parsed = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError:
+            result.check_returncode()
+            raise
+        if result.returncode != 0 and not parsed:
+            result.check_returncode()
         if isinstance(parsed, list):
             rows.extend(row for row in parsed if isinstance(row, dict))
     return rows

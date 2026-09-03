@@ -110,8 +110,8 @@ def write_media_tags(
     media.tracktotal = item.track_total
     media.disc = item.disc_number
     media.disctotal = item.disc_total
-    media.date = _parse_release_date(item.date)
-    media.year = item.year
+    media.date = None
+    media.year = None
     media.genre = item.genre
     media.language = item.language
     media.isrc = item.isrc
@@ -139,6 +139,9 @@ def write_media_tags(
     media.lms_artist_credits = json.dumps(
         item.artist_credits, ensure_ascii=False, separators=(",", ":")
     )
+    release_date = _release_date_tag(item.date, item.year)
+    if release_date:
+        media.mgfile.tags["\xa9day"] = [release_date]
     media.comments = None
     media.save()
 
@@ -149,12 +152,18 @@ def apply_managed_musicbrainz_policy(item: SyncItemState) -> None:
     item.mb_releasegroup_id = None
 
 
-def _parse_release_date(value: str | None) -> date | None:
-    if not value:
+def _release_date_tag(value: str | None, fallback_year: int | None = None) -> str | None:
+    candidate = value or (f"{fallback_year:04d}" if fallback_year else None)
+    if not candidate:
         return None
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
+    if re.fullmatch(r"\d{4}", candidate):
+        return candidate
+    if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])", candidate):
+        return candidate
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", candidate):
+        try:
+            date.fromisoformat(candidate)
+        except ValueError:
+            return None
+        return candidate
+    return None

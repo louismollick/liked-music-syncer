@@ -255,6 +255,7 @@ def test_preview_reprocess_refreshes_favorite_track_from_its_stored_release(
             assert browse_id == "MPREb_Npjg6HxNrZ3"
             return {
                 "title": "T H E",
+                "year": "2013",
                 "artists": [{"name": "tricot"}],
                 "tracks": [
                     {
@@ -268,6 +269,7 @@ def test_preview_reprocess_refreshes_favorite_track_from_its_stored_release(
                     {
                         "videoId": "1zez30Rj82g",
                         "title": "99.974℃",
+                        "date": "2013-01-01",
                         "artists": [{"name": "tricot"}],
                     }
                 ],
@@ -319,6 +321,7 @@ def test_preview_reprocess_refreshes_favorite_track_from_its_stored_release(
     after = result["items"][0]["after"]
     assert after["album"] == "T H E"
     assert after["trackNumber"] == 9
+    assert after["date"] == "2013"
     assert after["catalogReleaseBrowseId"] == "MPREb_Npjg6HxNrZ3"
 
 

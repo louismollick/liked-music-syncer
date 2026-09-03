@@ -10,6 +10,10 @@ def test_render_template_sanitizes_segments() -> None:
     assert rendered == "A_B/Late_ Set"
 
 
+def test_render_template_normalizes_unicode_paths() -> None:
+    assert render_template("{title}", {"title": "プラスチック"}) == "プラスチック"
+
+
 def test_output_layout_builds_expected_path() -> None:
     layout = OutputLayout("{albumartist}/{album}", "{track:02d} {title}")
     output = layout.build_path(

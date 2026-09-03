@@ -1750,6 +1750,12 @@ def refresh_item_from_catalog_release(
         )
 
     _sync_release_item_metadata(item, selected)
+    release_date = _signature_str(album.get("date")) or _signature_str(
+        album.get("year")
+    )
+    if release_date:
+        item.date = release_date
+        item.year = _parse_year(release_date.split("-")[0]) or item.year
     item.cover_art_url = _pick_thumbnail(
         selected.get("thumbnails") or album.get("thumbnails")
     ) or item.cover_art_url

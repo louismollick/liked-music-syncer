@@ -54,6 +54,19 @@ explain related files, but it never selects a destination path. This prevents a
 preferred file from one Release from overwriting another Release Track that
 shares its source video ID.
 
+Generated path segments use NFC Unicode normalization, and remote path matching
+normalizes both sides before comparison. This matters when a macOS filesystem
+returns decomposed filenames but the Linux remote already contains the composed
+form. The two spellings must describe one destination, not two files.
+
+The tag writer preserves release-date precision: `YYYY`, `YYYY-MM`, and
+`YYYY-MM-DD` remain distinct values. Tracks from a trusted catalog Release take
+the Release-level value so one track result cannot introduce a conflicting date.
+Navidrome includes the raw date and MusicBrainz release identifiers in album
+grouping, so every track on one Release must use the same value and precision.
+App-managed files retain MusicBrainz recording identity but omit uncertain
+MusicBrainz album and release-group IDs.
+
 Calls made during an active pass share its promise and request at most one
 trailing pass. This absorbs the burst of completion events produced by a sync or
 reprocess job without running one scan per song.

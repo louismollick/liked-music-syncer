@@ -277,3 +277,45 @@ def test_write_media_tags_accepts_year_only_date_value(tmp_path: Path) -> None:
     file_data = scan["files"][0]
 
     assert file_data["year"] == 2021
+    assert file_data["date"] == "2021"
+
+
+def test_release_date_precision_changes_managed_fingerprint(tmp_path: Path) -> None:
+    year_path = tmp_path / "year.m4a"
+    exact_path = tmp_path / "exact.m4a"
+    _make_m4a(year_path)
+    _make_m4a(exact_path)
+
+    year_item = _item("year123")
+    year_item.year = 2021
+    year_item.date = "2021"
+    exact_item = _item("year123")
+    exact_item.year = 2021
+    exact_item.date = "2021-01-01"
+    write_media_tags(year_path, year_item, None, None)
+    write_media_tags(exact_path, exact_item, None, None)
+
+    files = {
+        entry["relative_path"]: entry
+        for entry in scan_root(
+            {"transport": "filesystem", "kind": "local", "uri": str(tmp_path)}
+        )["files"]
+    }
+    assert files["year.m4a"]["date"] == "2021"
+    assert files["exact.m4a"]["date"] == "2021-01-01"
+    assert files["year.m4a"]["tag_fingerprint"] != files["exact.m4a"]["tag_fingerprint"]
+
+
+def test_write_media_tags_preserves_year_month_precision(tmp_path: Path) -> None:
+    audio_path = tmp_path / "year-month.m4a"
+    _make_m4a(audio_path)
+    item = _item("month123")
+    item.year = 2021
+    item.date = "2021-07"
+
+    write_media_tags(audio_path, item, None, None)
+
+    file_data = scan_root(
+        {"transport": "filesystem", "kind": "local", "uri": str(tmp_path)}
+    )["files"][0]
+    assert file_data["date"] == "2021-07"

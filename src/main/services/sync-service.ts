@@ -2025,7 +2025,10 @@ export class SyncService {
 
       const remoteByRelativePath = new Map<string, RemoteShellTrackIdentity>()
       for (const identity of remoteScan.identities) {
-        remoteByRelativePath.set(identity.relativePath, identity)
+        remoteByRelativePath.set(
+          identity.relativePath.normalize('NFC'),
+          identity
+        )
       }
 
       const actionable: RemoteBackfillCandidate[] = []
@@ -2058,7 +2061,9 @@ export class SyncService {
           continue
         }
 
-        const remoteMatch = remoteByRelativePath.get(selected.relativePath)
+        const remoteMatch = remoteByRelativePath.get(
+          selected.relativePath.normalize('NFC')
+        )
         const reconciliation = classifyRemoteTrack(
           remoteMatch,
           selected.tagFingerprint,
