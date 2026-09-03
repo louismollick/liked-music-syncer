@@ -13,6 +13,7 @@ import {
 } from './services/artwork-protocol'
 import { ArtworkService } from './services/artwork-service'
 import { AuthService } from './services/auth-service'
+import { resolveExiftoolPath } from './services/exiftool-path'
 import { resolveFfmpegPath } from './services/ffmpeg-path'
 import { LibraryService } from './services/library-service'
 import { LikedArtistsService } from './services/liked-artists-service'
@@ -33,6 +34,14 @@ registerArtworkSchemePrivileges()
 
 function getBundledFfmpegPath() {
   return resolveFfmpegPath({
+    isDev: is.dev,
+    cwd: process.cwd(),
+    resourcesPath: process.resourcesPath,
+  })
+}
+
+function getBundledExiftoolPath() {
+  return resolveExiftoolPath({
     isDev: is.dev,
     cwd: process.cwd(),
     resourcesPath: process.resourcesPath,
@@ -96,7 +105,7 @@ app.whenReady().then(async () => {
   const settingsFile = path.join(app.getPath('userData'), 'settings.json')
   const { db } = createDatabase(databaseFile)
   const settingsService = new SettingsService(db, settingsFile)
-  const pythonWorkerService = new PythonWorkerService()
+  const pythonWorkerService = new PythonWorkerService(getBundledExiftoolPath())
   const artworkCacheDirectory = path.join(
     app.getPath('userData'),
     'artwork-cache'

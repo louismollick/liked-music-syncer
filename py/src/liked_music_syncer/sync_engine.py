@@ -1586,6 +1586,8 @@ def _should_skip_existing(config: SyncConfig, item: SyncItemState) -> bool:
 def _should_skip_existing_by_source_id(config: SyncConfig, item: SyncItemState) -> bool:
     if config.force_reprocess:
         return False
+    if item.source_origin == "favorite_artist_release":
+        return False
     source_id = item.youtube_music_track_id
     return bool(source_id and source_id in config.existing_local_youtube_music_track_ids)
 
@@ -1690,6 +1692,69 @@ def _sync_release_item_metadata(item: SyncItemState, track: dict[str, Any]) -> N
     _refresh_normalized_fields(item)
 
 
+def refresh_item_from_catalog_release(
+    ytmusic: YTMusic, item: SyncItemState
+) -> None:
+    release_id = item.catalog_release_browse_id
+    if not release_id:
+        raise ValueError("Favorite release track is missing its release browse ID.")
+    album = ytmusic.get_album(release_id)
+    if not isinstance(album, dict):
+        raise ValueError(f"YouTube Music release not found: {release_id}")
+
+    raw_tracks = _extract_tracks(album)
+    tracks: list[dict[str, Any]] = []
+    for index, track in enumerate(raw_tracks, start=1):
+        enriched = dict(track)
+        enriched["trackNumber"] = _signature_int(track.get("trackNumber")) or index
+        enriched["trackTotal"] = len(raw_tracks)
+        enriched["discNumber"] = _signature_int(track.get("discNumber")) or 1
+        enriched["discTotal"] = _signature_int(track.get("discTotal")) or 1
+        enriched["album"] = {
+            "name": canonical_album_name(
+                str(album.get("title") or item.catalog_release_title or item.album)
+            ),
+            "id": release_id,
+        }
+        if not enriched.get("artists") and album.get("artists"):
+            enriched["artists"] = album.get("artists")
+        if not enriched.get("thumbnails") and album.get("thumbnails"):
+            enriched["thumbnails"] = album.get("thumbnails")
+        tracks.append(enriched)
+
+    video_id = item.youtube_music_track_id or item.resolved_youtube_music_track_id
+    selected = next(
+        (
+            track
+            for track in tracks
+            if video_id and _signature_str(track.get("videoId")) == video_id
+        ),
+        None,
+    )
+    if selected is None and item.track_number is not None:
+        selected = next(
+            (
+                track
+                for track in tracks
+                if _signature_int(track.get("trackNumber")) == item.track_number
+                and _canonicalize_track_title(
+                    str(track.get("title") or ""), _string_list_names(track.get("artists"))
+                )
+                == _canonicalize_track_title(item.title, [item.artist])
+            ),
+            None,
+        )
+    if selected is None:
+        raise ValueError(
+            f"Stored release track no longer matches YouTube Music release {release_id}."
+        )
+
+    _sync_release_item_metadata(item, selected)
+    item.cover_art_url = _pick_thumbnail(
+        selected.get("thumbnails") or album.get("thumbnails")
+    ) or item.cover_art_url
+
+
 def _should_run_musicbrainz(item: SyncItemState) -> bool:
     return True
 
@@ -1706,6 +1771,13 @@ def _matches_release_signature(item: SyncItemState, signature: dict[str, Any]) -
     if (item.normalized_primary_artist or "") != _signature_normalized_artist(signature):
         return False
     if (item.normalized_title or "") != _signature_normalized_title(signature):
+        return False
+    signature_disc_number = _signature_int(signature.get("discNumber"))
+    if (
+        item.disc_number is not None
+        and signature_disc_number is not None
+        and item.disc_number != signature_disc_number
+    ):
         return False
     signature_track_number = _signature_int(signature.get("trackNumber"))
     return item.track_number is None or signature_track_number is None or item.track_number == signature_track_number
@@ -1726,6 +1798,14 @@ def _skip_reason_for_existing_signature(
 ) -> tuple[str, str] | None:
     if config.force_reprocess:
         return None
+    if item.source_origin == "favorite_artist_release":
+        for signature in config.existing_local_release_signatures:
+            if _matches_release_signature(item, signature):
+                return (
+                    "existing_release",
+                    "Matching managed local release identity already scanned.",
+                )
+        return None
     source_id = item.youtube_music_track_id
     resolved_id = item.resolved_youtube_music_track_id or source_id
     if source_id and source_id in config.existing_local_youtube_music_track_ids:
@@ -1738,14 +1818,6 @@ def _skip_reason_for_existing_signature(
             "existing_library_identity",
             "Matching managed local library resolved identity already scanned.",
         )
-    if item.source_origin == "favorite_artist_release":
-        for signature in config.existing_local_release_signatures:
-            if _matches_release_signature(item, signature):
-                return (
-                    "existing_release",
-                    "Matching managed local release identity already scanned.",
-                )
-        return None
     for signature in config.existing_local_track_signatures:
         if _matches_song_signature(item, signature):
             return (

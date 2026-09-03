@@ -30,6 +30,7 @@ from .sync_engine import (
     _resolve_best_lyrics,
     _resolve_exact_catalog,
     _resolve_fallback_metadata,
+    refresh_item_from_catalog_release,
     _should_run_musicbrainz,
     _sync_release_item_metadata,
 )
@@ -208,8 +209,20 @@ def _preview_one(
     current_lrc_path = _string_or_none(candidate.get("current_lrc_path"))
 
     try:
-        lyrics_browse_id = _resolve_exact_catalog(ytmusic, item)
+        if (
+            item.source_origin == "favorite_artist_release"
+            and item.catalog_release_browse_id
+        ):
+            refresh_item_from_catalog_release(ytmusic, item)
+            lyrics_browse_id = None
+        else:
+            lyrics_browse_id = _resolve_exact_catalog(ytmusic, item)
     except Exception:
+        if (
+            item.source_origin == "favorite_artist_release"
+            and item.catalog_release_browse_id
+        ):
+            raise
         _resolve_fallback_metadata(config, item)
         lyrics_browse_id = None
 

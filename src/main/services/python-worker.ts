@@ -9,6 +9,12 @@ export interface WorkerProcessHandle {
 export class PythonWorkerService {
   private readonly projectDirectory = path.join(process.cwd(), 'py')
 
+  constructor(private readonly exiftoolPath = 'exiftool') {}
+
+  private workerEnvironment() {
+    return { ...process.env, LMS_EXIFTOOL_PATH: this.exiftoolPath }
+  }
+
   async runJsonCommand<T>(command: string, payload: unknown): Promise<T> {
     const subprocess = await execa(
       'uv',
@@ -22,6 +28,7 @@ export class PythonWorkerService {
         command,
       ],
       {
+        env: this.workerEnvironment(),
         input: JSON.stringify(payload),
         reject: false,
       }
@@ -63,6 +70,7 @@ export class PythonWorkerService {
       {
         cwd: process.cwd(),
         detached: process.platform !== 'win32',
+        env: this.workerEnvironment(),
         stdio: ['pipe', 'pipe', 'pipe'],
       }
     )

@@ -109,6 +109,47 @@ def test_m4a_standard_and_custom_tag_round_trip(tmp_path: Path) -> None:
     assert file_data["cover_art_present"] is True
 
 
+def test_scan_keeps_same_recording_on_two_releases_as_two_tracks(
+    tmp_path: Path,
+) -> None:
+    album_path = tmp_path / "tricot" / "T H E" / "09 99.974℃.m4a"
+    single_path = tmp_path / "tricot" / "99.974" / "01 99.974℃.m4a"
+    _make_m4a(album_path)
+    _make_m4a(single_path)
+
+    album_item = _item("1zez30Rj82g")
+    album_item.catalog_release_browse_id = "MPREb_Npjg6HxNrZ3"
+    album_item.catalog_release_title = "T H E"
+    album_item.catalog_release_kind = "album"
+    album_item.album = "T H E"
+    album_item.disc_number = 1
+    album_item.track_number = 9
+    write_media_tags(album_path, album_item, None, None)
+
+    single_item = _item("1zez30Rj82g")
+    single_item.catalog_release_browse_id = "MPREb_dia2KRjntFT"
+    single_item.catalog_release_title = "99.974"
+    single_item.catalog_release_kind = "single"
+    single_item.album = "99.974"
+    single_item.disc_number = 1
+    single_item.track_number = 1
+    write_media_tags(single_path, single_item, None, None)
+
+    scan = scan_root({"transport": "filesystem", "kind": "local", "uri": str(tmp_path)})
+    files = {entry["relative_path"]: entry for entry in scan["files"]}
+
+    assert files["tricot/T H E/09 99.974℃.m4a"]["identity_kind"] == "ytm_release_track"
+    assert files["tricot/T H E/09 99.974℃.m4a"]["identity_value"] == (
+        "MPREb_Npjg6HxNrZ3:1:9"
+    )
+    assert files["tricot/99.974/01 99.974℃.m4a"]["identity_kind"] == (
+        "ytm_release_track"
+    )
+    assert files["tricot/99.974/01 99.974℃.m4a"]["identity_value"] == (
+        "MPREb_dia2KRjntFT:1:1"
+    )
+
+
 def test_comments_migration_parses_legacy_source_url(tmp_path: Path) -> None:
     register_lms_mediafile_fields()
     audio_path = tmp_path / "legacy.m4a"

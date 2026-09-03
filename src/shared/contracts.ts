@@ -27,6 +27,7 @@ export type SyncItemStatus =
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type LyricsStatus = 'missing' | 'plain' | 'synced'
 export type IdentityKind =
+  | 'ytm_release_track'
   | 'lms_source'
   | 'mb_track'
   | 'isrc'

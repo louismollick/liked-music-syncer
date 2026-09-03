@@ -587,6 +587,7 @@ export class LibraryService {
       catalogReleaseTitle: string | null
       catalogReleaseKind: string | null
       mbAlbumId: string | null
+      discNumber: number | null
       trackNumber: number | null
     }>
     releaseSignatures: Array<{
@@ -595,6 +596,7 @@ export class LibraryService {
       sourceOrigin: string | null
       catalogReleaseBrowseId: string | null
       mbAlbumId: string | null
+      discNumber: number | null
       trackNumber: number | null
     }>
   }> {
@@ -621,6 +623,7 @@ export class LibraryService {
       catalogReleaseTitle: string | null
       catalogReleaseKind: string | null
       mbAlbumId: string | null
+      discNumber: number | null
       trackNumber: number | null
     }> = []
     const releaseSignatures: Array<{
@@ -629,6 +632,7 @@ export class LibraryService {
       sourceOrigin: string | null
       catalogReleaseBrowseId: string | null
       mbAlbumId: string | null
+      discNumber: number | null
       trackNumber: number | null
     }> = []
 
@@ -649,6 +653,7 @@ export class LibraryService {
         catalogReleaseTitle: track.catalogReleaseTitle,
         catalogReleaseKind: track.catalogReleaseKind,
         mbAlbumId: track.mbAlbumId,
+        discNumber: track.discNumber,
         trackNumber: track.trackNumber,
       })
       releaseSignatures.push({
@@ -657,6 +662,7 @@ export class LibraryService {
         sourceOrigin: track.sourceOrigin,
         catalogReleaseBrowseId: track.catalogReleaseBrowseId,
         mbAlbumId: track.mbAlbumId,
+        discNumber: track.discNumber,
         trackNumber: track.trackNumber,
       })
     }

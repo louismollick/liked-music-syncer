@@ -50,8 +50,20 @@ _Avoid_: Active Google Session, current channel
 A relationship showing that a liked music library contributed to a library item. A library item can have many source contributions.
 _Avoid_: Original source, single source
 
+**Recording**:
+The underlying performance or audio shared by one or more Release Tracks. A source video ID may identify a Recording, but it does not identify one appearance on an album or single.
+_Avoid_: Library Track, release
+
+**Release Track**:
+A Recording's appearance at a specific disc and track position on one Release. The Library keeps separate Release Tracks when an album, single, EP, or reissue uses the same Recording.
+_Avoid_: Recording, duplicate song
+
+**Release**:
+A published album, single, or EP identified by a trusted catalog release ID when one is available.
+_Avoid_: Recording, liked-song group
+
 **Album**:
-A library grouping based on the final downloaded or tagged album metadata.
+A library grouping for Release Tracks based on the final downloaded or tagged release metadata.
 _Avoid_: Liked-song group, source album
 
 **Artist**:

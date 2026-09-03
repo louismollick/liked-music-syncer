@@ -7,15 +7,13 @@ import subprocess
 import tempfile
 import unicodedata
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from mediafile import MediaFile
-
+from .exiftool_scan import scan_directory, scan_file
 from .lyrics import classify_lyrics_text
-from .media_tags import register_lms_mediafile_fields, read_legacy_youtube_track_id
-from .models import normalize_artist_credits
+from .release_track_identity import youtube_music_release_track_identity
 
 
 @dataclass(slots=True)
@@ -109,6 +107,10 @@ def _heuristic_identity(metadata: dict[str, Any]) -> str | None:
 
 
 def _identity_for(metadata: dict[str, Any], relative_path: str, root_uri: str) -> tuple[str, str, str]:
+    release_track_identity = youtube_music_release_track_identity(metadata)
+    if release_track_identity:
+        return "ytm_release_track", release_track_identity, "lms_tags"
+
     for platform, field_name in (
         ("youtube_music", "youtube_music_track_id"),
         ("spotify", "spotify_track_id"),
@@ -133,146 +135,30 @@ def _identity_for(metadata: dict[str, Any], relative_path: str, root_uri: str) -
     return "path", f"{root_uri}:{relative_path}", "path"
 
 
-def _tag_fingerprint(metadata: dict[str, Any]) -> str:
-    canonical = {
-        key: metadata.get(key)
-        for key in (
-            "tag_schema_version",
-            "youtube_music_track_id",
-            "spotify_track_id",
-            "soundcloud_track_id",
-            "resolved_youtube_music_track_id",
-            "source_origin",
-            "resolution_method",
-            "catalog_release_browse_id",
-            "catalog_release_title",
-            "catalog_release_kind",
-            "artist_credits",
-            "title",
-            "artist",
-            "album",
-            "album_artist",
-            "track_number",
-            "track_total",
-            "disc_number",
-            "disc_total",
-            "year",
-            "date",
-            "genre",
-            "language",
-            "isrc",
-            "mb_track_id",
-            "mb_album_id",
-            "mb_releasegroup_id",
-            "embedded_lyrics_status",
-            "embedded_lyrics_sha256",
-            "artwork_sha256",
-        )
-    }
-    encoded = json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _to_iso_timestamp(timestamp: float | None) -> str | None:
     if timestamp is None:
         return None
     return datetime.fromtimestamp(timestamp, tz=UTC).isoformat()
 
 
-def _parse_schema_version(value: Any) -> int | None:
-    try:
-        parsed = int(str(value))
-        return parsed if parsed > 0 else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _normalize_date_value(value: Any) -> str | None:
-    if isinstance(value, date):
-        return value.isoformat()
-    if isinstance(value, str) and value:
-        return value
-    return None
+def _complete_media_metadata(
+    metadata: dict[str, Any], sidecar_text: str | None
+) -> dict[str, Any]:
+    metadata = dict(metadata)
+    embedded_lyrics_status = str(metadata["embedded_lyrics_status"])
+    sidecar_lyrics_status = _classify_lyrics_text(sidecar_text)
+    metadata["lyrics_status"] = _best_lyrics_status(
+        embedded_lyrics_status, sidecar_lyrics_status
+    )
+    metadata["has_embedded_lyrics"] = embedded_lyrics_status != "missing"
+    metadata["has_sidecar_lyrics"] = sidecar_lyrics_status != "missing"
+    metadata["sidecar_lyrics_status"] = sidecar_lyrics_status
+    metadata["missing_fields"] = _missing_fields(metadata)
+    return metadata
 
 
 def _read_media_metadata(path: Path, sidecar_text: str | None) -> dict[str, Any]:
-    register_lms_mediafile_fields()
-    media = MediaFile(str(path))
-    embedded_lyrics = media.lyrics if isinstance(media.lyrics, str) and media.lyrics else None
-    embedded_lyrics_status = _classify_lyrics_text(embedded_lyrics)
-    sidecar_lyrics_status = _classify_lyrics_text(sidecar_text)
-    tag_schema_version = getattr(media, "lms_tag_schema_version", None)
-    youtube_music_track_id = getattr(media, "lms_youtube_music_track_id", None) or None
-    resolved_youtube_music_track_id = getattr(media, "lms_resolved_youtube_music_track_id", None) or None
-    spotify_track_id = getattr(media, "lms_spotify_track_id", None) or None
-    soundcloud_track_id = getattr(media, "lms_soundcloud_track_id", None) or None
-    source_origin = getattr(media, "lms_source_origin", None) or None
-    resolution_method = getattr(media, "lms_resolution_method", None) or None
-    catalog_release_browse_id = getattr(media, "lms_catalog_release_browse_id", None) or None
-    catalog_release_title = getattr(media, "lms_catalog_release_title", None) or None
-    catalog_release_kind = getattr(media, "lms_catalog_release_kind", None) or None
-    artist_credits_json = getattr(media, "lms_artist_credits", None) or ""
-    try:
-        artist_credits = normalize_artist_credits(json.loads(artist_credits_json))
-    except (json.JSONDecodeError, TypeError):
-        artist_credits = []
-
-    if not youtube_music_track_id:
-        youtube_music_track_id = read_legacy_youtube_track_id(path)
-    if not resolved_youtube_music_track_id:
-        resolved_youtube_music_track_id = youtube_music_track_id
-
-    images = media.images or []
-    artwork_hash = hashlib.sha256()
-    for image in images:
-        artwork_hash.update(image.data)
-
-    metadata = {
-        "managed_by_app": tag_schema_version is not None,
-        "tag_schema_version": _parse_schema_version(tag_schema_version),
-        "youtube_music_track_id": youtube_music_track_id,
-        "spotify_track_id": spotify_track_id,
-        "soundcloud_track_id": soundcloud_track_id,
-        "resolved_youtube_music_track_id": resolved_youtube_music_track_id,
-        "source_origin": source_origin,
-        "resolution_method": resolution_method,
-        "catalog_release_browse_id": catalog_release_browse_id,
-        "catalog_release_title": catalog_release_title,
-        "catalog_release_kind": catalog_release_kind,
-        "artist_credits": artist_credits,
-        "title": media.title or None,
-        "artist": media.artist or None,
-        "album": media.album or None,
-        "album_artist": media.albumartist or None,
-        "track_number": media.track or None,
-        "track_total": media.tracktotal or None,
-        "disc_number": media.disc or None,
-        "disc_total": media.disctotal or None,
-        "year": media.year or None,
-        "date": _normalize_date_value(media.date),
-        "genre": media.genre or None,
-        "language": media.language or None,
-        "isrc": media.isrc or None,
-        "mb_track_id": media.mb_trackid or None,
-        "mb_album_id": media.mb_albumid or None,
-        "mb_releasegroup_id": media.mb_releasegroupid or None,
-        "lyrics_status": _best_lyrics_status(embedded_lyrics_status, sidecar_lyrics_status),
-        "has_embedded_lyrics": embedded_lyrics_status != "missing",
-        "has_sidecar_lyrics": sidecar_lyrics_status != "missing",
-        "cover_art_present": bool(images),
-        "embedded_lyrics_status": embedded_lyrics_status,
-        "embedded_lyrics_sha256": hashlib.sha256(embedded_lyrics.encode("utf-8")).hexdigest()
-        if embedded_lyrics is not None
-        else None,
-        "artwork_sha256": artwork_hash.hexdigest() if images else None,
-        "sidecar_lyrics_status": sidecar_lyrics_status,
-        "format": str(media.format),
-        "duration_seconds": float(media.length) if isinstance(media.length, int | float) else None,
-        "bitrate": int(media.bitrate) if isinstance(media.bitrate, int | float) else None,
-    }
-    metadata["missing_fields"] = _missing_fields(metadata)
-    metadata["tag_fingerprint"] = _tag_fingerprint(metadata)
-    return metadata
+    return _complete_media_metadata(scan_file(path), sidecar_text)
 
 
 def _read_sidecar_text(path: Path | None) -> str | None:
@@ -287,11 +173,16 @@ def _sidecar_modified_at(path: Path | None) -> str | None:
     return _to_iso_timestamp(path.stat().st_mtime)
 
 
-def _scan_local_file(root_path: Path, file_path: Path, scanned_at: str) -> dict[str, Any]:
+def _scan_local_file(
+    root_path: Path,
+    file_path: Path,
+    scanned_at: str,
+    scanned_metadata: dict[str, Any],
+) -> dict[str, Any]:
     relative_path = file_path.relative_to(root_path).as_posix()
     lrc_path = file_path.with_suffix(".lrc")
     sidecar_text = _read_sidecar_text(lrc_path if lrc_path.is_file() else None)
-    metadata = _read_media_metadata(file_path, sidecar_text)
+    metadata = _complete_media_metadata(scanned_metadata, sidecar_text)
     identity_kind, identity_value, discovered_via = _identity_for(
         metadata, relative_path, str(root_path)
     )
@@ -388,11 +279,23 @@ def scan_root(payload: dict[str, Any]) -> dict[str, Any]:
         root_path = Path(config.uri).expanduser()
         if not root_path.is_dir():
             raise FileNotFoundError(f"Library root not found: {root_path}")
-        local_files = [
-            _scan_local_file(root_path, file_path, scanned_at)
-            for file_path in sorted(root_path.rglob("*.m4a"))
-            if file_path.is_file()
-        ]
+        scanned_files = scan_directory(root_path)
+        local_files = []
+        for scanned_file in scanned_files:
+            source_file = Path(str(scanned_file["source_file"]))
+            metadata = {
+                key: value
+                for key, value in scanned_file.items()
+                if key not in {"relative_path", "source_file", "sidecar_sha256"}
+            }
+            local_files.append(
+                _scan_local_file(
+                    root_path,
+                    source_file,
+                    scanned_at,
+                    metadata,
+                )
+            )
         return {"scanned_at": scanned_at, "files": local_files}
 
     if config.transport == "rclone":

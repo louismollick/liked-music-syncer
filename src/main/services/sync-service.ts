@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   normalizeArtistCredits,
@@ -265,22 +265,8 @@ export interface RcloneSftpConfig {
   keyFile: string
 }
 
-interface ExiftoolJsonRow {
-  SourceFile?: unknown
-  LMS_YOUTUBE_MUSIC_TRACK_ID?: unknown
-  LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID?: unknown
-  ManagedMetadataFingerprint?: unknown
-  SidecarSHA256?: unknown
-}
-
 const REMOTE_EXIFTOOL_MISSING_MESSAGE =
   'Remote scanner requires exiftool on the VPS. Install libimage-exiftool-perl.'
-
-function stringOrNull(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  const trimmed = value.trim()
-  return trimmed ? trimmed : null
-}
 
 export function parseRcloneSftpConfig(output: string): RcloneSftpConfig {
   const values = new Map<string, string>()
@@ -307,36 +293,20 @@ export function normalizeExiftoolJson(
   stdout: string,
   scannedAt = nowIso()
 ): RemoteShellScanResult {
-  let rows: ExiftoolJsonRow[]
   try {
-    const parsed = JSON.parse(stdout)
-    if (!Array.isArray(parsed)) {
-      throw new Error('not an array')
+    const parsed = JSON.parse(stdout) as Partial<RemoteShellScanResult>
+    if (!Array.isArray(parsed.identities)) {
+      throw new Error('identities is not an array')
     }
-    rows = parsed as ExiftoolJsonRow[]
+    return {
+      scannedAt,
+      filesScanned: parsed.identities.length,
+      identities: parsed.identities,
+    }
   } catch (error) {
     throw new Error(
       `Malformed exiftool JSON: ${error instanceof Error ? error.message : 'unknown error'}`
     )
-  }
-
-  const identities = rows.map((row) => {
-    const sourceFile = String(row.SourceFile ?? '')
-    return {
-      relativePath: sourceFile.replace(/^\.\//, ''),
-      youtubeMusicTrackId: stringOrNull(row.LMS_YOUTUBE_MUSIC_TRACK_ID),
-      resolvedYoutubeMusicTrackId: stringOrNull(
-        row.LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID
-      ),
-      tagFingerprint: stringOrNull(row.ManagedMetadataFingerprint),
-      sidecarSha256: stringOrNull(row.SidecarSHA256),
-    }
-  })
-
-  return {
-    scannedAt,
-    filesScanned: identities.length,
-    identities,
   }
 }
 
@@ -353,147 +323,17 @@ function shellQuote(value: string) {
 export function buildRemoteScannerCommand(shellRoot: string) {
   return `cd ${shellQuote(shellRoot)} || { echo "__LMS_REMOTE_ROOT_MISSING__" >&2; exit 44; }
 command -v exiftool >/dev/null 2>&1 || { echo "__LMS_EXIFTOOL_MISSING__" >&2; exit 45; }
-python3 - <<'PY'
-import base64
-import hashlib
-import json
-import os
-import re
-import subprocess
-import sys
+python3 - --remote-identities .`
+}
 
-root = "."
-paths = []
-for current, _, files in os.walk(root):
-    for name in files:
-        if name.lower().endswith(".m4a"):
-            paths.append(os.path.join(current, name))
-
-rows = []
-def value(row, *names):
-    for name in names:
-        current = row.get(name)
-        if current not in (None, ""):
-            return current
-    return None
-
-def integer(row, *names):
-    current = value(row, *names)
-    if current is None:
-        return None
-    match = re.match(r"^\\s*(\\d+)", str(current))
-    parsed = int(match.group(1)) if match else None
-    return parsed if parsed else None
-
-def text(row, *names):
-    current = value(row, *names)
-    return str(current) if current is not None else None
-
-def json_array(row, *names):
-    current = text(row, *names)
-    if not current:
-        return []
-    try:
-        parsed = json.loads(current)
-        return parsed if isinstance(parsed, list) else []
-    except (TypeError, ValueError):
-        return []
-
-def binary_hash(current):
-    if not isinstance(current, str):
-        return None
-    raw = base64.b64decode(current[7:]) if current.startswith("base64:") else current.encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
-
-def lyrics_status(current):
-    if not current:
-        return "missing"
-    return "synced" if re.search(r"(?m)^\\[\\d{1,3}:\\d{2}(?:[.:]\\d{1,3})?\\]", str(current)) else "plain"
-
-for index in range(0, len(paths), 100):
-    batch = paths[index:index + 100]
-    if not batch:
-        continue
-    proc = subprocess.run(
-        [
-            "exiftool",
-            "-json",
-            "-b",
-            "-n",
-            "-charset",
-            "filename=UTF8",
-            "-LMS_TAG_SCHEMA_VERSION",
-            "-LMS_YOUTUBE_MUSIC_TRACK_ID",
-            "-LMS_SPOTIFY_TRACK_ID",
-            "-LMS_SOUNDCLOUD_TRACK_ID",
-            "-LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID",
-            "-LMS_SOURCE_ORIGIN",
-            "-LMS_RESOLUTION_METHOD",
-            "-LMS_CATALOG_RELEASE_BROWSE_ID",
-            "-LMS_CATALOG_RELEASE_TITLE",
-            "-LMS_CATALOG_RELEASE_KIND",
-            "-LMS_ARTIST_CREDITS",
-            "-Title", "-Artist", "-Album", "-AlbumArtist",
-            "-TrackNumber", "-TrackTotal", "-DiscNumber", "-DiscTotal", "-DiskNumber", "-DiskTotal",
-            "-Year", "-ContentCreateDate", "-Genre", "-Language", "-ISRC",
-            "-MusicBrainzTrackId", "-MusicBrainzAlbumId", "-MusicBrainzReleaseGroupId",
-            "-Lyrics", "-CoverArt",
-            *batch,
-        ],
-        text=True,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr)
-        sys.exit(proc.returncode)
-    for row in json.loads(proc.stdout or "[]"):
-        lyrics = text(row, "Lyrics")
-        date_value = text(row, "ContentCreateDate")
-        if date_value:
-            date_value = date_value[:10].replace(":", "-")
-        year = integer(row, "Year")
-        if year is None and date_value and re.match(r"^\\d{4}", date_value):
-            year = int(date_value[:4])
-        canonical = {
-            "tag_schema_version": integer(row, "LMS_TAG_SCHEMA_VERSION"),
-            "youtube_music_track_id": text(row, "LMS_YOUTUBE_MUSIC_TRACK_ID"),
-            "spotify_track_id": text(row, "LMS_SPOTIFY_TRACK_ID"),
-            "soundcloud_track_id": text(row, "LMS_SOUNDCLOUD_TRACK_ID"),
-            "resolved_youtube_music_track_id": text(row, "LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID") or text(row, "LMS_YOUTUBE_MUSIC_TRACK_ID"),
-            "source_origin": text(row, "LMS_SOURCE_ORIGIN"),
-            "resolution_method": text(row, "LMS_RESOLUTION_METHOD"),
-            "catalog_release_browse_id": text(row, "LMS_CATALOG_RELEASE_BROWSE_ID"),
-            "catalog_release_title": text(row, "LMS_CATALOG_RELEASE_TITLE"),
-            "catalog_release_kind": text(row, "LMS_CATALOG_RELEASE_KIND"),
-            "artist_credits": json_array(row, "LMS_ARTIST_CREDITS"),
-            "title": text(row, "Title"), "artist": text(row, "Artist"),
-            "album": text(row, "Album"), "album_artist": text(row, "AlbumArtist"),
-            "track_number": integer(row, "TrackNumber"), "track_total": integer(row, "TrackTotal"),
-            "disc_number": integer(row, "DiscNumber", "DiskNumber"), "disc_total": integer(row, "DiscTotal", "DiskTotal"),
-            "year": year, "date": date_value,
-            "genre": text(row, "Genre"), "language": text(row, "Language", "LANGUAGE"), "isrc": text(row, "ISRC"),
-            "mb_track_id": text(row, "MusicBrainzTrackId"), "mb_album_id": text(row, "MusicBrainzAlbumId"),
-            "mb_releasegroup_id": text(row, "MusicBrainzReleaseGroupId"),
-            "embedded_lyrics_status": lyrics_status(lyrics),
-            "embedded_lyrics_sha256": hashlib.sha256(lyrics.encode("utf-8")).hexdigest() if lyrics is not None else None,
-            "artwork_sha256": binary_hash(row.get("CoverArt")),
-        }
-        source_file = str(row.get("SourceFile") or "")
-        lrc_path = os.path.splitext(source_file)[0] + ".lrc"
-        sidecar_hash = None
-        if os.path.isfile(lrc_path):
-            with open(lrc_path, "rb") as sidecar:
-                sidecar_hash = hashlib.sha256(sidecar.read()).hexdigest()
-        rows.append({
-            "SourceFile": source_file,
-            "LMS_YOUTUBE_MUSIC_TRACK_ID": canonical["youtube_music_track_id"],
-            "LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID": canonical["resolved_youtube_music_track_id"],
-            "ManagedMetadataFingerprint": hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest(),
-            "SidecarSHA256": sidecar_hash,
-        })
-
-print(json.dumps(rows))
-PY`
+function getSharedScannerSourcePath() {
+  return path.join(
+    process.cwd(),
+    'py',
+    'src',
+    'liked_music_syncer',
+    'exiftool_scan.py'
+  )
 }
 
 export function buildRemoteScannerSshArgs(input: {
@@ -996,7 +836,11 @@ export class SyncService {
 
     const config = parseRcloneSftpConfig(configResult.stdout)
     const sshArgs = buildRemoteScannerSshArgs({ config, remoteMusicRoot })
-    const scanResult = await execa('ssh', sshArgs, { reject: false })
+    const scannerSource = await readFile(getSharedScannerSourcePath(), 'utf8')
+    const scanResult = await execa('ssh', sshArgs, {
+      input: scannerSource,
+      reject: false,
+    })
     if (scanResult.exitCode !== 0) {
       if (scanResult.stderr.includes('__LMS_EXIFTOOL_MISSING__')) {
         throw new Error(REMOTE_EXIFTOOL_MISSING_MESSAGE)
@@ -2179,16 +2023,9 @@ export class SyncService {
         filesByTrackId.set(file.trackId, current)
       }
 
-      const remoteBySourceId = new Map<string, RemoteShellTrackIdentity>()
-      const remoteByResolvedId = new Map<string, RemoteShellTrackIdentity>()
       const remoteByRelativePath = new Map<string, RemoteShellTrackIdentity>()
       for (const identity of remoteScan.identities) {
         remoteByRelativePath.set(identity.relativePath, identity)
-        if (identity.youtubeMusicTrackId)
-          remoteBySourceId.set(identity.youtubeMusicTrackId, identity)
-        if (identity.resolvedYoutubeMusicTrackId) {
-          remoteByResolvedId.set(identity.resolvedYoutubeMusicTrackId, identity)
-        }
       }
 
       const actionable: RemoteBackfillCandidate[] = []
@@ -2221,10 +2058,7 @@ export class SyncService {
           continue
         }
 
-        const remoteMatch =
-          (sourceId ? remoteBySourceId.get(sourceId) : undefined) ??
-          (resolvedId ? remoteByResolvedId.get(resolvedId) : undefined) ??
-          remoteByRelativePath.get(selected.relativePath)
+        const remoteMatch = remoteByRelativePath.get(selected.relativePath)
         const reconciliation = classifyRemoteTrack(
           remoteMatch,
           selected.tagFingerprint,
@@ -2261,8 +2095,7 @@ export class SyncService {
           }
         }
 
-        const remoteRelativePath =
-          remoteMatch?.relativePath || selected.relativePath
+        const remoteRelativePath = selected.relativePath
         const remoteTarget = `${remoteRootUri.replace(/\/$/, '')}/${remoteRelativePath}`
         const trackWorkId = `${jobId}:${track.id}`
         actionable.push({

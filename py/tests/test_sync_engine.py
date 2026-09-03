@@ -728,10 +728,12 @@ def test_release_dedupe_skips_same_release_but_keeps_other_release() -> None:
                     "trackNumber": 1,
                 }
             ],
+            "existing_local_youtube_music_track_ids": ["source123"],
             "existing_local_track_signatures": [],
         }
     )
     item = _item(title="Song", artist="Artist")
+    item.youtube_music_track_id = "source123"
     item.source_origin = "favorite_artist_release"
     item.catalog_release_browse_id = "release123"
     item.track_number = 1
@@ -744,6 +746,47 @@ def test_release_dedupe_skips_same_release_but_keeps_other_release() -> None:
     )
 
     item.catalog_release_browse_id = "release999"
+    assert _skip_reason_for_existing_signature(config, item) is None
+
+
+def test_release_dedupe_keeps_same_track_number_on_another_disc() -> None:
+    config = SyncConfig.from_payload(
+        {
+            "job_id": "job_1",
+            "output_directory": "/tmp/out",
+            "remote_copy_enabled": False,
+            "rclone_remote": "",
+            "remote_music_root": "",
+            "ytmusic_browser_auth": "cookie: a=b",
+            "yt_dlp_cookies_browser": "firefox",
+            "folder_template": "{albumartist}/{album}",
+            "file_template": "{track:02d} {title}",
+            "embed_unsynced_lyrics": True,
+            "write_lrc_sidecar": True,
+            "lyrics_api_base_url": "",
+            "spotify_match_enabled": False,
+            "ffmpeg_path": "ffmpeg",
+            "yt_dlp_plugin_dir": "",
+            "yt_dlp_po_token_base_url": "",
+            "existing_local_release_signatures": [
+                {
+                    "artist": "Artist",
+                    "title": "Song",
+                    "catalogReleaseBrowseId": "release123",
+                    "discNumber": 1,
+                    "trackNumber": 1,
+                }
+            ],
+        }
+    )
+    item = _item(title="Song", artist="Artist")
+    item.source_origin = "favorite_artist_release"
+    item.catalog_release_browse_id = "release123"
+    item.disc_number = 2
+    item.track_number = 1
+    item.normalized_primary_artist = "artist"
+    item.normalized_title = "song"
+
     assert _skip_reason_for_existing_signature(config, item) is None
 
 

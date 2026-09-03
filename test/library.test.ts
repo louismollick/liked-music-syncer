@@ -211,6 +211,62 @@ describe('library service', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
+  it('keeps one recording on two releases as two library tracks', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const pythonWorker = {
+      runJsonCommand: vi.fn().mockResolvedValue({
+        scanned_at: '2026-09-01T00:00:00.000Z',
+        files: [
+          scannedFile({
+            identity_kind: 'ytm_release_track',
+            identity_value: 'MPREb_Npjg6HxNrZ3:1:9',
+            youtube_music_track_id: '1zez30Rj82g',
+            catalog_release_browse_id: 'MPREb_Npjg6HxNrZ3',
+            album: 'T H E',
+            track_number: 9,
+            relative_path: 'tricot/T H E/09 99.974℃.m4a',
+          }),
+          scannedFile({
+            identity_kind: 'ytm_release_track',
+            identity_value: 'MPREb_dia2KRjntFT:1:1',
+            youtube_music_track_id: '1zez30Rj82g',
+            catalog_release_browse_id: 'MPREb_dia2KRjntFT',
+            album: '99.974',
+            track_number: 1,
+            relative_path: 'tricot/99.974/01 99.974℃.m4a',
+          }),
+        ],
+      }),
+    }
+    const service = new LibraryService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/library',
+          remoteCopyEnabled: false,
+          rcloneRemote: '',
+          remoteMusicRoot: '',
+        }),
+      } as never,
+      pythonWorker as never
+    )
+
+    await service.reconcileLocalLibrary()
+
+    const tracks = await service.listTracks()
+    expect(tracks).toHaveLength(2)
+    expect(tracks.map((track) => track.identityValue).sort()).toEqual([
+      'MPREb_Npjg6HxNrZ3:1:9',
+      'MPREb_dia2KRjntFT:1:1',
+    ])
+    expect(new Set(tracks.map((track) => track.youtubeMusicTrackId))).toEqual(
+      new Set(['1zez30Rj82g'])
+    )
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it('exposes local and remote presence flags on library tracks', async () => {
     const { db, sqlite, dir } = makeTempDb()
     const service = new LibraryService(db, {} as never, {} as never)
@@ -2735,16 +2791,14 @@ describe('remote shell scanner helpers', () => {
     ])
     expect(args[7]).toContain("cd '/home/ubuntu/louismollick-server/music'")
     expect(args[7]).toContain('exiftool')
-    expect(args[7]).toContain('ManagedMetadataFingerprint')
-    expect(args[7]).toContain('SidecarSHA256')
-    expect(args[7]).not.toContain('"-Comment"')
-    expect(args[7]).not.toContain('"-Rating"')
+    expect(args[7]).toContain('python3 - --remote-identities .')
+    expect(args[7]).not.toContain('def ')
   })
 
   it('normalizes exiftool JSON', () => {
     expect(
       normalizeExiftoolJson(
-        '[{"SourceFile":"./A/B.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"source","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved","ManagedMetadataFingerprint":"fingerprint","SidecarSHA256":"sidecar"}]',
+        '{"filesScanned":1,"identities":[{"relativePath":"A/B.m4a","youtubeMusicTrackId":"source","resolvedYoutubeMusicTrackId":"resolved","tagFingerprint":"fingerprint","sidecarSha256":"sidecar"}]}',
         '2026-05-20T00:00:00.000Z'
       )
     ).toEqual({
@@ -3673,7 +3727,7 @@ describe('sync missing to remote', () => {
       .mockResolvedValueOnce({
         exitCode: 0,
         stderr: '',
-        stdout: '[]',
+        stdout: '{"filesScanned":0,"identities":[]}',
       } as never)
       .mockResolvedValue({
         exitCode: 0,
@@ -3751,7 +3805,7 @@ describe('sync missing to remote', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('skips track when remote already has matching source or resolved id', async () => {
+  it('copies to the intended release path when the same source exists elsewhere', async () => {
     vi.mocked(execa).mockClear()
     const { db, sqlite, dir } = makeTempDb()
     const localDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-local-'))
@@ -3921,8 +3975,9 @@ describe('sync missing to remote', () => {
         exitCode: 0,
         stderr: '',
         stdout:
-          '[{"SourceFile":"./Artist/Album/01 Song.m4a","LMS_YOUTUBE_MUSIC_TRACK_ID":"liked123","LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID":"resolved123","ManagedMetadataFingerprint":"same-fingerprint"}]',
+          '{"filesScanned":1,"identities":[{"relativePath":"Artist/Other Release/09 Song.m4a","youtubeMusicTrackId":"liked123","resolvedYoutubeMusicTrackId":"resolved123","tagFingerprint":"same-fingerprint","sidecarSha256":null}]}',
       } as never)
+      .mockResolvedValue({ exitCode: 0, stderr: '', stdout: '' } as never)
 
     const service = new SyncService(
       db,
@@ -3947,8 +4002,13 @@ describe('sync missing to remote', () => {
 
     const result = await service.syncMissingToRemote()
     expect(result.ok).toBe(true)
-    expect(result.details).toContain('skipped matching 1')
-    expect(vi.mocked(execa)).toHaveBeenCalledTimes(2)
+    expect(result.details).toContain('Copied 1')
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(execa).mock.calls[2]?.[1]).toEqual([
+      'copyto',
+      audioPath,
+      'seedbox:/music/Artist/Album/01 Song.m4a',
+    ])
 
     sqlite.close()
     fs.rmSync(localDir, { recursive: true, force: true })
