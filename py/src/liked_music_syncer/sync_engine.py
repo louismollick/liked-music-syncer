@@ -759,9 +759,13 @@ def _apply_album_metadata(
     if album_artists:
         item.album_artist = ", ".join(album_artists)
 
-    year = _parse_year(album.get("year"))
+    release_date = _signature_str(album.get("date")) or _signature_str(
+        album.get("year")
+    )
+    year = _parse_year(release_date.split("-")[0]) if release_date else None
     if year is not None:
         item.year = year
+        item.date = release_date
 
     item.track_total = len(album_tracks) or None
     item.track_number = matched_track_number
@@ -1790,11 +1794,22 @@ def _matches_release_signature(item: SyncItemState, signature: dict[str, Any]) -
 
 
 def _matches_song_signature(item: SyncItemState, signature: dict[str, Any]) -> bool:
+    item_artist = item.artist or ""
+    signature_artist = str(signature.get("artist") or "")
+    signature_title = str(signature.get("title") or "")
+    item_titles = _title_variants(item.title, [item_artist])
+    signature_titles = _title_variants(signature_title, [signature_artist])
+    shared_aliases = item_titles & signature_titles
+    exact_title_match = (item.normalized_title or "") == _signature_normalized_title(
+        signature
+    )
+    multilingual_alias_match = any(len(alias) >= 3 for alias in shared_aliases) and any(
+        ord(character) > 127 for character in item.title + signature_title
+    )
     return bool(
         (item.normalized_primary_artist or "")
         and (item.normalized_primary_artist or "") == _signature_normalized_artist(signature)
-        and (item.normalized_title or "")
-        and (item.normalized_title or "") == _signature_normalized_title(signature)
+        and (exact_title_match or multilingual_alias_match)
     )
 
 

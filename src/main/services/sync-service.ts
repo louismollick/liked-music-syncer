@@ -2012,6 +2012,7 @@ export class SyncService {
         settings.rcloneRemote.trim(),
         settings.remoteMusicRoot.trim()
       )
+      await this.libraryService.reconcileRemoteSnapshot(remoteScan)
       const tracks = (await this.db.select().from(libraryTracksTable)).filter(
         (track) => track.managedByApp
       )

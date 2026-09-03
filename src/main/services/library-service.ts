@@ -101,6 +101,15 @@ interface ScanRootsOptions {
   kinds?: RootKind[]
 }
 
+export interface RemoteInventorySnapshot {
+  scannedAt: string
+  identities: Array<{
+    relativePath: string
+    tagFingerprint: string | null
+    sidecarSha256: string | null
+  }>
+}
+
 interface TrackAggregate {
   id: string
   identityKind: LibraryTrackView['identityKind']
@@ -270,6 +279,106 @@ export class LibraryService {
           updatedAt: timestamp,
         },
       })
+  }
+
+  async reconcileRemoteSnapshot(
+    snapshot: RemoteInventorySnapshot
+  ): Promise<void> {
+    const remoteRoot = await this.resolveCurrentRemoteRoot()
+    if (!remoteRoot) return
+
+    const roots = await this.db.select().from(libraryRootsTable)
+    const localRootIds = new Set(
+      roots.filter((root) => root.kind === 'local').map((root) => root.id)
+    )
+    const files = await this.db.select().from(libraryFilesTable)
+    const localByPath = new Map(
+      files
+        .filter((file) => localRootIds.has(file.rootId))
+        .map((file) => [file.relativePath.normalize('NFC'), file] as const)
+    )
+    const existingRemote = files.filter((file) => file.rootId === remoteRoot.id)
+    const remoteByPath = new Map(
+      existingRemote.map(
+        (file) => [file.relativePath.normalize('NFC'), file] as const
+      )
+    )
+    const seenPaths = new Set(
+      snapshot.identities.map((identity) =>
+        identity.relativePath.normalize('NFC')
+      )
+    )
+
+    this.db.run(sql.raw('SAVEPOINT remote_library_reconcile'))
+    try {
+      await this.upsertRoot(remoteRoot)
+      for (const identity of snapshot.identities) {
+        const normalizedPath = identity.relativePath.normalize('NFC')
+        const localFile = localByPath.get(normalizedPath)
+        const previous = remoteByPath.get(normalizedPath)
+        const source = localFile ?? previous
+        if (!source) continue
+
+        const relativePath = identity.relativePath
+        const timestamp = snapshot.scannedAt
+        await this.db
+          .insert(libraryFilesTable)
+          .values({
+            ...source,
+            id: previous?.id ?? createId('file'),
+            trackId: localFile?.trackId ?? source.trackId,
+            rootId: remoteRoot.id,
+            relativePath,
+            absolutePathSnapshot: `${remoteRoot.uri.replace(/\/$/, '')}/${relativePath}`,
+            lrcPath: identity.sidecarSha256
+              ? `${remoteRoot.uri.replace(/\/$/, '')}/${relativePath.replace(/\.[^/.]+$/, '.lrc')}`
+              : null,
+            sidecarSha256: identity.sidecarSha256,
+            tagFingerprint: identity.tagFingerprint,
+            lastScannedAt: timestamp,
+            updatedAt: timestamp,
+          })
+          .onConflictDoUpdate({
+            target: [libraryFilesTable.rootId, libraryFilesTable.relativePath],
+            set: {
+              trackId: localFile?.trackId ?? source.trackId,
+              absolutePathSnapshot: `${remoteRoot.uri.replace(/\/$/, '')}/${relativePath}`,
+              lrcPath: identity.sidecarSha256
+                ? `${remoteRoot.uri.replace(/\/$/, '')}/${relativePath.replace(/\.[^/.]+$/, '.lrc')}`
+                : null,
+              sidecarSha256: identity.sidecarSha256,
+              tagFingerprint: identity.tagFingerprint,
+              lastScannedAt: timestamp,
+              updatedAt: timestamp,
+            },
+          })
+      }
+
+      const staleIds = existingRemote
+        .filter((file) => !seenPaths.has(file.relativePath.normalize('NFC')))
+        .map((file) => file.id)
+      if (staleIds.length > 0) {
+        await this.db
+          .delete(libraryFilesTable)
+          .where(inArray(libraryFilesTable.id, staleIds))
+      }
+      await this.deleteOrphanTracks()
+      await this.reassignPreferredFileIds([
+        ...existingRemote.map((file) => file.trackId),
+        ...snapshot.identities
+          .map((identity) =>
+            localByPath.get(identity.relativePath.normalize('NFC'))
+          )
+          .filter((file) => file !== undefined)
+          .map((file) => file.trackId),
+      ])
+      this.db.run(sql.raw('RELEASE SAVEPOINT remote_library_reconcile'))
+      this.emitInventoryChanged()
+    } catch (error) {
+      this.db.run(sql.raw('ROLLBACK TO SAVEPOINT remote_library_reconcile'))
+      this.db.run(sql.raw('RELEASE SAVEPOINT remote_library_reconcile'))
+      throw error
+    }
   }
 
   async removeRemoteCopy(rootUri: string, relativePath: string): Promise<void> {

@@ -45,6 +45,11 @@ Artists, but they do not receive remote artist images.
 
 Remote reconciliation computes both observations from the files currently on
 the remote server. It never trusts a fingerprint stored inside an audio file.
+Each successful remote shell scan also replaces the indexed remote snapshot:
+paths no longer returned by the scanner are removed, and paths that mirror a
+local file are linked to that local file's Library Track. Path comparison uses
+NFC normalization so macOS and Linux filename normalization do not split one
+track into two database identities.
 An owned-metadata difference replaces the remote `.m4a`; an `.lrc` difference
 copies only the local sidecar. A remote sidecar with no local counterpart is
 left in place because removing it is destructive.

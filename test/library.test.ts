@@ -137,6 +137,168 @@ afterEach(() => {
 })
 
 describe('library service', () => {
+  it('replaces stale remote paths and links mirrored paths to the local track', async () => {
+    const { db, sqlite, dir } = makeTempDb()
+    const service = new LibraryService(
+      db,
+      {
+        getRuntimeSettings: vi.fn().mockResolvedValue({
+          outputDirectory: '/local',
+          remoteCopyEnabled: true,
+          rcloneRemote: 'vps',
+          remoteMusicRoot: '/music',
+        }),
+      } as never,
+      {} as never
+    )
+    await db.insert(libraryRootsTable).values([
+      {
+        id: 'root_local_/local',
+        kind: 'local',
+        transport: 'filesystem',
+        label: 'Local',
+        uri: '/local',
+        writable: true,
+        managedOutput: true,
+        createdAt: '2026-09-03T00:00:00.000Z',
+        updatedAt: '2026-09-03T00:00:00.000Z',
+      },
+      {
+        id: 'root_remote_vps:/music',
+        kind: 'remote',
+        transport: 'rclone',
+        label: 'Remote',
+        uri: 'vps:/music',
+        writable: true,
+        managedOutput: true,
+        createdAt: '2026-09-03T00:00:00.000Z',
+        updatedAt: '2026-09-03T00:00:00.000Z',
+      },
+    ])
+    const baseTrack = {
+      managedByApp: true,
+      tagSchemaVersion: 1,
+      youtubeMusicTrackId: 'song',
+      spotifyTrackId: null,
+      soundcloudTrackId: null,
+      resolvedYoutubeMusicTrackId: 'song',
+      artistCreditsJson: '[]',
+      sourceOrigin: 'liked_song',
+      catalogReleaseBrowseId: null,
+      catalogReleaseTitle: null,
+      catalogReleaseKind: null,
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      albumArtist: 'Artist',
+      trackNumber: 1,
+      trackTotal: 1,
+      discNumber: 1,
+      discTotal: 1,
+      year: 2026,
+      date: '2026',
+      genre: null,
+      language: null,
+      isrc: null,
+      mbTrackId: null,
+      mbAlbumId: null,
+      mbReleaseGroupId: null,
+      lyricsStatus: 'missing',
+      hasEmbeddedLyrics: false,
+      hasSidecarLyrics: false,
+      coverArtPresent: true,
+      missingFieldsJson: '[]',
+      preferredFileId: null,
+      firstSeenAt: '2026-09-03T00:00:00.000Z',
+      lastSeenAt: '2026-09-03T00:00:00.000Z',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    } as const
+    await db.insert(libraryTracksTable).values([
+      {
+        ...baseTrack,
+        id: 'local-track',
+        identityKind: 'lms_source',
+        identityValue: 'youtube_music:song',
+      },
+      {
+        ...baseTrack,
+        id: 'stale-track',
+        identityKind: 'path',
+        identityValue: 'vps:/music:old.m4a',
+      },
+    ])
+    const baseFile = {
+      lrcPath: null,
+      format: 'm4a',
+      sizeBytes: 100,
+      durationSeconds: 60,
+      bitrate: 256000,
+      modifiedAt: null,
+      sidecarModifiedAt: null,
+      sidecarSha256: null,
+      audioSha256: null,
+      tagFingerprint: 'old',
+      embeddedLyricsStatus: 'missing',
+      sidecarLyricsStatus: 'missing',
+      missingFieldsJson: '[]',
+      discoveredVia: 'lms_tags',
+      lastScannedAt: '2026-09-03T00:00:00.000Z',
+      firstSeenAt: '2026-09-03T00:00:00.000Z',
+      updatedAt: '2026-09-03T00:00:00.000Z',
+    } as const
+    await db.insert(libraryFilesTable).values([
+      {
+        ...baseFile,
+        id: 'local-file',
+        trackId: 'local-track',
+        rootId: 'root_local_/local',
+        relativePath: 'Artist/Album/Song.m4a',
+        absolutePathSnapshot: '/local/Artist/Album/Song.m4a',
+      },
+      {
+        ...baseFile,
+        id: 'wrong-remote-file',
+        trackId: 'stale-track',
+        rootId: 'root_remote_vps:/music',
+        relativePath: 'Artist/Album/Song.m4a',
+        absolutePathSnapshot: 'vps:/music/Artist/Album/Song.m4a',
+      },
+      {
+        ...baseFile,
+        id: 'stale-remote-file',
+        trackId: 'stale-track',
+        rootId: 'root_remote_vps:/music',
+        relativePath: 'Old/Song.m4a',
+        absolutePathSnapshot: 'vps:/music/Old/Song.m4a',
+      },
+    ])
+
+    await service.reconcileRemoteSnapshot({
+      scannedAt: '2026-09-03T01:00:00.000Z',
+      identities: [
+        {
+          relativePath: 'Artist/Album/Song.m4a',
+          tagFingerprint: 'current',
+          sidecarSha256: null,
+        },
+      ],
+    })
+
+    const tracks = await service.listTracks()
+    expect(tracks).toHaveLength(1)
+    expect(tracks[0]?.hasLocalFile).toBe(true)
+    expect(tracks[0]?.hasRemoteFile).toBe(true)
+    const remoteFiles = (await db.select().from(libraryFilesTable)).filter(
+      (file) => file.rootId === 'root_remote_vps:/music'
+    )
+    expect(remoteFiles).toHaveLength(1)
+    expect(remoteFiles[0]?.trackId).toBe('local-track')
+    expect(remoteFiles[0]?.tagFingerprint).toBe('current')
+
+    sqlite.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
   it('groups local and remote managed copies into one track with two files', async () => {
     const { db, sqlite, dir } = makeTempDb()
     const pythonWorker = {
@@ -2981,6 +3143,7 @@ describe('library reprocess candidates', () => {
       } as never,
       {
         reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
+        reconcileRemoteSnapshot: vi.fn().mockResolvedValue(undefined),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {
@@ -3133,6 +3296,7 @@ describe('library reprocess candidates', () => {
       } as never,
       {
         reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
+        reconcileRemoteSnapshot: vi.fn().mockResolvedValue(undefined),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {
@@ -3749,6 +3913,7 @@ describe('sync missing to remote', () => {
       {} as never,
       {
         reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
+        reconcileRemoteSnapshot: vi.fn().mockResolvedValue(undefined),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {} as never,
@@ -3993,6 +4158,7 @@ describe('sync missing to remote', () => {
       {} as never,
       {
         reconcileLocalLibrary: vi.fn().mockResolvedValue(successfulReconcile()),
+        reconcileRemoteSnapshot: vi.fn().mockResolvedValue(undefined),
         upsertRemoteCopyFromLocalPath: vi.fn().mockResolvedValue(undefined),
       } as never,
       {} as never,
