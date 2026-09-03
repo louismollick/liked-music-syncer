@@ -14,6 +14,20 @@ SQLite savepoint. A walk or database failure rolls back the pass and keeps the
 previous inventory available for browsing. It does not start an automatic retry
 loop.
 
+Local and SSH-remote inventories run the same standalone Python scanner and
+canonicalization code over ExifTool output. Local scans use the pinned ExifTool
+installed by `pnpm tools:fetch`; SSH scans stream that scanner source to the VPS
+and use the VPS's `exiftool` command. `MediaFile` remains the tag writer, but it
+is not an independent inventory reader. This single read path is what makes tag
+fingerprints comparable across local and remote scans.
+
+Managed files with a trusted catalog release ID use Release Track identity:
+release ID, disc number, and track number. A source video ID describes the
+Recording and may be shared by several Release Tracks. Files from an album and
+single therefore remain separate even when YouTube Music serves the same audio
+for both. Files without trusted release context keep the existing source,
+MusicBrainz recording, ISRC, heuristic, or path fallback identity.
+
 The file inventory records two content observations. `tag_fingerprint` is a
 SHA-256 digest of metadata owned by Liked Music Syncer: the standard fields the
 tag writer manages, LMS identity and provenance fields, embedded lyrics, and
@@ -31,9 +45,32 @@ Artists, but they do not receive remote artist images.
 
 Remote reconciliation computes both observations from the files currently on
 the remote server. It never trusts a fingerprint stored inside an audio file.
+Each successful remote shell scan also replaces the indexed remote snapshot:
+paths no longer returned by the scanner are removed, and paths that mirror a
+local file are linked to that local file's Library Track. Path comparison uses
+NFC normalization so macOS and Linux filename normalization do not split one
+track into two database identities.
 An owned-metadata difference replaces the remote `.m4a`; an `.lrc` difference
 copies only the local sidecar. A remote sidecar with no local counterpart is
 left in place because removing it is destructive.
+
+Remote copy targets the local file's relative path. Recording identity may help
+explain related files, but it never selects a destination path. This prevents a
+preferred file from one Release from overwriting another Release Track that
+shares its source video ID.
+
+Generated path segments use NFC Unicode normalization, and remote path matching
+normalizes both sides before comparison. This matters when a macOS filesystem
+returns decomposed filenames but the Linux remote already contains the composed
+form. The two spellings must describe one destination, not two files.
+
+The tag writer preserves release-date precision: `YYYY`, `YYYY-MM`, and
+`YYYY-MM-DD` remain distinct values. Tracks from a trusted catalog Release take
+the Release-level value so one track result cannot introduce a conflicting date.
+Navidrome includes the raw date and MusicBrainz release identifiers in album
+grouping, so every track on one Release must use the same value and precision.
+App-managed files retain MusicBrainz recording identity but omit uncertain
+MusicBrainz album and release-group IDs.
 
 Calls made during an active pass share its promise and request at most one
 trailing pass. This absorbs the burst of completion events produced by a sync or

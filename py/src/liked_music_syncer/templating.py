@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from string import Formatter
@@ -11,7 +12,7 @@ INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def sanitize_segment(value: str, fallback: str = "_") -> str:
-    compact = " ".join(value.strip().split())
+    compact = " ".join(unicodedata.normalize("NFC", value).strip().split())
     cleaned = INVALID_PATH_CHARS.sub("_", compact)
     return cleaned or fallback
 

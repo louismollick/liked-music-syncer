@@ -247,6 +247,122 @@ def test_preview_reprocess_sets_target_lrc_path_none_for_plain_lyrics(
     assert preview["payload"]["target_lrc_path"] is None
 
 
+def test_preview_reprocess_refreshes_favorite_track_from_its_stored_release(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeYTMusic:
+        def get_album(self, browse_id: str) -> dict[str, object]:
+            assert browse_id == "MPREb_Npjg6HxNrZ3"
+            return {
+                "title": "T H E",
+                "year": "2013",
+                "artists": [{"name": "tricot"}],
+                "tracks": [
+                    {
+                        "videoId": f"other{index}",
+                        "title": f"Track {index}",
+                        "artists": [{"name": "tricot"}],
+                    }
+                    for index in range(1, 9)
+                ]
+                + [
+                    {
+                        "videoId": "1zez30Rj82g",
+                        "title": "99.974℃",
+                        "date": "2013-01-01",
+                        "artists": [{"name": "tricot"}],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        reprocess_module, "_build_ytmusic_client", lambda auth: FakeYTMusic()
+    )
+    monkeypatch.setattr(
+        reprocess_module,
+        "_resolve_exact_catalog",
+        lambda *args, **kwargs: pytest.fail("generic catalog resolution must not run"),
+    )
+    monkeypatch.setattr(reprocess_module, "_should_run_musicbrainz", lambda item: False)
+    monkeypatch.setattr(
+        reprocess_module,
+        "_resolve_best_lyrics",
+        lambda *args, **kwargs: (None, None),
+    )
+
+    result = reprocess_module.preview_reprocess(
+        {
+            **_config_payload(tmp_path),
+            "items": [
+                {
+                    "track_work_id": "track_the_9",
+                    "library_track_id": "library_the_9",
+                    "youtube_music_track_id": "1zez30Rj82g",
+                    "resolved_youtube_music_track_id": "1zez30Rj82g",
+                    "source_origin": "favorite_artist_release",
+                    "catalog_release_browse_id": "MPREb_Npjg6HxNrZ3",
+                    "catalog_release_title": "T H E",
+                    "catalog_release_kind": "album",
+                    "title": "99.974℃",
+                    "artist": "tricot",
+                    "album": "T H E",
+                    "album_artist": "tricot",
+                    "disc_number": 1,
+                    "track_number": 9,
+                    "current_output_path": str(
+                        tmp_path / "out" / "tricot" / "T H E" / "09 99.974℃.m4a"
+                    ),
+                    "lyrics_status": "missing",
+                }
+            ],
+        }
+    )
+
+    after = result["items"][0]["after"]
+    assert after["album"] == "T H E"
+    assert after["trackNumber"] == 9
+    assert after["date"] == "2013"
+    assert after["catalogReleaseBrowseId"] == "MPREb_Npjg6HxNrZ3"
+
+
+def test_preview_reprocess_stops_when_stored_release_no_longer_matches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class MissingReleaseYTMusic:
+        def get_album(self, browse_id: str) -> None:
+            return None
+
+    monkeypatch.setattr(
+        reprocess_module,
+        "_build_ytmusic_client",
+        lambda auth: MissingReleaseYTMusic(),
+    )
+
+    with pytest.raises(ValueError, match="release not found"):
+        reprocess_module.preview_reprocess(
+            {
+                **_config_payload(tmp_path),
+                "items": [
+                    {
+                        "track_work_id": "track_the_9",
+                        "youtube_music_track_id": "1zez30Rj82g",
+                        "source_origin": "favorite_artist_release",
+                        "catalog_release_browse_id": "missing-release",
+                        "catalog_release_title": "T H E",
+                        "catalog_release_kind": "album",
+                        "title": "99.974℃",
+                        "artist": "tricot",
+                        "album": "T H E",
+                        "album_artist": "tricot",
+                        "disc_number": 1,
+                        "track_number": 9,
+                        "lyrics_status": "missing",
+                    }
+                ],
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("candidate_overrides", "expected_diff_key"),
     [

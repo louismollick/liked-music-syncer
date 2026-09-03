@@ -63,7 +63,9 @@ export function parseYoutubeDuration(duration: string | null | undefined) {
 }
 
 export function sanitizePathSegment(value: string, fallback: string) {
-  const sanitized = sanitizeFilename(value.trim(), { replacement: '_' })
+  const sanitized = sanitizeFilename(value.normalize('NFC').trim(), {
+    replacement: '_',
+  })
     .replace(/\s+/g, ' ')
     .trim()
   return sanitized === '' ? fallback : sanitized

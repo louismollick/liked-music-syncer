@@ -9,6 +9,9 @@ release/
 
 # local bundled tool binaries
 resources/bin/ffmpeg
+resources/bin/exiftool
+resources/bin/exiftool.exe
+resources/bin/lib/
 resources/bin/README.txt
 resources/bin/bgutil-ytdlp-pot-provider/
 resources/bin/yt-dlp-plugins/

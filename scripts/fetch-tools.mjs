@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { chmod, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
@@ -7,6 +8,10 @@ import process from 'node:process'
 const BGUTIL_VERSION = '1.3.2'
 const BGUTIL_PLUGIN_URL = `https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/${BGUTIL_VERSION}/bgutil-ytdlp-pot-provider.zip`
 const BGUTIL_SOURCE_URL = `https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/${BGUTIL_VERSION}.tar.gz`
+const EXIFTOOL_VERSION = '13.55'
+const EXIFTOOL_SHA256 =
+  '5f4c81d34ad406538c2871ad72dbfceb5d9b412b2f16cbbeb4d712d270846667'
+const EXIFTOOL_URL = `https://cpan.metacpan.org/authors/id/E/EX/EXIFTOOL/Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz`
 
 const repositoryRoot = process.cwd()
 const binDirectory = path.resolve(repositoryRoot, 'resources/bin')
@@ -27,6 +32,15 @@ async function downloadFile(url, targetPath) {
 
   const arrayBuffer = await response.arrayBuffer()
   await writeFile(targetPath, Buffer.from(arrayBuffer))
+}
+
+async function verifySha256(filePath, expected) {
+  const digest = createHash('sha256')
+    .update(await readFile(filePath))
+    .digest('hex')
+  if (digest !== expected) {
+    throw new Error(`Checksum mismatch for ${filePath}: ${digest}`)
+  }
 }
 
 function runOrThrow(command, args, cwd) {
@@ -69,6 +83,10 @@ const sourceArchivePath = path.join(
   tempDirectory,
   `bgutil-ytdlp-pot-provider-${BGUTIL_VERSION}.tar.gz`
 )
+const exiftoolArchivePath = path.join(
+  tempDirectory,
+  `Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz`
+)
 
 console.log(`Downloading bgutil provider plugin ${BGUTIL_VERSION}...`)
 await downloadFile(BGUTIL_PLUGIN_URL, pluginZipPath)
@@ -81,6 +99,33 @@ runOrThrow(
   ['-xzf', sourceArchivePath, '-C', tempDirectory],
   repositoryRoot
 )
+
+console.log(`Downloading ExifTool ${EXIFTOOL_VERSION}...`)
+await downloadFile(EXIFTOOL_URL, exiftoolArchivePath)
+await verifySha256(exiftoolArchivePath, EXIFTOOL_SHA256)
+runOrThrow(
+  'tar',
+  ['-xzf', exiftoolArchivePath, '-C', tempDirectory],
+  repositoryRoot
+)
+
+const extractedExiftoolDirectory = path.join(
+  tempDirectory,
+  `Image-ExifTool-${EXIFTOOL_VERSION}`
+)
+await rm(path.join(binDirectory, 'lib'), { force: true, recursive: true })
+await cp(
+  path.join(extractedExiftoolDirectory, 'exiftool'),
+  path.join(binDirectory, 'exiftool')
+)
+await cp(
+  path.join(extractedExiftoolDirectory, 'lib'),
+  path.join(binDirectory, 'lib'),
+  {
+    recursive: true,
+  }
+)
+await chmod(path.join(binDirectory, 'exiftool'), 0o755)
 
 const extractedRootDirectory = path.join(
   tempDirectory,
@@ -104,10 +149,12 @@ runOrThrow('npm', ['prune', '--omit=dev'], providerServerDirectory)
 const readmeContents = `Bundled tooling for liked-music-syncer.
 
 - ffmpeg -> installed by pnpm through the pinned ffmpeg-static dependency
+- exiftool -> resources/bin/exiftool (with its resources/bin/lib support files)
 - yt-dlp plugin zip -> resources/bin/yt-dlp-plugins/bgutil-ytdlp-pot-provider.zip
 - bgutil provider server -> resources/bin/bgutil-ytdlp-pot-provider/server/build/main.js
 
 Pinned bgutil version: ${BGUTIL_VERSION}
+Pinned ExifTool version: ${EXIFTOOL_VERSION}
 
 Packaged builds bundle these exact paths.
 `
