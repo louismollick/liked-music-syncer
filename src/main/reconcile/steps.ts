@@ -1275,24 +1275,30 @@ export async function runUpload(
     hash: string | null
   } | null = null
   let movedSidecar = false
-  // Another track may have been uploaded to our old path since; leave it alone.
-  const ownedByOther = (remotePath: string) =>
-    Boolean(
-      deps.db
-        .select({ id: uploads.trackId })
-        .from(uploads)
-        .where(
-          and(
-            eq(uploads.remoteTarget, targetKey(target)),
-            sql`${uploads.trackId} != ${track.id}`,
-            sql`(${uploads.remotePath} = ${remotePath} OR ${uploads.lrcRemotePath} = ${remotePath})`
-          )
+  // Another track may have been uploaded to our old path since; leave it
+  // alone. Case-insensitive, because some remotes (and APFS) are.
+  const othersPaths = new Set(
+    deps.db
+      .select({ path: uploads.remotePath, lrc: uploads.lrcRemotePath })
+      .from(uploads)
+      .where(
+        and(
+          eq(uploads.remoteTarget, targetKey(target)),
+          sql`${uploads.trackId} != ${track.id}`
         )
-        .get()
-    )
+      )
+      .all()
+      .flatMap((row) => [row.path, row.lrc])
+      .flatMap((value) => (value ? [pathKey(value)] : []))
+  )
+  const ownedByOther = (remotePath: string) =>
+    othersPaths.has(pathKey(remotePath))
+  // A spelling-only change is the same object on case-insensitive remotes:
+  // never move or delete it (on a case-sensitive remote the old spelling is
+  // merely left behind).
   const oldAudio =
     existing?.remotePath &&
-    existing.remotePath !== file.relativePath &&
+    pathKey(existing.remotePath) !== pathKey(file.relativePath) &&
     !ownedByOther(existing.remotePath)
       ? existing.remotePath
       : null
@@ -1379,7 +1385,11 @@ export async function runUpload(
     lrcRemotePath = lrcRelative
   }
   // The old sidecar is gone or lives at a path we no longer use.
-  if (oldSidecar && !movedSidecar && oldSidecar !== lrcRemotePath) {
+  if (
+    oldSidecar &&
+    !movedSidecar &&
+    pathKey(oldSidecar) !== pathKey(lrcRemotePath ?? '')
+  ) {
     await deps.rclone.delete(target, oldSidecar, run.signal)
   }
   if (oldAudio) {
@@ -1512,7 +1522,11 @@ export async function processTombstones(
         and(eq(contributions.trackId, trackId), eq(contributions.active, true))
       )
       .get()
-    if (track && (track.state !== 'no_longer_wanted' || wanted)) continue
+    if (track && (track.state !== 'no_longer_wanted' || wanted)) {
+      // Liked again: its finished tombstones are history now.
+      deps.db.delete(tombstones).where(eq(tombstones.trackId, trackId)).run()
+      continue
+    }
     deps.db.transaction((tx) => {
       const db = tx as unknown as Db
       // Every tombstone of this track is done; nothing needs them any more.

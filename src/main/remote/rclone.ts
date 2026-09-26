@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { stat as fsStat, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { ProcessError, run, runChecked } from '../platform/process'
@@ -192,6 +192,8 @@ export function createRclone(binary: string): Rclone {
     const caps = await capabilities(target)
     const object = await stat(target, relativePath, caps.hashAlgo, signal)
     if (!object) return null
+    // Different size: not our copy, and no need to hash or download it.
+    if (object.size !== (await fsStat(localPath)).size) return null
     if (caps.hashAlgo && object.hash) {
       const local = await hashFile(localPath, caps.hashAlgo)
       if (local !== object.hash) return null

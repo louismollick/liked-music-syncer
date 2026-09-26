@@ -189,6 +189,15 @@ async function main() {
       const targetOf = (value: typeof before) =>
         `${value.rcloneRemote.trim().replace(/:$/, '')}|${value.remoteFolder.trim().replace(/\/+$/, '')}`
       if (targetOf(before) !== targetOf(next)) reconciler.remoteTargetChanged()
+      // Which songs count as in the library depends on whether the remote is on.
+      const remoteOn = (value: typeof before) =>
+        Boolean(
+          value.remoteEnabled &&
+            value.rcloneRemote.trim() &&
+            value.remoteFolder.trim()
+        )
+      if (remoteOn(before) !== remoteOn(next))
+        broadcast('library:changed', { trackIds: null })
       if (
         patch.libraryFolder !== undefined &&
         patch.libraryFolder !== before.libraryFolder

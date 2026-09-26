@@ -12,9 +12,14 @@ import {
   files,
   tombstones,
   tracks,
+  uploads,
 } from '../../src/main/library/schema'
 import { checkArtistCatalog } from '../../src/main/reconcile/sources'
-import { deleteTracks, processTombstones } from '../../src/main/reconcile/steps'
+import {
+  deleteTracks,
+  processTombstones,
+  targetKey,
+} from '../../src/main/reconcile/steps'
 import { credit, Harness, release, song } from './harness'
 
 const open: Harness[] = []
@@ -194,6 +199,41 @@ describe('third review fixes', () => {
     expect(
       h.db.select().from(tracks).where(eq(tracks.id, track.id)).get()
     ).toBeDefined()
+  })
+
+  it('never moves or deletes a remote object another track owns under a different spelling', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = true
+    h.catalog.likes = [song('mover', 'Mover')]
+    await h.start()
+    await h.stop()
+    const track = h.rows()[0]
+    // Our record points at an old path that another track now owns
+    // (spelled differently, which is the same object on case-insensitive remotes).
+    const oldPath = 'Old Artist/Old.m4a'
+    mkdirSync(path.join(h.remote, 'Old Artist'), { recursive: true })
+    writeFileSync(path.join(h.remote, oldPath), 'someone else')
+    h.db
+      .update(uploads)
+      .set({ remotePath: oldPath })
+      .where(eq(uploads.trackId, track.id))
+      .run()
+    h.db
+      .insert(uploads)
+      .values({
+        trackId: 'other-track',
+        remoteTarget: targetKey({ remote: ':local', folder: h.remote }),
+        remotePath: oldPath.toUpperCase(),
+        uploadedAt: h.time.toISOString(),
+      })
+      .run()
+    await h.start()
+    await h.idle()
+    expect(existsSync(path.join(h.remote, oldPath))).toBe(true)
+    expect(
+      h.db.select().from(uploads).where(eq(uploads.trackId, track.id)).get()
+        ?.remotePath
+    ).toBe(h.file(track.id)!.relativePath)
   })
 
   it('counts and filters Needs Attention the same way', async () => {

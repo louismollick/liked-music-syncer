@@ -336,7 +336,19 @@ export async function checkArtistCatalog(options: {
         .from(artists)
         .where(eq(artists.id, artistId))
         .get()?.favorite
-      if (!stillFavorite) return
+      if (!stillFavorite) {
+        markSnapshot(
+          tx as unknown as Db,
+          source,
+          {
+            status: 'failed',
+            completedAt: committedAt,
+            error: 'No longer a Favorite Artist',
+          },
+          startedAt
+        )
+        return
+      }
       const seen = new Set<string>()
       for (const raw of staged) {
         const key = catalogSourceKey(
