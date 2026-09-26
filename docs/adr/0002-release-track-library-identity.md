@@ -1,0 +1,3 @@
+# Use release tracks for library identity
+
+The Library identifies a Release Track by its trusted release ID plus its source video ID, and by the source video ID alone when no Release is known. Disc and track numbers stay in tags and file names but are not identity, because different discovery paths number multi-disc releases differently and a changed number would give the same file a new identity. A source video ID describes the Recording and may repeat across album, single, EP, and reissue Release Tracks, so it only identifies a Release Track together with the release ID. Remote reconciliation matches the local relative path and never chooses a destination from recording identity alone.

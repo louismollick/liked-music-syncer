@@ -1,0 +1,3 @@
+# Sign in to YouTube Music inside the app
+
+The app signs users into Google in its own persistent Electron session and reads cookies from that session. It does not read cookies from installed browsers. Browser cookie extraction needs Keychain prompts or Full Disk Access on macOS, fails for Arc and Dia, is broken for Chrome on Windows, and Chrome's device-bound sessions make copied cookies short-lived. Google discourages embedded sign-in, so the sign-in window uses Electron's honest user agent; spoofing a browser user agent makes Google's checks fail. Downloads through yt-dlp stay signed out and rely on a PO token provider, so the user's account is never tied to download traffic.
