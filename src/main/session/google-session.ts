@@ -15,13 +15,18 @@ import {
   type Session,
 } from 'electron'
 import type { AccountView, SessionView } from '../../shared/ipc'
-import { createInnertubeTransport } from '../catalog/transport'
+import {
+  type AuthHeaderSource,
+  createInnertubeTransport,
+  SignedOutError,
+} from '../catalog/transport'
 import type { InnertubeTransport } from '../catalog/types'
 import { type HttpClient, HttpError } from '../net/http'
 import type { SettingsStore } from '../settings'
 import {
   cookieHeader,
   parseAccountMenu,
+  parseSetCookie,
   type SimpleCookie,
   sapisidFrom,
   sapisidHash,
@@ -62,8 +67,52 @@ export class GoogleSession {
     this.partition = electronSession.fromPartition(PARTITION)
     this.transport = createInnertubeTransport({
       http: options.http,
-      auth: { headers: () => this.headers() },
+      auth: this.auth(() => this.selected()?.slot ?? 0),
     })
+  }
+
+  private auth(slot: () => number): AuthHeaderSource {
+    return {
+      headers: () => this.headersForSlot(slot()),
+      storeCookies: (setCookie) => this.storeCookies(setCookie),
+      signedOut: () => this.expired(),
+    }
+  }
+
+  /**
+   * Keeps the cookies Google refreshes in responses, as a browser would;
+   * without them the session would eventually stop being accepted.
+   */
+  private async storeCookies(setCookie: string[]): Promise<void> {
+    for (const header of setCookie) {
+      const cookie = parseSetCookie(header)
+      if (!cookie) continue
+      try {
+        await this.partition.cookies.set({
+          url: YTM_ORIGIN,
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain ?? undefined,
+          path: cookie.path,
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          expirationDate: cookie.expirationDate ?? undefined,
+          sameSite: cookie.sameSite,
+        })
+      } catch (error) {
+        console.warn(`[session] could not store cookie ${cookie.name}`, error)
+      }
+    }
+  }
+
+  /** A signed request was answered signed out: stop checking and ask to sign in. */
+  private expired(): void {
+    if (this.state === 'signed_out') return
+    this.accounts = []
+    this.state = 'signed_out'
+    this.message = 'Your Google session has expired. Sign in again.'
+    this.gen += 1
+    this.emit()
   }
 
   generation(): number {
@@ -115,10 +164,6 @@ export class GoogleSession {
     }
   }
 
-  async headers(): Promise<Record<string, string>> {
-    return this.headersForSlot(this.selected()?.slot ?? 0)
-  }
-
   async init(): Promise<void> {
     if (
       !this.options.isPackaged &&
@@ -148,10 +193,11 @@ export class GoogleSession {
       }
       const found: SlotAccount[] = []
       let partial = false
+      let expired = false
       for (let slot = 0; slot < MAX_SLOTS; slot += 1) {
         const transport = createInnertubeTransport({
           http: this.options.http,
-          auth: { headers: () => this.headersForSlot(slot) },
+          auth: { ...this.auth(() => slot), signedOut: undefined },
         })
         let parsed: ReturnType<typeof parseAccountMenu> = null
         try {
@@ -163,6 +209,11 @@ export class GoogleSession {
             })
           )
         } catch (error) {
+          // Cookies are present but Google no longer accepts them.
+          if (error instanceof SignedOutError) {
+            expired = found.length === 0
+            break
+          }
           // 4xx: this slot has no account. Anything else (offline, 5xx): try again later.
           if (error instanceof HttpError && error.kind === 'permanent') break
           partial = true
@@ -182,6 +233,13 @@ export class GoogleSession {
           likedCount: null,
           slot,
         })
+      }
+      if (expired) {
+        this.accounts = []
+        this.state = 'signed_out'
+        this.message = 'Your Google session has expired. Sign in again.'
+        this.gen += 1
+        return this.emit()
       }
       this.accounts = found
       this.state = found.length ? 'signed_in' : 'error'

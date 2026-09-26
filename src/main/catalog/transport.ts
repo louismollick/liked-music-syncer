@@ -27,6 +27,37 @@ function clientContext(name: InnertubeClientName) {
 export interface AuthHeaderSource {
   /** Cookie, Authorization (SAPISIDHASH), and X-Goog-AuthUser for the selected account. */
   headers(): Promise<Record<string, string>>
+  /** Google refreshes session cookies in responses; keep them like a browser would. */
+  storeCookies?(setCookie: string[]): Promise<void>
+  /** A signed request came back signed out: the Google Session has expired. */
+  signedOut?(): void
+}
+
+/** A signed request was answered as signed out (expired or revoked session). */
+export class SignedOutError extends Error {
+  readonly kind = 'permanent'
+  constructor() {
+    super('Your Google session has expired. Sign in again in Settings.')
+  }
+}
+
+/** Innertube reports `logged_in: "0"` in its tracking params for signed-out answers. */
+export function answeredSignedOut(response: unknown): boolean {
+  const params = (
+    response as {
+      responseContext?: {
+        serviceTrackingParams?: Array<{
+          params?: Array<{ key?: string; value?: string }>
+        }>
+      }
+    }
+  )?.responseContext?.serviceTrackingParams
+  if (!Array.isArray(params)) return false
+  return params.some((service) =>
+    service.params?.some(
+      (param) => param.key === 'logged_in' && param.value === '0'
+    )
+  )
 }
 
 export interface TransportOptions {
@@ -66,16 +97,25 @@ export function createInnertubeTransport(
         },
         ...request.body,
       }
-      return options.http.json(
-        `${YTM_ORIGIN}/youtubei/v1/${request.endpoint}?alt=json&prettyPrint=false`,
-        {
-          host: 'youtube-music',
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-          signal: request.signal,
-        }
-      )
+      const url = `${YTM_ORIGIN}/youtubei/v1/${request.endpoint}?alt=json&prettyPrint=false`
+      const init = {
+        host: 'youtube-music' as const,
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: request.signal,
+      }
+      if (!request.authenticated || !options.auth)
+        return options.http.json(url, init)
+      const response = await options.http.request(url, init)
+      const setCookie = response.headers.getSetCookie()
+      if (setCookie.length) await options.auth.storeCookies?.(setCookie)
+      const data: unknown = await response.json()
+      if (answeredSignedOut(data)) {
+        options.auth.signedOut?.()
+        throw new SignedOutError()
+      }
+      return data
     },
   }
 }
