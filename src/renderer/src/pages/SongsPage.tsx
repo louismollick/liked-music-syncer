@@ -106,7 +106,12 @@ export function SongsPage() {
   const languages = [
     ...new Set(rows.map((r) => r.language).filter(Boolean) as string[]),
   ].sort()
-  const remoteOn = Boolean(settings?.remoteEnabled)
+  // Same rule as the main process: enabled and fully configured.
+  const remoteOn = Boolean(
+    settings?.remoteEnabled &&
+      settings.rcloneRemote.trim() &&
+      settings.remoteFolder.trim()
+  )
   const langName = (code: string) => {
     try {
       return LANG_NAMES.of(code) ?? code

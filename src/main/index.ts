@@ -37,9 +37,8 @@ registerMediaScheme()
 
 const isSmokeTest = process.argv.includes('--smoke-test')
 
-if (!isSmokeTest && !app.requestSingleInstanceLock()) {
-  app.quit()
-}
+const isPrimaryInstance = isSmokeTest || app.requestSingleInstanceLock()
+if (!isPrimaryInstance) app.quit()
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -283,7 +282,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-void main().catch((error) => {
-  console.error('[main] fatal', error)
-  app.exit(1)
-})
+// A second instance must not touch the database or the staging folder.
+if (isPrimaryInstance) {
+  void main().catch((error) => {
+    console.error('[main] fatal', error)
+    app.exit(1)
+  })
+}

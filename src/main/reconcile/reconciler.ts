@@ -51,7 +51,6 @@ import {
 import {
   auditRemote,
   coversDir,
-  createRemoteIndexCache,
   deleteTracks,
   nextStep,
   OutsideEditError,
@@ -114,16 +113,13 @@ export class Reconciler {
   private emitTimer: NodeJS.Timeout | null = null
   private checkTimer: NodeJS.Timeout | null = null
   private sourceErrors = new Map<string, string>()
-  private readonly remoteIndex
   private loopPromise: Promise<void> | null = null
   private workPromise: Promise<void> | null = null
   private folderChangePromise: Promise<void> | null = null
   /** Checks and audits still touching the database; stop() waits for them. */
   private readonly inFlight = new Set<Promise<unknown>>()
 
-  constructor(private readonly deps: ReconcilerDeps) {
-    this.remoteIndex = createRemoteIndexCache(deps.rclone)
-  }
+  constructor(private readonly deps: ReconcilerDeps) {}
 
   private get db(): Db {
     return this.deps.db
@@ -175,7 +171,6 @@ export class Reconciler {
    */
   remoteTargetChanged(): void {
     this.db.delete(uploads).run()
-    this.remoteIndex.invalidate()
     this.markDirty()
   }
 
@@ -399,11 +394,13 @@ export class Reconciler {
         .where(
           and(
             inArray(tracks.id, ids.slice(i, i + 500)),
-            sql`state != 'no_longer_wanted'`
+            // Unwanted and released tracks are not the app's to rebuild.
+            sql`state NOT IN ('no_longer_wanted', 'released')`
           )
         )
         .run()
     }
+    this.deps.onLibraryChanged(ids.length > 500 ? null : ids)
     this.markDirty()
   }
 
@@ -417,12 +414,17 @@ export class Reconciler {
         lastError: null,
         lastErrorKind: null,
       })
-      .where(eq(tracks.id, trackId))
+      .where(
+        and(
+          eq(tracks.id, trackId),
+          sql`state NOT IN ('no_longer_wanted', 'released')`
+        )
+      )
       .run()
+    this.deps.onLibraryChanged([trackId])
     this.markDirty()
   }
 
-  /** Outside Edit: restore the app's version of the file. */
   /** Outside Edit: restore the app's version of the file. */
   async rewrite(trackId: string): Promise<void> {
     const file = this.db
@@ -430,12 +432,19 @@ export class Reconciler {
       .from(files)
       .where(eq(files.trackId, trackId))
       .get()
+    const state = this.db
+      .select({ state: tracks.state })
+      .from(tracks)
+      .where(eq(tracks.id, trackId))
+      .get()?.state
+    // Nothing will rebuild an unwanted track, so rewriting just accepts the edit.
+    const inactive = state === 'no_longer_wanted' || state === 'released'
     const root = this.deps.settings().libraryFolder
     if (file?.outsideEdit && root) {
       const parts = JSON.parse(file.outsideEdit) as string[]
       if (parts.includes('deleted')) {
         this.db.delete(files).where(eq(files.trackId, trackId)).run()
-      } else if (parts.includes('audio')) {
+      } else if (parts.includes('audio') && !inactive) {
         // Replace the edited file in place with a fresh download.
         this.db
           .update(files)
@@ -733,8 +742,7 @@ export class Reconciler {
           acquired = true
         } else if (step === 'retag') await runRetag(this.deps, track, run)
         else if (step === 'move') await runMove(this.deps, track, run)
-        else if (step === 'upload')
-          await runUpload(this.deps, track, run, this.remoteIndex)
+        else if (step === 'upload') await runUpload(this.deps, track, run)
       } catch (error) {
         if (!this.running || signal.aborted) {
           this.db

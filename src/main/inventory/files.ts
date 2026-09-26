@@ -6,11 +6,13 @@ import {
   lstat,
   mkdir,
   readdir,
+  realpath,
   rename,
   rm,
   unlink,
 } from 'node:fs/promises'
 import path from 'node:path'
+import { pathKey } from './layout'
 
 export const STAGING_DIR = '.lms-staging'
 
@@ -58,6 +60,29 @@ export async function placeNoClobber(
     throw error
   }
   await unlink(source)
+}
+
+/**
+ * The relative path as the filesystem spells it. On a case-insensitive volume
+ * an existing `Ne-Yo/` folder takes a new `NE-YO/…` file, so recording the
+ * layout path would not match what later scans find.
+ */
+export async function onDiskRelative(
+  root: string,
+  relative: string
+): Promise<string> {
+  try {
+    const [base, full] = await Promise.all([
+      realpath(root),
+      realpath(path.join(root, relative)),
+    ])
+    const actual = path.relative(base, full).normalize('NFC')
+    // Symlinks resolve elsewhere; only accept a spelling difference.
+    if (pathKey(actual) === pathKey(relative)) return actual
+  } catch {
+    // Missing file: keep the path as given.
+  }
+  return relative
 }
 
 /** Replaces a file the app owns with a staged version atomically. */

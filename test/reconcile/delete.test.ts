@@ -119,13 +119,8 @@ describe('explicit destination delete', () => {
     expect(readFileSync(remote).equals(remoteBytes)).toBe(true)
     expect(existsSync(local.replace(/\.m4a$/, '.lrc'))).toBe(true)
     expect(existsSync(remote.replace(/\.m4a$/, '.lrc'))).toBe(true)
-    expect(
-      h.db
-        .select()
-        .from(tombstones)
-        .where(eq(tombstones.doneAt, h.time.toISOString()))
-        .all()
-    ).toHaveLength(4)
+    // Handled (left alone) and then pruned: none stay pending.
+    expect(h.db.select().from(tombstones).all()).toHaveLength(0)
   })
 
   it('finishes a both-destination delete after reopening the database', async () => {

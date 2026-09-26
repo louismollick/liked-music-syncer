@@ -10,6 +10,7 @@ import { type ArtistCredit, joinArtistNames } from '../domain'
 import {
   copyToStaging,
   exists,
+  onDiskRelative,
   PathTakenError,
   placeNoClobber,
   pruneEmptyDirs,
@@ -38,13 +39,7 @@ import type { LyricsFinder } from '../lyrics/types'
 import type { Match, Matcher, MatchInput } from '../match/types'
 import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
-import type {
-  HashAlgo,
-  Rclone,
-  RemoteObject,
-  RemoteTarget,
-} from '../remote/rclone'
-import { hashFile } from '../remote/rclone'
+import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
 import {
   fieldDiff,
   readTags,
@@ -949,6 +944,7 @@ async function placeTrackFiles(
       await rm(absolute(sidecarPath(previous.relativePath)), { force: true })
     await pruneEmptyDirs(root, path.dirname(absolute(previous.relativePath)))
   }
+  target = await onDiskRelative(root, target)
   const info = await stat(absolute(target))
   return {
     relativePath: target,
@@ -1184,6 +1180,7 @@ export async function runMove(
     }
   }
   await pruneEmptyDirs(root, path.dirname(from))
+  target = await onDiskRelative(root, target)
   deps.db.transaction((tx) => {
     const db = tx as unknown as Db
     db.update(files)
@@ -1204,36 +1201,6 @@ export async function runMove(
 }
 
 // ---------------------------------------------------------------- upload
-
-export interface RemoteIndexCache {
-  get(
-    target: RemoteTarget,
-    algo: HashAlgo | null
-  ): Promise<Map<string, RemoteObject>>
-  invalidate(): void
-}
-
-export function createRemoteIndexCache(rclone: Rclone): RemoteIndexCache {
-  let cached: { key: string; map: Promise<Map<string, RemoteObject>> } | null =
-    null
-  return {
-    get(target, algo) {
-      const key = `${target.remote}|${target.folder}|${algo}`
-      if (!cached || cached.key !== key) {
-        const map = rclone.list(target, { hashAlgo: algo })
-        cached = { key, map }
-        // Don't keep a failed listing: the next upload tries again.
-        map.catch(() => {
-          if (cached?.map === map) cached = null
-        })
-      }
-      return cached.map
-    },
-    invalidate() {
-      cached = null
-    },
-  }
-}
 
 /** Drop records for remote objects removed or resized outside the app. */
 export async function auditRemote(deps: StepDeps): Promise<string[]> {
@@ -1277,8 +1244,7 @@ export async function auditRemote(deps: StepDeps): Promise<string[]> {
 export async function runUpload(
   deps: StepDeps,
   track: TrackRow,
-  run: StepRun,
-  index: RemoteIndexCache
+  run: StepRun
 ): Promise<void> {
   const settings = deps.settings()
   const target = remoteTarget(settings)
@@ -1300,7 +1266,6 @@ export async function runUpload(
   const existing =
     recorded?.remoteTarget === targetKey(target) ? recorded : undefined
   const local = path.join(root, file.relativePath)
-  const caps = await deps.rclone.capabilities(target)
   const at = iso(deps)
 
   let audio: {
@@ -1310,23 +1275,39 @@ export async function runUpload(
     hash: string | null
   } | null = null
   let movedSidecar = false
-  // Moved locally: move the remote copy instead of uploading again.
-  if (
+  // Another track may have been uploaded to our old path since; leave it alone.
+  const ownedByOther = (remotePath: string) =>
+    Boolean(
+      deps.db
+        .select({ id: uploads.trackId })
+        .from(uploads)
+        .where(
+          and(
+            eq(uploads.remoteTarget, targetKey(target)),
+            sql`${uploads.trackId} != ${track.id}`,
+            sql`(${uploads.remotePath} = ${remotePath} OR ${uploads.lrcRemotePath} = ${remotePath})`
+          )
+        )
+        .get()
+    )
+  const oldAudio =
     existing?.remotePath &&
     existing.remotePath !== file.relativePath &&
-    existing.localSha256 === file.contentSha256
-  ) {
+    !ownedByOther(existing.remotePath)
+      ? existing.remotePath
+      : null
+  const oldSidecar =
+    existing?.lrcRemotePath && !ownedByOther(existing.lrcRemotePath)
+      ? existing.lrcRemotePath
+      : null
+  // Moved locally: move the remote copy instead of uploading again.
+  if (existing && oldAudio && existing.localSha256 === file.contentSha256) {
     await deps.rclone
-      .move(target, existing.remotePath, file.relativePath, run.signal)
+      .move(target, oldAudio, file.relativePath, run.signal)
       .catch(() => undefined)
-    if (existing.lrcRemotePath && existing.lrcHash === file.lrcSha256) {
+    if (oldSidecar && file.lrcSha256 && existing.lrcHash === file.lrcSha256) {
       movedSidecar = await deps.rclone
-        .move(
-          target,
-          existing.lrcRemotePath,
-          sidecarPath(file.relativePath),
-          run.signal
-        )
+        .move(target, oldSidecar, sidecarPath(file.relativePath), run.signal)
         .then(
           () => true,
           () => false
@@ -1340,28 +1321,14 @@ export async function runUpload(
     )
   }
   if (!audio && !existing) {
-    // No upload record (fresh database or adoption): accept an identical remote copy.
-    const listing = await index.get(target, caps.hashAlgo)
-    const remote = listing.get(file.relativePath.normalize('NFC'))
-    if (remote && remote.size === file.size) {
-      if (caps.hashAlgo && remote.hash) {
-        if ((await hashFile(local, caps.hashAlgo)) === remote.hash) {
-          audio = {
-            size: remote.size,
-            modTime: remote.modTime,
-            hashAlgo: caps.hashAlgo,
-            hash: remote.hash,
-          }
-        }
-      } else {
-        audio = await deps.rclone.verify(
-          target,
-          local,
-          file.relativePath,
-          run.signal
-        )
-      }
-    }
+    // No upload record (fresh database or adoption): accept an identical
+    // remote copy. Only this one object is hashed (ADR 0005).
+    audio = await deps.rclone.verify(
+      target,
+      local,
+      file.relativePath,
+      run.signal
+    )
   }
   if (
     !audio &&
@@ -1410,12 +1377,14 @@ export async function runUpload(
       lrcRemoteSize = existing?.lrcRemoteSize ?? null
     }
     lrcRemotePath = lrcRelative
-  } else if (existing?.lrcRemotePath) {
-    await deps.rclone.delete(target, existing.lrcRemotePath, run.signal)
   }
-  if (existing?.remotePath && existing.remotePath !== file.relativePath) {
+  // The old sidecar is gone or lives at a path we no longer use.
+  if (oldSidecar && !movedSidecar && oldSidecar !== lrcRemotePath) {
+    await deps.rclone.delete(target, oldSidecar, run.signal)
+  }
+  if (oldAudio) {
     await deps.rclone
-      .delete(target, existing.remotePath, run.signal)
+      .delete(target, oldAudio, run.signal)
       .catch(() => undefined)
   }
 
@@ -1458,6 +1427,14 @@ export async function processTombstones(
   const rootReadable =
     Boolean(settings.libraryFolder) &&
     (await readableDirectory(settings.libraryFolder))
+  // Case-insensitive, like the volume: `NE-YO/x.m4a` and `Ne-Yo/x.m4a` are one file.
+  const ownedLocal = new Set(
+    deps.db
+      .select({ path: files.relativePath })
+      .from(files)
+      .all()
+      .map((file) => pathKey(file.path))
+  )
   for (const row of pending) {
     if (signal.aborted) return
     // One failing tombstone (e.g. an unreachable remote) must not block the rest.
@@ -1468,12 +1445,7 @@ export async function processTombstones(
         const absolute = path.join(settings.libraryFolder, row.path)
         // Never delete a path another track now owns.
         const audioPath = row.path.replace(/\.lrc$/i, '.m4a')
-        const owner = deps.db
-          .select()
-          .from(files)
-          .where(eq(files.relativePath, audioPath))
-          .get()
-        if (!owner) {
+        if (!ownedLocal.has(pathKey(audioPath))) {
           await rm(absolute, { force: true })
           await pruneEmptyDirs(settings.libraryFolder, path.dirname(absolute))
         }
@@ -1527,8 +1499,24 @@ export async function processTombstones(
       deps.db.select().from(uploads).where(eq(uploads.trackId, trackId)).get()
     )
       continue
+    // Liked again since the delete: the track is wanted, keep it.
+    const track = deps.db
+      .select({ state: tracks.state })
+      .from(tracks)
+      .where(eq(tracks.id, trackId))
+      .get()
+    const wanted = deps.db
+      .select({ id: contributions.id })
+      .from(contributions)
+      .where(
+        and(eq(contributions.trackId, trackId), eq(contributions.active, true))
+      )
+      .get()
+    if (track && (track.state !== 'no_longer_wanted' || wanted)) continue
     deps.db.transaction((tx) => {
       const db = tx as unknown as Db
+      // Every tombstone of this track is done; nothing needs them any more.
+      db.delete(tombstones).where(eq(tombstones.trackId, trackId)).run()
       db.delete(trackArtists).where(eq(trackArtists.trackId, trackId)).run()
       db.delete(contributions)
         .where(
@@ -1541,6 +1529,10 @@ export async function processTombstones(
       db.delete(tracks).where(eq(tracks.id, trackId)).run()
     })
   }
+  deps.db
+    .delete(tombstones)
+    .where(sql`track_id IS NULL AND done_at IS NOT NULL`)
+    .run()
 }
 
 export function deleteTracks(

@@ -330,6 +330,13 @@ export async function checkArtistCatalog(options: {
       )
     const committedAt = nowIso(now)
     db.transaction((tx) => {
+      // The user may have un-favorited the artist while the catalog loaded.
+      const stillFavorite = tx
+        .select({ favorite: artists.favorite })
+        .from(artists)
+        .where(eq(artists.id, artistId))
+        .get()?.favorite
+      if (!stillFavorite) return
       const seen = new Set<string>()
       for (const raw of staged) {
         const key = catalogSourceKey(

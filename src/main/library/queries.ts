@@ -82,7 +82,9 @@ const SONG_SELECT = `
   LEFT JOIN files f ON f.track_id = t.id
   LEFT JOIN uploads u ON u.track_id = t.id`
 
-const IN_LIBRARY = `(f.track_id IS NOT NULL OR u.track_id IS NOT NULL)`
+const IN_LIBRARY_WITH_REMOTE = `(f.track_id IS NOT NULL OR u.track_id IS NOT NULL)`
+/** With the remote off, remote-only songs can't be acted on, so they're hidden. */
+const IN_LIBRARY_LOCAL = `(f.track_id IS NOT NULL)`
 
 export class LibraryQueries {
   constructor(
@@ -100,9 +102,12 @@ export class LibraryQueries {
 
   private toSong(row: SongSqlRow): SongRowView {
     const remoteOn = this.remoteOn()
-    // No Longer Wanted tracks are never uploaded; a remote state would be noise.
-    const synced = row.state !== 'no_longer_wanted'
-    let remoteState: RemoteState = remoteOn && synced ? row.remote_state : 'off'
+    // No Longer Wanted tracks are never uploaded, so "missing" is expected;
+    // a copy still on the remote is worth showing (it can be deleted there).
+    const expectedMissing =
+      row.state === 'no_longer_wanted' && row.remote_state === 'missing'
+    let remoteState: RemoteState =
+      remoteOn && !expectedMissing ? row.remote_state : 'off'
     if (
       remoteOn &&
       row.state === 'needs_attention' &&
@@ -130,6 +135,10 @@ export class LibraryQueries {
     }
   }
 
+  private inLibrary(): string {
+    return this.remoteOn() ? IN_LIBRARY_WITH_REMOTE : IN_LIBRARY_LOCAL
+  }
+
   private remoteOn(): boolean {
     const s = this.settings()
     return (
@@ -144,10 +153,12 @@ export class LibraryQueries {
     const where: string[] = []
     const params: unknown[] = []
     const f = query.filters
-    if (f.state === 'needs_attention') where.push(`t.state = 'needs_attention'`)
+    // Matches the count and the Activity drawer: failures plus Outside Edits.
+    if (f.state === 'needs_attention')
+      where.push(`(t.state = 'needs_attention' OR f.outside_edit IS NOT NULL)`)
     else if (f.state === 'no_longer_wanted')
-      where.push(`t.state = 'no_longer_wanted' AND ${IN_LIBRARY}`)
-    else where.push(IN_LIBRARY)
+      where.push(`t.state = 'no_longer_wanted' AND ${this.inLibrary()}`)
+    else where.push(this.inLibrary())
     if (f.lyrics) {
       where.push('t.lyrics_status = ?')
       params.push(f.lyrics)
@@ -157,7 +168,9 @@ export class LibraryQueries {
       params.push(f.language)
     }
     if (f.remote) {
-      where.push(`t.state != 'no_longer_wanted' AND (${REMOTE_STATE_SQL}) = ?`)
+      where.push(
+        `(${REMOTE_STATE_SQL}) = ? AND NOT (t.state = 'no_longer_wanted' AND u.track_id IS NULL)`
+      )
       params.push(f.remote)
     }
     if (f.favorite) {
@@ -219,7 +232,7 @@ export class LibraryQueries {
          JOIN tracks t ON t.id = ta.track_id
          LEFT JOIN files f ON f.track_id = t.id
          LEFT JOIN uploads u ON u.track_id = t.id
-         WHERE ${IN_LIBRARY} ${where}
+         WHERE ${this.inLibrary()} ${where}
          GROUP BY a.id
          ORDER BY ${orderBy}`
       )
@@ -272,7 +285,7 @@ export class LibraryQueries {
          FROM tracks t
          LEFT JOIN files f ON f.track_id = t.id
          LEFT JOIN uploads u ON u.track_id = t.id
-         WHERE ${IN_LIBRARY} AND t.release_id IS NOT NULL ${where}
+         WHERE ${this.inLibrary()} AND t.release_id IS NOT NULL ${where}
          GROUP BY t.album, t.album_artist
          ORDER BY ${orderBy}`
       )
@@ -323,7 +336,7 @@ export class LibraryQueries {
     const standalone = (
       this.sqlite
         .prepare(
-          `${SONG_SELECT} WHERE ${IN_LIBRARY} AND t.release_id IS NULL AND EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id AND ta.artist_id = ?) ORDER BY liked_at IS NULL, liked_at DESC, t.title`
+          `${SONG_SELECT} WHERE ${this.inLibrary()} AND t.release_id IS NULL AND EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id AND ta.artist_id = ?) ORDER BY liked_at IS NULL, liked_at DESC, t.title`
         )
         .all(id) as SongSqlRow[]
     ).map((row) => this.toSong(row))
@@ -458,7 +471,7 @@ export class LibraryQueries {
     const songs = (
       this.sqlite
         .prepare(
-          `${SONG_SELECT} WHERE ${IN_LIBRARY} AND (t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\') ORDER BY liked_at IS NULL, liked_at DESC LIMIT 8`
+          `${SONG_SELECT} WHERE ${this.inLibrary()} AND (t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\') ORDER BY liked_at IS NULL, liked_at DESC LIMIT 8`
         )
         .all(term, term) as SongSqlRow[]
     ).map((row) => this.toSong(row))
@@ -470,20 +483,18 @@ export class LibraryQueries {
       (this.sqlite.prepare(query).get() as { n: number }).n
     const base = `FROM tracks t LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id`
     return {
-      songs: one(`SELECT COUNT(*) AS n ${base} WHERE ${IN_LIBRARY}`),
+      songs: one(`SELECT COUNT(*) AS n ${base} WHERE ${this.inLibrary()}`),
       artists: one(
-        `SELECT COUNT(DISTINCT ta.artist_id) AS n FROM track_artists ta JOIN tracks t ON t.id = ta.track_id LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id WHERE ${IN_LIBRARY}`
+        `SELECT COUNT(DISTINCT ta.artist_id) AS n FROM track_artists ta JOIN tracks t ON t.id = ta.track_id LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id WHERE ${this.inLibrary()}`
       ),
       albums: one(
-        `SELECT COUNT(*) AS n FROM (SELECT 1 ${base} WHERE ${IN_LIBRARY} AND t.release_id IS NOT NULL GROUP BY t.album, t.album_artist)`
+        `SELECT COUNT(*) AS n FROM (SELECT 1 ${base} WHERE ${this.inLibrary()} AND t.release_id IS NOT NULL GROUP BY t.album, t.album_artist)`
       ),
-      needsAttention:
-        one(
-          `SELECT COUNT(*) AS n FROM tracks WHERE state = 'needs_attention'`
-        ) +
-        one(`SELECT COUNT(*) AS n FROM files WHERE outside_edit IS NOT NULL`),
+      needsAttention: one(
+        `SELECT COUNT(*) AS n ${base} WHERE t.state = 'needs_attention' OR f.outside_edit IS NOT NULL`
+      ),
       noLongerWanted: one(
-        `SELECT COUNT(*) AS n ${base} WHERE t.state = 'no_longer_wanted' AND ${IN_LIBRARY}`
+        `SELECT COUNT(*) AS n ${base} WHERE t.state = 'no_longer_wanted' AND ${this.inLibrary()}`
       ),
       unmanaged: one('SELECT COUNT(*) AS n FROM unmanaged_files'),
     }

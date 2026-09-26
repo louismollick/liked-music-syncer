@@ -50,7 +50,9 @@ comparing SHA-256 locally. It records the upload (path, hash, size, and the tag
 fields uploaded) so "stale" can say which fields differ without reading the
 remote. Nothing runs on the server.
 
-When a track has no upload record (fresh database or adoption), the app lists
-the remote once per session with hashes and accepts an identical copy at the
-same path instead of uploading it again. On SFTP that listing makes the server
-hash every file, so it only happens when records are missing.
+When a track has no upload record (fresh database or adoption), the app checks
+that one remote object with the same verification and accepts an identical copy
+at the same path instead of uploading it again. It never hashes the whole
+remote: on SFTP a hashed listing makes the server read every file, and a cached
+listing would go stale when objects disappear. Rebuilding after a lost database
+therefore costs one small rclone call per adopted file.

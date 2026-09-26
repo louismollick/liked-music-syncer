@@ -14,8 +14,14 @@ import {
 } from '../library/schema'
 import type { Match, MatchedRelease } from '../match/types'
 import { readTags, sha256, type TagFields } from '../tags/schema'
-import { exists, STAGING_DIR, sha256File, walkAudio } from './files'
-import { sidecarPath } from './layout'
+import {
+  exists,
+  onDiskRelative,
+  STAGING_DIR,
+  sha256File,
+  walkAudio,
+} from './files'
+import { pathKey, sidecarPath } from './layout'
 
 /**
  * Library inventory: the narrow interface to the output folder. Scans for
@@ -133,31 +139,34 @@ export async function adoptFiles(
 ): Promise<AdoptResult> {
   // Skip files the app already tracks, files the user stopped managing, and
   // files waiting to be deleted (a quit before the delete ran must not undo it).
-  const known = new Set([
-    ...deps.db
-      .select({ path: files.relativePath })
-      .from(files)
-      .all()
-      .map((row) => row.path),
-    ...deps.db
-      .select({ path: unmanagedFiles.relativePath })
-      .from(unmanagedFiles)
-      .where(eq(unmanagedFiles.released, true))
-      .all()
-      .map((row) => row.path),
-    ...deps.db
-      .select({
-        path: tombstones.path,
-        kind: tombstones.kind,
-        doneAt: tombstones.doneAt,
-      })
-      .from(tombstones)
-      .all()
-      .filter((row) => row.kind === 'local' && !row.doneAt)
-      .map((row) => row.path),
-  ])
+  const known = new Set(
+    [
+      ...deps.db
+        .select({ path: files.relativePath })
+        .from(files)
+        .all()
+        .map((row) => row.path),
+      ...deps.db
+        .select({ path: unmanagedFiles.relativePath })
+        .from(unmanagedFiles)
+        .where(eq(unmanagedFiles.released, true))
+        .all()
+        .map((row) => row.path),
+      ...deps.db
+        .select({
+          path: tombstones.path,
+          kind: tombstones.kind,
+          doneAt: tombstones.doneAt,
+        })
+        .from(tombstones)
+        .all()
+        .filter((row) => row.kind === 'local' && !row.doneAt)
+        .map((row) => row.path),
+    ].map(pathKey)
+  )
+  // Case-insensitive: an older record may spell a folder differently than disk.
   const entries = (await walkAudio(root)).filter(
-    (entry) => !known.has(entry.relativePath)
+    (entry) => !known.has(pathKey(entry.relativePath))
   )
   let adopted = 0
   let unmanaged = 0
@@ -426,6 +435,7 @@ export async function recoverOperations(
     const digest = (await exists(target)) ? await sha256File(target) : null
     if (digest && digest === op.expectedSha256) {
       if (op.artifact === 'audio') {
+        const toPath = await onDiskRelative(root, op.toPath)
         const info = await stat(target)
         let fields: string | null = null
         try {
@@ -442,7 +452,7 @@ export async function recoverOperations(
           deps.db
             .update(files)
             .set({
-              relativePath: op.toPath,
+              relativePath: toPath,
               contentSha256: digest,
               audioVideoId: op.audioVideoId,
               size: info.size,
@@ -457,7 +467,7 @@ export async function recoverOperations(
             .insert(files)
             .values({
               trackId: op.trackId,
-              relativePath: op.toPath,
+              relativePath: toPath,
               size: info.size,
               mtimeMs: info.mtimeMs,
               contentSha256: digest,
