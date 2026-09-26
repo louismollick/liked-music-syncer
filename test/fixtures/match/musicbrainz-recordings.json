@@ -1,0 +1,9 @@
+{
+  "recordings": [
+    {"id":"wrong", "title":"Other Song", "score":100, "artist-credit":[{"name":"Other Artist","artist":{"id":"other"}}]},
+    {"id":"recording-1", "title":"First Love", "score":97, "isrcs":["JPTO09900001"], "artist-credit":[{"name":"宇多田ヒカル","artist":{"id":"artist-1"}}], "releases":[
+      {"id":"release-2","title":"Other Album","date":"1999","country":"XW","release-group":{"id":"group-2"}},
+      {"id":"release-1","title":"First Love","date":"1999-03-10","country":"JP","release-group":{"id":"group-1"}}
+    ]}
+  ]
+}

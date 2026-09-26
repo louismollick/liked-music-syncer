@@ -9,7 +9,12 @@ import type { ArtistCredit } from '../domain'
  * this to avoid treating a changed page as "the user unliked everything".
  */
 
-export type VideoType = 'ATV' | 'OMV' | 'UGC' | 'OFFICIAL_SOURCE_MUSIC' | 'OTHER'
+export type VideoType =
+  | 'ATV'
+  | 'OMV'
+  | 'UGC'
+  | 'OFFICIAL_SOURCE_MUSIC'
+  | 'OTHER'
 
 export interface CatalogAlbumRef {
   /** Release browse ID (MPREb_...) when known. */

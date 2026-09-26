@@ -1,0 +1,1254 @@
+[
+  {
+    "title": "宇多田ヒカル - First Love (Official Video)",
+    "artist": "宇多田ヒカル",
+    "compare": "First Love",
+    "normalize": "宇多田ヒカル first love (official video",
+    "strip": "宇多田ヒカル - First Love",
+    "canonical": "First Love",
+    "variants": [
+      "first love"
+    ],
+    "similarity": 0.9303030303030303,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "宇多田ヒカル | First Love (Official Video)",
+    "artist": "宇多田ヒカル",
+    "compare": "First Love",
+    "normalize": "宇多田ヒカル | first love (official video",
+    "strip": "宇多田ヒカル | First Love",
+    "canonical": "First Love",
+    "variants": [
+      "first love"
+    ],
+    "similarity": 0.9285714285714286,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "YOASOBI「アイドル」[MV]",
+    "artist": "YOASOBI",
+    "compare": "アイドル",
+    "normalize": "yoasobi「アイドル」[mv",
+    "strip": "YOASOBI「アイドル」",
+    "canonical": "アイドル",
+    "variants": [
+      "アイドル"
+    ],
+    "similarity": 0.925,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "YOASOBI「アイドル」[MV]",
+    "artist": "YOASOBI",
+    "compare": "アイドル",
+    "normalize": "yoasobi「アイドル」[mv",
+    "strip": "YOASOBI「アイドル」",
+    "canonical": "アイドル",
+    "variants": [
+      "アイドル"
+    ],
+    "similarity": 0.925,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Ado - うっせぇわ (Official Music Video)",
+    "artist": "Ado",
+    "compare": "うっせぇわ",
+    "normalize": "ado うっせぇわ (official music video",
+    "strip": "Ado - うっせぇわ",
+    "canonical": "うっせぇわ",
+    "variants": [
+      "うっせぇわ"
+    ],
+    "similarity": 0.9161290322580645,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Ado | うっせぇわ (Official Music Video)",
+    "artist": "Ado",
+    "compare": "うっせぇわ",
+    "normalize": "ado | うっせぇわ (official music video",
+    "strip": "Ado | うっせぇわ",
+    "canonical": "うっせぇわ",
+    "variants": [
+      "うっせぇわ"
+    ],
+    "similarity": 0.9151515151515152,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "米津玄師 - Lemon MV",
+    "artist": "米津玄師",
+    "compare": "Lemon",
+    "normalize": "米津玄師 lemon mv",
+    "strip": "米津玄師 - Lemon",
+    "canonical": "Lemon",
+    "variants": [
+      "lemon"
+    ],
+    "similarity": 0.9384615384615385,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "米津玄師 | Lemon MV",
+    "artist": "米津玄師",
+    "compare": "Lemon",
+    "normalize": "米津玄師 | lemon mv",
+    "strip": "米津玄師 | Lemon",
+    "canonical": "Lemon",
+    "variants": [
+      "lemon"
+    ],
+    "similarity": 0.9333333333333333,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "BTS (방탄소년단) - Dynamite (Official MV)",
+    "artist": "BTS",
+    "compare": "Dynamite",
+    "normalize": "bts (방탄소년단) dynamite (official mv",
+    "strip": "BTS (방탄소년단) - Dynamite",
+    "canonical": "(방탄소년단) - Dynamite",
+    "variants": [
+      "dynamite",
+      "방탄소년단",
+      "방탄소년단) dynamite"
+    ],
+    "similarity": 0.9242424242424243,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "BTS (방탄소년단) | Dynamite (Official MV)",
+    "artist": "BTS",
+    "compare": "Dynamite",
+    "normalize": "bts (방탄소년단) | dynamite (official mv",
+    "strip": "BTS (방탄소년단) | Dynamite",
+    "canonical": "(방탄소년단) | Dynamite",
+    "variants": [
+      "dynamite",
+      "방탄소년단",
+      "방탄소년단) | dynamite"
+    ],
+    "similarity": 0.9228571428571429,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "BLACKPINK - 뚜두뚜두 (DDU-DU DDU-DU) M/V",
+    "artist": "BLACKPINK",
+    "compare": "뚜두뚜두",
+    "normalize": "blackpink 뚜두뚜두 (ddu du ddu du) m/v",
+    "strip": "BLACKPINK - 뚜두뚜두 (DDU-DU DDU-DU) M/V",
+    "canonical": "뚜두뚜두 (DDU-DU DDU-DU) M/V",
+    "variants": [
+      "du ddu",
+      "du) m",
+      "v",
+      "뚜두뚜두 (ddu",
+      "뚜두뚜두 (ddu du ddu du) m/v"
+    ],
+    "similarity": 0.9117647058823529,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "BLACKPINK | 뚜두뚜두 (DDU-DU DDU-DU) M/V",
+    "artist": "BLACKPINK",
+    "compare": "뚜두뚜두",
+    "normalize": "blackpink | 뚜두뚜두 (ddu du ddu du) m/v",
+    "strip": "BLACKPINK | 뚜두뚜두 (DDU-DU DDU-DU) M/V",
+    "canonical": "뚜두뚜두 (DDU-DU DDU-DU) M/V",
+    "variants": [
+      "du ddu",
+      "du) m",
+      "v",
+      "뚜두뚜두 (ddu",
+      "뚜두뚜두 (ddu du ddu du) m/v"
+    ],
+    "similarity": 0.9111111111111111,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "NewJeans (뉴진스) - Ditto [Official Video]",
+    "artist": "NewJeans",
+    "compare": "Ditto",
+    "normalize": "newjeans (뉴진스) ditto [official video",
+    "strip": "NewJeans (뉴진스) - Ditto",
+    "canonical": "(뉴진스) - Ditto",
+    "variants": [
+      "ditto",
+      "뉴진스",
+      "뉴진스) ditto"
+    ],
+    "similarity": 0.9138888888888889,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "NewJeans (뉴진스) | Ditto [Official Video]",
+    "artist": "NewJeans",
+    "compare": "Ditto",
+    "normalize": "newjeans (뉴진스) | ditto [official video",
+    "strip": "NewJeans (뉴진스) | Ditto",
+    "canonical": "(뉴진스) | Ditto",
+    "variants": [
+      "ditto",
+      "뉴진스",
+      "뉴진스) | ditto"
+    ],
+    "similarity": 0.9131578947368422,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "IU - Love wins all [MV]",
+    "artist": "IU",
+    "compare": "Love wins all",
+    "normalize": "iu love wins all [mv",
+    "strip": "IU - Love wins all",
+    "canonical": "Love wins all",
+    "variants": [
+      "love wins all"
+    ],
+    "similarity": 0.9650000000000001,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "IU | Love wins all [MV]",
+    "artist": "IU",
+    "compare": "Love wins all",
+    "normalize": "iu | love wins all [mv",
+    "strip": "IU | Love wins all",
+    "canonical": "Love wins all",
+    "variants": [
+      "love wins all"
+    ],
+    "similarity": 0.9590909090909091,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "The Weeknd - Blinding Lights (Official Audio)",
+    "artist": "The Weeknd",
+    "compare": "Blinding Lights",
+    "normalize": "the weeknd blinding lights (official audio",
+    "strip": "The Weeknd - Blinding Lights",
+    "canonical": "Blinding Lights",
+    "variants": [
+      "blinding lights"
+    ],
+    "similarity": 0.9357142857142857,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "The Weeknd | Blinding Lights (Official Audio)",
+    "artist": "The Weeknd",
+    "compare": "Blinding Lights",
+    "normalize": "the weeknd | blinding lights (official audio",
+    "strip": "The Weeknd | Blinding Lights",
+    "canonical": "Blinding Lights",
+    "variants": [
+      "blinding lights"
+    ],
+    "similarity": 0.9340909090909091,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Taylor Swift - Anti-Hero (Official Video)",
+    "artist": "Taylor Swift",
+    "compare": "Anti-Hero",
+    "normalize": "taylor swift anti hero (official video",
+    "strip": "Taylor Swift - Anti-Hero",
+    "canonical": "Anti-Hero",
+    "variants": [
+      "anti",
+      "anti hero",
+      "hero"
+    ],
+    "similarity": 0.9236842105263158,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Taylor Swift | Anti-Hero (Official Video)",
+    "artist": "Taylor Swift",
+    "compare": "Anti-Hero",
+    "normalize": "taylor swift | anti hero (official video",
+    "strip": "Taylor Swift | Anti-Hero",
+    "canonical": "Anti-Hero",
+    "variants": [
+      "anti",
+      "anti hero",
+      "hero"
+    ],
+    "similarity": 0.9225,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Daft Punk - Get Lucky (feat. Pharrell Williams)",
+    "artist": "Daft Punk",
+    "compare": "Get Lucky",
+    "normalize": "daft punk get lucky (feat. pharrell williams",
+    "strip": "Daft Punk - Get Lucky (feat. Pharrell Williams)",
+    "canonical": "Get Lucky (feat. Pharrell Williams)",
+    "variants": [
+      "get lucky (feat. pharrell williams"
+    ],
+    "similarity": 0.9204545454545455,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Daft Punk | Get Lucky (feat. Pharrell Williams)",
+    "artist": "Daft Punk",
+    "compare": "Get Lucky",
+    "normalize": "daft punk | get lucky (feat. pharrell williams",
+    "strip": "Daft Punk | Get Lucky (feat. Pharrell Williams)",
+    "canonical": "Get Lucky (feat. Pharrell Williams)",
+    "variants": [
+      "get lucky (feat. pharrell williams"
+    ],
+    "similarity": 0.9195652173913044,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Queen - Bohemian Rhapsody (Remastered 2011)",
+    "artist": "Queen",
+    "compare": "Bohemian Rhapsody",
+    "normalize": "queen bohemian rhapsody (remastered 2011",
+    "strip": "Queen - Bohemian Rhapsody (Remastered 2011)",
+    "canonical": "Bohemian Rhapsody (Remastered 2011)",
+    "variants": [
+      "bohemian rhapsody (remastered 2011"
+    ],
+    "similarity": 0.9425,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Queen | Bohemian Rhapsody (Remastered 2011)",
+    "artist": "Queen",
+    "compare": "Bohemian Rhapsody",
+    "normalize": "queen | bohemian rhapsody (remastered 2011",
+    "strip": "Queen | Bohemian Rhapsody (Remastered 2011)",
+    "canonical": "Bohemian Rhapsody (Remastered 2011)",
+    "variants": [
+      "bohemian rhapsody (remastered 2011"
+    ],
+    "similarity": 0.9404761904761905,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "The Beatles - Let It Be (2009 Remaster)",
+    "artist": "The Beatles",
+    "compare": "Let It Be",
+    "normalize": "the beatles let it be (2009 remaster",
+    "strip": "The Beatles - Let It Be (2009 Remaster)",
+    "canonical": "Let It Be (2009 Remaster)",
+    "variants": [
+      "let it be (2009 remaster"
+    ],
+    "similarity": 0.925,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "The Beatles | Let It Be (2009 Remaster)",
+    "artist": "The Beatles",
+    "compare": "Let It Be",
+    "normalize": "the beatles | let it be (2009 remaster",
+    "strip": "The Beatles | Let It Be (2009 Remaster)",
+    "canonical": "Let It Be (2009 Remaster)",
+    "variants": [
+      "let it be (2009 remaster"
+    ],
+    "similarity": 0.9236842105263158,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Nirvana - Smells Like Teen Spirit [Live]",
+    "artist": "Nirvana",
+    "compare": "Smells Like Teen Spirit",
+    "normalize": "nirvana smells like teen spirit [live",
+    "strip": "Nirvana - Smells Like Teen Spirit [Live]",
+    "canonical": "Smells Like Teen Spirit [Live]",
+    "variants": [
+      "smells like teen spirit [live"
+    ],
+    "similarity": 0.9621621621621622,
+    "identity": true,
+    "markers": [
+      "live"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "Nirvana | Smells Like Teen Spirit [Live]",
+    "artist": "Nirvana",
+    "compare": "Smells Like Teen Spirit",
+    "normalize": "nirvana | smells like teen spirit [live",
+    "strip": "Nirvana | Smells Like Teen Spirit [Live]",
+    "canonical": "Smells Like Teen Spirit [Live]",
+    "variants": [
+      "smells like teen spirit [live"
+    ],
+    "similarity": 0.958974358974359,
+    "identity": true,
+    "markers": [
+      "live"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "Björk - Jóga (Official Video)",
+    "artist": "Björk",
+    "compare": "Jóga",
+    "normalize": "björk jóga (official video",
+    "strip": "Björk - Jóga",
+    "canonical": "Jóga",
+    "variants": [
+      "jóga"
+    ],
+    "similarity": 0.9153846153846155,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Björk | Jóga (Official Video)",
+    "artist": "Björk",
+    "compare": "Jóga",
+    "normalize": "björk | jóga (official video",
+    "strip": "Björk | Jóga",
+    "canonical": "Jóga",
+    "variants": [
+      "jóga"
+    ],
+    "similarity": 0.9142857142857143,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Sigur Rós - Svefn-g-englar (Official Video)",
+    "artist": "Sigur Rós",
+    "compare": "Svefn-g-englar",
+    "normalize": "sigur rós svefn g englar (official video",
+    "strip": "Sigur Rós - Svefn-g-englar",
+    "canonical": "Svefn-g-englar",
+    "variants": [
+      "englar",
+      "g",
+      "svefn",
+      "svefn g englar"
+    ],
+    "similarity": 0.935,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Sigur Rós | Svefn-g-englar (Official Video)",
+    "artist": "Sigur Rós",
+    "compare": "Svefn-g-englar",
+    "normalize": "sigur rós | svefn g englar (official video",
+    "strip": "Sigur Rós | Svefn-g-englar",
+    "canonical": "Svefn-g-englar",
+    "variants": [
+      "englar",
+      "g",
+      "svefn",
+      "svefn g englar"
+    ],
+    "similarity": 0.9333333333333333,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Rammstein - Straße (Official Video)",
+    "artist": "Rammstein",
+    "compare": "Strasse",
+    "normalize": "rammstein strasse (official video",
+    "strip": "Rammstein - Straße",
+    "canonical": "Straße",
+    "variants": [
+      "strasse"
+    ],
+    "similarity": 0.9212121212121213,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Rammstein | Straße (Official Video)",
+    "artist": "Rammstein",
+    "compare": "Strasse",
+    "normalize": "rammstein | strasse (official video",
+    "strip": "Rammstein | Straße",
+    "canonical": "Straße",
+    "variants": [
+      "strasse"
+    ],
+    "similarity": 0.92,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "ﬁction - ﬂower [Audio]",
+    "artist": "ﬁction",
+    "compare": "fiction flower",
+    "normalize": "fiction flower [audio",
+    "strip": "ﬁction - ﬂower",
+    "canonical": "ﬂower",
+    "variants": [
+      "flower"
+    ],
+    "similarity": 0.9666666666666667,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "ﬁction | ﬂower [Audio]",
+    "artist": "ﬁction",
+    "compare": "fiction flower",
+    "normalize": "fiction | flower [audio",
+    "strip": "ﬁction | ﬂower",
+    "canonical": "ﬂower",
+    "variants": [
+      "flower"
+    ],
+    "similarity": 0.7567567567567568,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Ａｄｏ － 新時代 [MV]",
+    "artist": "Ａｄｏ",
+    "compare": "新時代",
+    "normalize": "ado 新時代 [mv",
+    "strip": "Ａｄｏ － 新時代",
+    "canonical": "－ 新時代",
+    "variants": [
+      "新時代"
+    ],
+    "similarity": 0.9272727272727272,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Ａｄｏ － 新時代 [MV]",
+    "artist": "Ａｄｏ",
+    "compare": "新時代",
+    "normalize": "ado 新時代 [mv",
+    "strip": "Ａｄｏ － 新時代",
+    "canonical": "－ 新時代",
+    "variants": [
+      "新時代"
+    ],
+    "similarity": 0.9272727272727272,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "MØ - Final Song (Official Video)",
+    "artist": "MØ",
+    "compare": "Final Song",
+    "normalize": "mø final song (official video",
+    "strip": "MØ - Final Song",
+    "canonical": "Final Song",
+    "variants": [
+      "final song"
+    ],
+    "similarity": 0.9344827586206896,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "MØ | Final Song (Official Video)",
+    "artist": "MØ",
+    "compare": "Final Song",
+    "normalize": "mø | final song (official video",
+    "strip": "MØ | Final Song",
+    "canonical": "Final Song",
+    "variants": [
+      "final song"
+    ],
+    "similarity": 0.932258064516129,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "RADWIMPS「前前前世」Music Video",
+    "artist": "RADWIMPS",
+    "compare": "前前前世",
+    "normalize": "radwimps「前前前世」music video",
+    "strip": "RADWIMPS「前前前世」",
+    "canonical": "前前前世",
+    "variants": [
+      "前前前世"
+    ],
+    "similarity": 0.916,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "RADWIMPS「前前前世」Music Video",
+    "artist": "RADWIMPS",
+    "compare": "前前前世",
+    "normalize": "radwimps「前前前世」music video",
+    "strip": "RADWIMPS「前前前世」",
+    "canonical": "前前前世",
+    "variants": [
+      "前前前世"
+    ],
+    "similarity": 0.916,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "King Gnu - 白日 (Official Video)",
+    "artist": "King Gnu",
+    "compare": "白日",
+    "normalize": "king gnu 白日 (official video",
+    "strip": "King Gnu - 白日",
+    "canonical": "白日",
+    "variants": [
+      "白日"
+    ],
+    "similarity": 0.9074074074074074,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "King Gnu | 白日 (Official Video)",
+    "artist": "King Gnu",
+    "compare": "白日",
+    "normalize": "king gnu | 白日 (official video",
+    "strip": "King Gnu | 白日",
+    "canonical": "白日",
+    "variants": [
+      "白日"
+    ],
+    "similarity": 0.906896551724138,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "藤井風 - きらり (Official Video)",
+    "artist": "藤井風",
+    "compare": "きらり",
+    "normalize": "藤井風 きらり (official video",
+    "strip": "藤井風 - きらり",
+    "canonical": "きらり",
+    "variants": [
+      "きらり"
+    ],
+    "similarity": 0.9130434782608696,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "藤井風 | きらり (Official Video)",
+    "artist": "藤井風",
+    "compare": "きらり",
+    "normalize": "藤井風 | きらり (official video",
+    "strip": "藤井風 | きらり",
+    "canonical": "きらり",
+    "variants": [
+      "きらり"
+    ],
+    "similarity": 0.912,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Official髭男dism - Pretender [MV]",
+    "artist": "Official髭男dism",
+    "compare": "Pretender",
+    "normalize": "official髭男dism pretender [mv",
+    "strip": "Official髭男dism - Pretender",
+    "canonical": "Pretender",
+    "variants": [
+      "pretender"
+    ],
+    "similarity": 0.9321428571428572,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Official髭男dism | Pretender [MV]",
+    "artist": "Official髭男dism",
+    "compare": "Pretender",
+    "normalize": "official髭男dism | pretender [mv",
+    "strip": "Official髭男dism | Pretender",
+    "canonical": "Pretender",
+    "variants": [
+      "pretender"
+    ],
+    "similarity": 0.93,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "TWICE - FANCY (Official Video)",
+    "artist": "TWICE",
+    "compare": "FANCY",
+    "normalize": "twice fancy (official video",
+    "strip": "TWICE - FANCY",
+    "canonical": "FANCY",
+    "variants": [
+      "fancy"
+    ],
+    "similarity": 0.9185185185185185,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "TWICE | FANCY (Official Video)",
+    "artist": "TWICE",
+    "compare": "FANCY",
+    "normalize": "twice | fancy (official video",
+    "strip": "TWICE | FANCY",
+    "canonical": "FANCY",
+    "variants": [
+      "fancy"
+    ],
+    "similarity": 0.9172413793103449,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "SEVENTEEN - 손오공 (Official MV)",
+    "artist": "SEVENTEEN",
+    "compare": "손오공",
+    "normalize": "seventeen 손오공 (official mv",
+    "strip": "SEVENTEEN - 손오공",
+    "canonical": "손오공",
+    "variants": [
+      "손오공"
+    ],
+    "similarity": 0.9115384615384615,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "SEVENTEEN | 손오공 (Official MV)",
+    "artist": "SEVENTEEN",
+    "compare": "손오공",
+    "normalize": "seventeen | 손오공 (official mv",
+    "strip": "SEVENTEEN | 손오공",
+    "canonical": "손오공",
+    "variants": [
+      "손오공"
+    ],
+    "similarity": 0.9107142857142857,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Stray Kids - 특 (S-Class) [MV]",
+    "artist": "Stray Kids",
+    "compare": "특",
+    "normalize": "stray kids 특 (s class) [mv",
+    "strip": "Stray Kids - 특 (S-Class)",
+    "canonical": "특 (S-Class)",
+    "variants": [
+      "class",
+      "특 (s",
+      "특 (s class"
+    ],
+    "similarity": 0.9038461538461539,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Stray Kids | 특 (S-Class) [MV]",
+    "artist": "Stray Kids",
+    "compare": "특",
+    "normalize": "stray kids | 특 (s class) [mv",
+    "strip": "Stray Kids | 특 (S-Class)",
+    "canonical": "특 (S-Class)",
+    "variants": [
+      "class",
+      "특 (s",
+      "특 (s class"
+    ],
+    "similarity": 0.9035714285714286,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "aespa - Supernova (Official Video)",
+    "artist": "aespa",
+    "compare": "Supernova",
+    "normalize": "aespa supernova (official video",
+    "strip": "aespa - Supernova",
+    "canonical": "Supernova",
+    "variants": [
+      "supernova"
+    ],
+    "similarity": 0.9290322580645162,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "aespa | Supernova (Official Video)",
+    "artist": "aespa",
+    "compare": "Supernova",
+    "normalize": "aespa | supernova (official video",
+    "strip": "aespa | Supernova",
+    "canonical": "Supernova",
+    "variants": [
+      "supernova"
+    ],
+    "similarity": 0.9272727272727272,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Coldplay - Yellow (Official Video)",
+    "artist": "Coldplay",
+    "compare": "Yellow",
+    "normalize": "coldplay yellow (official video",
+    "strip": "Coldplay - Yellow",
+    "canonical": "Yellow",
+    "variants": [
+      "yellow"
+    ],
+    "similarity": 0.9193548387096775,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Coldplay | Yellow (Official Video)",
+    "artist": "Coldplay",
+    "compare": "Yellow",
+    "normalize": "coldplay | yellow (official video",
+    "strip": "Coldplay | Yellow",
+    "canonical": "Yellow",
+    "variants": [
+      "yellow"
+    ],
+    "similarity": 0.9181818181818182,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Adele - Hello (Official Video)",
+    "artist": "Adele",
+    "compare": "Hello",
+    "normalize": "adele hello (official video",
+    "strip": "Adele - Hello",
+    "canonical": "Hello",
+    "variants": [
+      "hello"
+    ],
+    "similarity": 0.9185185185185185,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Adele | Hello (Official Video)",
+    "artist": "Adele",
+    "compare": "Hello",
+    "normalize": "adele | hello (official video",
+    "strip": "Adele | Hello",
+    "canonical": "Hello",
+    "variants": [
+      "hello"
+    ],
+    "similarity": 0.9172413793103449,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Radiohead - Creep (Acoustic)",
+    "artist": "Radiohead",
+    "compare": "Creep",
+    "normalize": "radiohead creep (acoustic",
+    "strip": "Radiohead - Creep (Acoustic)",
+    "canonical": "Creep (Acoustic)",
+    "variants": [
+      "creep (acoustic"
+    ],
+    "similarity": 0.92,
+    "identity": true,
+    "markers": [
+      "acoustic"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "Radiohead | Creep (Acoustic)",
+    "artist": "Radiohead",
+    "compare": "Creep",
+    "normalize": "radiohead | creep (acoustic",
+    "strip": "Radiohead | Creep (Acoustic)",
+    "canonical": "Creep (Acoustic)",
+    "variants": [
+      "creep (acoustic"
+    ],
+    "similarity": 0.9185185185185185,
+    "identity": true,
+    "markers": [
+      "acoustic"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "Linkin Park - Numb (Live)",
+    "artist": "Linkin Park",
+    "compare": "Numb",
+    "normalize": "linkin park numb (live",
+    "strip": "Linkin Park - Numb (Live)",
+    "canonical": "Numb (Live)",
+    "variants": [
+      "numb (live"
+    ],
+    "similarity": 0.9181818181818182,
+    "identity": true,
+    "markers": [
+      "live"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "Linkin Park | Numb (Live)",
+    "artist": "Linkin Park",
+    "compare": "Numb",
+    "normalize": "linkin park | numb (live",
+    "strip": "Linkin Park | Numb (Live)",
+    "canonical": "Numb (Live)",
+    "variants": [
+      "numb (live"
+    ],
+    "similarity": 0.9166666666666667,
+    "identity": true,
+    "markers": [
+      "live"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "Mitski - My Love Mine All Mine [Audio]",
+    "artist": "Mitski",
+    "compare": "My Love Mine All Mine",
+    "normalize": "mitski my love mine all mine [audio",
+    "strip": "Mitski - My Love Mine All Mine",
+    "canonical": "My Love Mine All Mine",
+    "variants": [
+      "my love mine all mine"
+    ],
+    "similarity": 0.96,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Mitski | My Love Mine All Mine [Audio]",
+    "artist": "Mitski",
+    "compare": "My Love Mine All Mine",
+    "normalize": "mitski | my love mine all mine [audio",
+    "strip": "Mitski | My Love Mine All Mine",
+    "canonical": "My Love Mine All Mine",
+    "variants": [
+      "my love mine all mine"
+    ],
+    "similarity": 0.9567567567567568,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Creepy Nuts - Bling-Bang-Bang-Born (Official Video)",
+    "artist": "Creepy Nuts",
+    "compare": "Bling-Bang-Bang-Born",
+    "normalize": "creepy nuts bling bang bang born (official video",
+    "strip": "Creepy Nuts - Bling-Bang-Bang-Born",
+    "canonical": "Bling-Bang-Bang-Born",
+    "variants": [
+      "bang",
+      "bling",
+      "bling bang bang born",
+      "born"
+    ],
+    "similarity": 0.9416666666666667,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Creepy Nuts | Bling-Bang-Bang-Born (Official Video)",
+    "artist": "Creepy Nuts",
+    "compare": "Bling-Bang-Bang-Born",
+    "normalize": "creepy nuts | bling bang bang born (official video",
+    "strip": "Creepy Nuts | Bling-Bang-Bang-Born",
+    "canonical": "Bling-Bang-Bang-Born",
+    "variants": [
+      "bang",
+      "bling",
+      "bling bang bang born",
+      "born"
+    ],
+    "similarity": 0.9400000000000001,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "ROSÉ - APT. (feat. Bruno Mars)",
+    "artist": "ROSÉ",
+    "compare": "APT.",
+    "normalize": "rosé apt. (feat. bruno mars",
+    "strip": "ROSÉ - APT. (feat. Bruno Mars)",
+    "canonical": "APT. (feat. Bruno Mars)",
+    "variants": [
+      "apt. (feat. bruno mars"
+    ],
+    "similarity": 0.9111111111111111,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "ROSÉ | APT. (feat. Bruno Mars)",
+    "artist": "ROSÉ",
+    "compare": "APT.",
+    "normalize": "rosé | apt. (feat. bruno mars",
+    "strip": "ROSÉ | APT. (feat. Bruno Mars)",
+    "canonical": "APT. (feat. Bruno Mars)",
+    "variants": [
+      "apt. (feat. bruno mars"
+    ],
+    "similarity": 0.9103448275862069,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Laufey - From The Start (Official Video)",
+    "artist": "Laufey",
+    "compare": "From The Start",
+    "normalize": "laufey from the start (official video",
+    "strip": "Laufey - From The Start",
+    "canonical": "From The Start",
+    "variants": [
+      "from the start"
+    ],
+    "similarity": 0.9378378378378378,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Laufey | From The Start (Official Video)",
+    "artist": "Laufey",
+    "compare": "From The Start",
+    "normalize": "laufey | from the start (official video",
+    "strip": "Laufey | From The Start",
+    "canonical": "From The Start",
+    "variants": [
+      "from the start"
+    ],
+    "similarity": 0.9358974358974359,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "BABYMETAL - ギミチョコ！！ (Live)",
+    "artist": "BABYMETAL",
+    "compare": "ギミチョコ！！",
+    "normalize": "babymetal ギミチョコ!! (live",
+    "strip": "BABYMETAL - ギミチョコ！！ (Live)",
+    "canonical": "ギミチョコ！！ (Live)",
+    "variants": [
+      "ギミチョコ!! (live"
+    ],
+    "similarity": 0.9217391304347826,
+    "identity": true,
+    "markers": [
+      "live"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "BABYMETAL | ギミチョコ！！ (Live)",
+    "artist": "BABYMETAL",
+    "compare": "ギミチョコ！！",
+    "normalize": "babymetal | ギミチョコ!! (live",
+    "strip": "BABYMETAL | ギミチョコ！！ (Live)",
+    "canonical": "ギミチョコ！！ (Live)",
+    "variants": [
+      "ギミチョコ!! (live"
+    ],
+    "similarity": 0.92,
+    "identity": true,
+    "markers": [
+      "live"
+    ],
+    "versionCompatible": false
+  },
+  {
+    "title": "Utada Hikaru - One Last Kiss (Official Video)",
+    "artist": "Utada Hikaru",
+    "compare": "One Last Kiss",
+    "normalize": "utada hikaru one last kiss (official video",
+    "strip": "Utada Hikaru - One Last Kiss",
+    "canonical": "One Last Kiss",
+    "variants": [
+      "one last kiss"
+    ],
+    "similarity": 0.930952380952381,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "Utada Hikaru | One Last Kiss (Official Video)",
+    "artist": "Utada Hikaru",
+    "compare": "One Last Kiss",
+    "normalize": "utada hikaru | one last kiss (official video",
+    "strip": "Utada Hikaru | One Last Kiss",
+    "canonical": "One Last Kiss",
+    "variants": [
+      "one last kiss"
+    ],
+    "similarity": 0.9295454545454546,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "ZUTOMAYO - 秒針を噛む [MV]",
+    "artist": "ZUTOMAYO",
+    "compare": "秒針を噛む",
+    "normalize": "zutomayo 秒針を噛む [mv",
+    "strip": "ZUTOMAYO - 秒針を噛む",
+    "canonical": "秒針を噛む",
+    "variants": [
+      "秒針を噛む"
+    ],
+    "similarity": 0.9277777777777778,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "ZUTOMAYO | 秒針を噛む [MV]",
+    "artist": "ZUTOMAYO",
+    "compare": "秒針を噛む",
+    "normalize": "zutomayo | 秒針を噛む [mv",
+    "strip": "ZUTOMAYO | 秒針を噛む",
+    "canonical": "秒針を噛む",
+    "variants": [
+      "秒針を噛む"
+    ],
+    "similarity": 0.925,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "IVE - I AM (Official MV)",
+    "artist": "IVE",
+    "compare": "I AM",
+    "normalize": "ive i am (official mv",
+    "strip": "IVE - I AM",
+    "canonical": "I AM",
+    "variants": [
+      "i am"
+    ],
+    "similarity": 0.9190476190476191,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  },
+  {
+    "title": "IVE | I AM (Official MV)",
+    "artist": "IVE",
+    "compare": "I AM",
+    "normalize": "ive | i am (official mv",
+    "strip": "IVE | I AM",
+    "canonical": "I AM",
+    "variants": [
+      "i am"
+    ],
+    "similarity": 0.9173913043478261,
+    "identity": true,
+    "markers": [],
+    "versionCompatible": true
+  }
+]
