@@ -1,6 +1,6 @@
 # Overhaul plan
 
-Status: draft for review. Owner decisions come from the grilling session on 2026-09-25/26 and are recorded in `CONTEXT.md` and ADRs 0002 to 0006. This plan says how to build them.
+Status: revision 2, after self-review, Codex review 1, and the milestone 0 spikes. Owner decisions come from the grilling session on 2026-09-25/26 and are recorded in `CONTEXT.md` and ADRs 0002 to 0006. This plan says how to build them.
 
 ## Goal
 
@@ -39,49 +39,63 @@ Done means:
 
 ## Architecture
 
-Everything runs in the Electron main process except the renderer. Three external binaries: yt-dlp (official standalone release, self-updating in `userData`), ffmpeg (`ffmpeg-static`), rclone (bundled per architecture). The bgutil PO token provider keeps running as a Node script under Electron's Node mode, as it does today.
+Everything runs in the Electron main process except the renderer. No youtubei.js: the spikes showed its YouTube Music parsers fail on current responses, and a small `fetch` client is enough (see "Spike results"). Three external binaries: yt-dlp (official standalone release, self-updating in `userData`), ffmpeg (`ffmpeg-static`), rclone (bundled per architecture). The bgutil PO token provider keeps running as a Node script under Electron's Node mode, as it does today.
 
 ### Modules
 
 Each module below has a small interface and hides a lot. Names use `CONTEXT.md` terms. Tests go through each module's interface.
 
-1. **Google Session** (`src/main/session/`). Owns the persistent `persist:ytmusic` Electron session, the sign-in window, cookie reads, SAPISIDHASH authorization, and YouTube Music Account discovery and selection (probing `X-Goog-AuthUser` slots as today). Interface: `status()`, `openSignIn()`, `signOut()`, `accounts()`, `selectAccount(id)`, `requestHeaders()`. A dev-only cookie importer (`LMS_DEV_IMPORT_COOKIES=zen`, refused when `app.isPackaged`) copies YouTube cookies from a local Zen profile into the partition so automated verification can run without a human sign-in.
+1. **Google Session** (`src/main/session/`). Owns the persistent `persist:ytmusic` Electron session, the sign-in window, cookie reads, SAPISIDHASH authorization, and YouTube Music Account discovery and selection (probing `X-Goog-AuthUser` slots 0 to 4 as today, reading the account name, handle, and channel ID from `account/account_menu`). Each YouTube Music Account has a stable ID: its channel ID, falling back to a hash of the slot's account name only when YouTube returns no channel. Interface: `status()`, `openSignIn()`, `signOut()`, `accounts()`, `selectAccount(id)`, `requestHeaders()`. Switching accounts is refused while a Track Step is running, as today. A dev-only cookie importer (`LMS_DEV_IMPORT_COOKIES=zen`, refused when `app.isPackaged`) copies YouTube cookies from a local Zen profile into the partition so automated verification can run without a human sign-in.
 
-2. **YouTube Music catalog** (`src/main/catalog/`). All YouTube Music reads: liked songs with continuation paging, album, artist, the artist's full album and single lists, song search, watch playlist (lyrics browse ID), timed and plain lyrics, account info, artist images. Implementation: youtubei.js for the Innertube session and request signing, with response parsers ported from ytmusicapi (MIT) so shapes match what the matching code expects. Timed lyrics use a raw `browse` call with the Android Music client, as ytmusicapi does. Interface returns plain typed objects (`CatalogTrack`, `CatalogRelease`, `CatalogArtist`, `Lyrics`). Tests run the parsers against recorded JSON fixtures of public pages; personal responses (liked songs, account) are synthesized, never committed from the real account.
+2. **YouTube Music catalog** (`src/main/catalog/`). All YouTube Music reads: liked songs with continuation paging, album, artist, the artist's full album and single lists, song search, watch playlist (lyrics browse ID), timed and plain lyrics, account info, artist images. Implementation: a small Innertube client over `fetch` (`POST music.youtube.com/youtubei/v1/<endpoint>` with a `WEB_REMIX` context), signed with the Google Session's headers for personal reads (liked songs, account menu) and sent signed out for public reads. Timed lyrics use the `ANDROID_MUSIC` client, signed out, as ytmusicapi does. Response parsers are ported from ytmusicapi (MIT) so shapes match what the matching code expects, including the raw `next` fallback the Python code needed when ytmusicapi's watch-playlist parser broke. Interface returns plain typed objects (`CatalogTrack`, `CatalogRelease`, `CatalogArtist`, `Lyrics`). Tests run the parsers against recorded JSON fixtures of public pages; personal responses (liked songs, account) are synthesized, never committed from the real account.
 
-3. **Matcher** (`src/main/match/`). Turns a Source Contribution into a Match: which catalog track and Release, MusicBrainz recording ID and genre, and the artist credits. Ports the Python resolution rules: official-source preference, title normalization (NFKC plus case folding), a faithful `SequenceMatcher` port for similarity thresholds, and the MusicBrainz 1 request per second throttle. Liked videos without a catalog match become Standalone Tracks. Interface: `match(contribution) -> Match`, with the catalog and MusicBrainz clients injected. Tests use fakes of both plus golden cases recorded from the Python implementation before it is deleted.
+3. **Request scheduler** (`src/main/net/`, internal). One place for per-host rate limits (MusicBrainz 1 request per second, gentle pacing for YouTube Music, LRCLIB, and Spotify), `Retry-After`, timeouts, cancellation, and classification of errors as transient or permanent. The catalog, matcher, and lyrics finder all send requests through it. It is not part of any module's interface.
 
-4. **Lyrics finder** (`src/main/lyrics/`). Implements the lyrics order above. Spotify track lookup ports the web token TOTP flow and search scoring; the lyrics text comes from the configured lyrics server (`GET <url>?trackid=<id>&format=lrc`). LRCLIB uses `/api/get` then `/api/search`. Classifies text as synced or plain with one shared rule, rejects all-zero timestamp LRC, and detects language with `eld` on the lyrics text. Interface: `find(track) -> { text, synced, source, language } | null`.
+4. **Matcher** (`src/main/match/`). Turns a Source Contribution into a Match: which catalog track and Release, MusicBrainz recording ID and genre, and the artist credits. Ports the Python resolution rules: official-source preference, title normalization (NFKC plus case folding), a faithful `SequenceMatcher` port for similarity thresholds, and the MusicBrainz 1 request per second throttle. Liked videos without a catalog match become Standalone Tracks. Interface: `match(contribution) -> Match`, with the catalog and MusicBrainz clients injected. Tests use fakes of both plus golden cases recorded from the Python implementation before it is deleted.
 
-5. **Tag schema** (`src/main/tags/`). The single definition of every tag the app writes and reads, built on node-taglib-sharp: standard MP4 atoms, the raw `©day` date string (keeps `YYYY`, `YYYY-MM`, `YYYY-MM-DD`), cover art, lyrics, and the `----:com.apple.iTunes:LMS_*` freeform atoms. Interface: `readTags(path) -> TagFields`, `writeTags(path, TagFields)`, `fieldDiff(a, b) -> string[]`. Writes `LMS_TAG_SCHEMA_VERSION=6`; reads v5 files for adoption. Tests round-trip a real `.m4a` generated with ffmpeg in the test setup.
+5. **Lyrics finder** (`src/main/lyrics/`). Implements the lyrics order above. Spotify track lookup ports the web token TOTP flow and search scoring; the lyrics text comes from the configured lyrics server (`GET <url>?trackid=<id>&format=lrc`). LRCLIB uses `/api/get` then `/api/search`. Classifies text as synced or plain with one shared rule, rejects all-zero timestamp LRC, and detects language with `eld` on the lyrics text. Interface: `find(track) -> { text, synced, source, language } | null`.
 
-6. **Audio acquisition** (`src/main/acquire/`). Downloads with the yt-dlp binary (`-f bestaudio/best`, `mweb` client, bgutil plugin directory, Electron-as-Node JS runtime, no cookies), converts to AAC `.m4a` with ffmpeg only when needed, crops cover art square (Electron `nativeImage`: trim uniform border, center crop, JPEG), writes tags, then moves the file into place with a same-directory temp file and `rename`, so a crash never leaves a half-written file at the final path. Reports byte progress. Interface: `acquire(match, lyrics, destination, onProgress) -> ManagedFileRecord`, plus `retag(file, fields)` for network-free tag rewrites. Also owns the yt-dlp binary: download on first use to `userData/bin`, `--update-to stable` at most once a day.
+6. **Tag schema** (`src/main/tags/`). The single definition of every tag the app writes and reads, built on node-taglib-sharp: standard MP4 atoms, the raw `©day` date string (keeps `YYYY`, `YYYY-MM`, `YYYY-MM-DD`), cover art, lyrics, and the `----:com.apple.iTunes:LMS_*` freeform atoms. Interface: `readTags(path) -> TagFields`, `writeTags(path, TagFields)`, `fieldDiff(a, b) -> string[]`. Writes `LMS_TAG_SCHEMA_VERSION=6`; reads v5 files for adoption. Tests round-trip a real `.m4a` generated with ffmpeg in the test setup.
 
-7. **Library store** (`src/main/library/`). SQLite through better-sqlite3 and Drizzle, with numbered migrations that never drop user data. Owns tracks, Source Contributions, Managed File records, upload records, artists, favorites, settings, and Unmanaged File listings. Also owns the scanner: walk the output folder, read tags of `.m4a` files, classify Managed vs Unmanaged, detect Outside Edits (size, mtime, then content hash), and rebuild tracks from LMS tags when the database is empty. Interface is query and command methods used by the reconciler and IPC; the renderer never sees table rows directly.
+7. **Audio acquisition** (`src/main/acquire/`). Downloads with the yt-dlp binary (`-f bestaudio/best`, `mweb` client, bgutil plugin directory, Electron-as-Node JS runtime, no cookies), converts to AAC `.m4a` with ffmpeg only when needed, crops cover art square (Electron `nativeImage`: trim uniform border, center crop, JPEG), writes tags, then moves the file into place with a same-directory temp file and `rename`, so a crash never leaves a half-written file at the final path. Reports byte progress. Interface: `acquire(match, lyrics, destination, onProgress) -> ManagedFileRecord`, plus `retag(file, fields)` for network-free tag rewrites. The yt-dlp binary manager is an internal seam of this module: download on first use to `userData/bin`, verify against the release's SHA-256 sums, `--update-to stable` at most once a day, keep the previous binary and roll back if the updated one fails `--version`.
 
-8. **Remote Library** (`src/main/remote/`). rclone wrapper: `list({ hashes })` via `lsjson --recursive --files-only` (adding `--hash` only for full checks), `upload(local, remotePath)`, `move`, `delete`. Records what was uploaded (content hash plus tag fields). Uploads use `copyto` with modification times preserved and are followed by a hash check of that one file. Computes Remote State per track: in sync, stale (the local file changed since the upload record, with the field diff), missing, uploading, failed. A remote file whose size or modification time no longer matches its upload record is treated as stale and replaced. When no upload record exists or a remote hash matches none, it downloads that one file to a temp dir and reads its tags. Tests use rclone's local backend against temp directories.
+8. **Library store** (`src/main/library/`). SQLite through better-sqlite3 and Drizzle, with numbered migrations that never drop user data. Owns tracks, Source Contributions and source snapshots, Managed File records, upload records, tombstones, artists, favorites, and settings. Interface is query and command methods used by the reconciler and IPC; the renderer never sees table rows directly.
 
-9. **Reconciler** (`src/main/reconcile/`). The heart of the app. Computes the Desired Library from active Source Contributions, compares each Desired Track with its Managed File and remote copy, and derives the next Track Step: match, acquire, retag, move, upload. Runs one track at a time through its remaining steps, newest Liked Date first, then catalog tracks by release date, persists progress after each step, retries transient failures (1 min, 5 min, 30 min), then marks Needs Attention. Emits Activity events. Interface: `checkSources()`, `refresh(scope)`, `retry(trackId)`, `deleteTracks(ids, where)`, `snapshot()`, `subscribe(listener)`. Tests run the reconciler with in-memory fakes for catalog, matcher, acquisition, and remote.
+9. **Library inventory** (`src/main/inventory/`). The narrow interface to the output folder: `scan() -> { managed, unmanaged, outsideEdits }` and `adopt(scan)`. Walks the folder, reads tags through the Tag schema, classifies Managed vs Unmanaged, detects Outside Edits (size and mtime, then content hash against the file record), and on an empty database rebuilds tracks from LMS tags (see "Adoption"). Also computes layout paths with the collision rule below.
 
-10. **App shell** (`src/main/index.ts`, `src/main/ipc.ts`, `src/preload/`). Window lifecycle (IPC keeps working after the window is closed and reopened), one typed IPC surface defined with zod schemas in `src/shared/ipc.ts` and validated in main, `app-media://` protocol for cached artwork, the 30-minute check timer, and orderly shutdown (stop the worker, kill child processes, never leave a detached process).
+10. **Remote Library** (`src/main/remote/`). rclone wrapper: `list({ hashes })` via `lsjson --recursive --files-only` (adding `--hash` only for full checks), `upload(local, remotePath)`, `move`, `delete`. Records what was uploaded (content hash plus tag fields). The module detects the remote's supported hash types once (`rclone backend features`) and picks MD5 or SHA-1 when available; upload records store the algorithm, the local digest in that algorithm, and the remote size and modification time as rclone reported them. Uploads use `copyto` and are followed by a check of that one file: a hash comparison when the backend has a common hash, otherwise a size check plus a download-and-hash only during full checks. Backends without writable modification times fall back to size plus the recorded remote time. Computes Remote State per track: in sync, stale (the local file changed since the upload record, with the field diff), missing, uploading, failed. A remote file whose size or modification time no longer matches its upload record is treated as stale and replaced. When no upload record exists or a remote hash matches none, it downloads that one file to a temp dir and reads its tags. Tests use rclone's local backend against temp directories.
+
+11. **Reconciler** (`src/main/reconcile/`). The heart of the app. Computes the Desired Library from active Source Contributions, compares each Desired Track with its Managed File and remote copy, and derives the next Track Step: match, acquire, retag, move, upload. Runs one track at a time through its remaining steps, newest Liked Date first, then catalog tracks by release date, persists progress after each step, retries transient failures (1 min, 5 min, 30 min), then marks Needs Attention. Emits Activity events. Interface: `checkSources()`, `refresh(scope)`, `retry(trackId)`, `deleteTracks(ids, where)`, `snapshot()`, `subscribe(listener)`. Tests run the reconciler with in-memory fakes for catalog, matcher, acquisition, and remote.
+
+12. **App shell** (`src/main/index.ts`, `src/main/ipc.ts`, `src/preload/`). Window lifecycle (IPC keeps working after the window is closed and reopened), one typed IPC surface defined with zod schemas in `src/shared/ipc.ts` and validated in main, `app-media://` protocol for cached artwork, the 30-minute check timer, and orderly shutdown (stop the worker, kill child processes, never leave a detached process).
 
 ### Identity and Source Contributions
 
-- A Source Contribution row is created per liked video (`ytm-liked:<videoId>`) and per Favorite Artist catalog track (`catalog:<artistId>:<releaseId>:<videoId>`). It records `firstSeenAt`, the platform's liked-list position, and whether it is still active.
-- Liked contributions have no identity until matched. The Match step computes the identity key: `<releaseId>:<videoId>` when a Release is known, else `video:<videoId>`. If a track with that key exists, the contribution links to it (merge); otherwise a new track is created.
-- Catalog contributions already carry release and video IDs, so their identity is known at discovery.
-- Liked Date for a track is the earliest `firstSeenAt` among its active liked contributions, ordered within the same day by liked-list position. Catalog-only tracks show "Catalog".
-- A track with no active contribution becomes No Longer Wanted, but only after a successful liked-songs check has completed since launch. Adopted tracks never flip to No Longer Wanted before that first check links their contributions.
+- **Canonical video ID.** A Release Track's identity is `<releaseId>:<catalogVideoId>`, where `catalogVideoId` is the video ID YouTube Music lists for that track on the Release's own track list (ytmusicapi's resolved ID), never the video the user liked. A Standalone Track's identity is `video:<sourceVideoId>`. Contributions always keep their original source IDs.
+- **Liked contributions are scoped to a YouTube Music Account.** Key: `ytm-liked:<accountId>:<sourceVideoId>`. Only the selected account's liked contributions are active. Switching accounts deactivates the previous account's likes after the new account's first complete check (so its tracks become No Longer Wanted, which never deletes anything) and reactivates them if the user switches back. The Library itself is shared across accounts. Favorite Artists are a Library-level choice, not per account.
+- **Catalog contributions**: `catalog:<artistId>:<releaseId>:<catalogVideoId>`. Their identity is known at discovery.
+- **Matching a liked contribution** computes its identity key. If a track with that key exists, the contribution links to it (merge); otherwise a new track is created.
+- **Re-keying.** A Refresh can change a track's identity (a Standalone Track gains a Release, or the Match picks another catalog track). Re-keying runs in one transaction: if no track has the new key, the track row takes the new key and gets a retag and move step. If another track already has it, the contributions move to that track, and the old track's Managed File and upload become redundant: they are deleted through a tombstone (see "Crash safety") once the surviving track has a verified file. Every re-key is recorded in the track's history for the Song panel.
+- **Source snapshots.** A liked-songs check or catalog check stages every page (and for catalogs, every release) into a snapshot. Only a complete snapshot with no request errors is committed, and activation and deactivation happen in the same transaction. A failed or partial check keeps the previous snapshot and shows a Needs Attention item for the source, not for tracks.
+- **Liked Date** for a track is the earliest `firstSeenAt` among its liked contributions, ordered within the same day by liked-list position. Catalog-only tracks show "Catalog".
+- **No Longer Wanted** is decided only after every configured source has completed at least one full check since the database was created. A track with no active contribution then becomes No Longer Wanted.
 - Un-favoriting an artist deactivates that artist's catalog contributions.
-- Deleting No Longer Wanted tracks is an explicit user action from the Songs list with a choice of local, remote, or both. It removes the file, its `.lrc`, the upload, and the track row.
+- Deleting No Longer Wanted tracks is an explicit user action from the Songs list with a choice of local, remote, or both. It removes the file, its `.lrc`, the upload, and the track row, through tombstones.
 - Albums are grouped by (album, album artist) from track metadata. Artists come from track credits: `channel:<id>` when YouTube Music gives a channel ID, else `name:<normalized>` as an Unidentified Artist. Artist images come from the catalog artist page and are cached in `userData`; Unidentified Artists get none.
+
+### Layout paths and collisions
+
+Paths come from the fixed layout, sanitized for macOS and Linux file names and NFC-normalized. Before any write or move, the inventory checks the target against every existing Managed File path compared case-insensitively. On collision with a different track, the album folder gets a deterministic suffix (` [<first 6 chars of the release ID>]`, or ` [<video ID>]` for Standalone Tracks) and the chosen path is stored on the file record so it stays stable.
 
 ### Data model (SQLite)
 
-- `tracks`: id, identity_key (unique, nullable until matched), title, artist_credits (JSON), album, album_artist, release_id, release_kind, track_number, track_total, disc_number, disc_total, date, year, duration_seconds, genre, isrc, mb_recording_id, language, lyrics_status, lyrics_source, cover_url, match (JSON, versioned), state, current_step, attempts, next_attempt_at, last_error, last_error_kind, completed_at, created_at, updated_at.
-- `contributions`: id, source_key (unique), kind, track_id (nullable), source_video_id, release_id, artist_id, liked_position, first_seen_at, active, raw (JSON: the source-side title and artist for display before matching).
-- `files`: track_id (unique), relative_path, size, mtime_ms, content_hash, tag_fields (JSON), lrc_hash, written_at.
-- `uploads`: track_id (unique), remote_path, content_hash, lrc_hash, tag_fields (JSON), uploaded_at.
+- `tracks`: id, identity_key (unique, nullable until matched), adopted (bool), title, artist_credits (JSON), album, album_artist, release_id, release_kind, track_number, track_total, disc_number, disc_total, date, year, duration_seconds, genre, isrc, mb_recording_id, language, lyrics_status, lyrics_source, lyrics_text, cover_url, cover_path (processed JPEG in `userData/covers/`, content-addressed), match (JSON, versioned), state, current_step, attempts, next_attempt_at, last_error, last_error_kind, completed_at, created_at, updated_at.
+- `contributions`: id, source_key (unique), kind, account_id (liked only), track_id (nullable), source_video_id, release_id, artist_id, liked_position, first_seen_at, active, raw (JSON: the source-side title and artist for display before matching).
+- `files`: track_id (unique), relative_path, size, mtime_ms, content_sha256, tag_fields (JSON), lrc_sha256, written_at, outside_edit (JSON: which of tags, artwork, audio, sidecar changed; null when clean).
+- `uploads`: track_id (unique), remote_path, hash_algo, content_hash, lrc_hash, remote_size, remote_mtime, tag_fields (JSON), verified_at, uploaded_at.
+- `source_snapshots`: source (liked account or catalog artist), status, started_at, completed_at, item_count, error.
+- `tombstones`: id, kind (local file, remote file), path, reason, created_at, done_at.
+- `track_history`: track_id, at, event (matched, re-keyed, refreshed, moved), detail (JSON).
 - `unmanaged_files`: relative_path, size, mtime_ms, seen_at.
 - `artists`: id (`channel:<id>` or `name:<normalized>`), name, image_path, favorite, favorited_at, catalog_checked_at.
 - `track_artists`: track_id, artist_id, position.
@@ -94,15 +108,40 @@ Each module below has a small interface and hides a lot. Names use `CONTEXT.md` 
 
 1. No Match, or a Refresh was requested: **match** (catalog, MusicBrainz, lyrics lookup).
 2. No Managed File, or the audio is missing: **acquire**.
-3. Managed File tag fields differ from the fields the Match implies: **retag** (no network).
+3. Managed File tag fields, embedded artwork, embedded lyrics, or the `.lrc` sidecar differ from what the Match, `lyrics_text`, and `cover_path` imply: **retag** (no network; also repairs a missing or wrong sidecar and artwork).
 4. Managed File path differs from the layout path: **move** (local rename, plus remote move if uploaded).
 5. Remote enabled and upload record missing, stale, or remote hash mismatch: **upload**.
 
+A file with an `outside_edit` record is paused: no retag, move, acquire, or upload runs for it until the user chooses "Rewrite" (restore the app's version) or "Keep and stop managing" (the file becomes Unmanaged) in the Song panel or the Needs Attention drawer.
+
 The Activity UI groups these into three visible stages: Matching (match), Downloading (acquire, retag, move), Uploading (upload). Progress is weighted 15/70/15 and uses real byte progress for downloads and uploads.
+
+### Crash safety
+
+Every mutating step is idempotent and follows the same pattern: do the side effect at a staged location, verify it, commit the record, then finish. On startup, before the worker runs, a recovery pass inspects leftovers.
+
+- **Acquire and retag**: work in `<folder>/.lms-staging/<trackId>.<step>.m4a` (same volume), write tags, fsync, `rename` onto the final path, then commit the file record. Recovery deletes staging files; a final file whose hash does not match its record is re-inspected like an Outside Edit only if the record says the app wrote it and the staging file is gone, otherwise the step simply re-runs.
+- **`.lrc`**: written to a staging name and renamed, after the audio.
+- **Local move**: preflight the destination with the collision rule, `rename`, commit. Recovery finds the file at either path by content hash.
+- **Upload**: `copyto` to the final remote path (rclone uploads to a temporary name and renames on backends that support it), verify, commit the upload record. Recovery lists the remote path: if the remote object matches the local file by hash or size, the record is written; otherwise the upload re-runs.
+- **Remote move**: `moveto`, then commit; recovery checks both paths.
+- **Delete**: write a tombstone first, delete, mark the tombstone done. Tombstones stay until every requested destination is confirmed gone.
+- SQLite runs in WAL mode; each step commits in its own transaction.
+
+Crash tests inject a failure after each side effect and before each commit, restart the reconciler, and assert the Library ends in the right state.
 
 ### Adoption of the existing library
 
-On first run with an empty database, the scanner reads every `.m4a` in the folder. Files with `LMS_TAG_SCHEMA_VERSION` become tracks with a Match rebuilt from tags (release ID, source and resolved video IDs, credits, MusicBrainz ID, lyrics status) and are marked done. Their contributions get linked on the first liked-songs check. Files whose path differs from the fixed layout (for example Standalone Tracks under `Unknown Album` with job-index track numbers) get a move step and a retag (album becomes the title, track 1/1). Everything else is an Unmanaged File. This path is tested on a copy of the real library before the PR is opened.
+On first run with an empty database, the inventory reads every `.m4a` in the folder.
+
+- Files with `LMS_TAG_SCHEMA_VERSION` become tracks with `adopted = true`, rebuilt only from facts in the tags: release ID and kind, source and resolved video IDs, title, credits, album fields, numbers, date, genre, ISRC, MusicBrainz recording ID. Embedded lyrics become `lyrics_text` (synced when a matching `.lrc` sidecar exists; the sidecar wins), embedded artwork becomes `cover_path`. The lyrics source is unknown and shown as such. They are marked done.
+- Identity for adopted files uses the resolved video ID with the release ID, matching the canonical rule.
+- Files whose `LMS_SOURCE_ORIGIN` is `favorite_artist_release` restore their primary credited artist (by channel ID) as a Favorite Artist, so Favorite Artist choices come back without the user redoing them.
+- Contributions link on the first liked-songs check and first catalog checks. Adopted tracks that no source claims after every source's first complete check become No Longer Wanted, which the user can review; nothing is deleted.
+- Files whose path differs from the fixed layout (for example Standalone Tracks under `Unknown Album` with job-index track numbers) get a retag (album becomes the title, track 1/1) and a move, local and remote.
+- Everything else is an Unmanaged File.
+
+Adoption is tested on a copy of part of the real library before the PR is opened. The PR description lists what the first run on the real folder will change.
 
 ## UI
 
@@ -127,28 +166,28 @@ Defined once in `src/shared/ipc.ts` with zod. Invokes: `session.*`, `library.que
 
 - `pnpm tools:fetch` downloads the bgutil plugin and provider (checksummed) and rclone for the host architecture. yt-dlp is not bundled; the app downloads it on first use and verifies the release's SHA-256 sums file.
 - electron-builder: real `appId` (`com.louismollick.likedmusicsyncer`), hardened runtime, notarization wired to environment variables (skipped when absent), `extraResources` for rclone and bgutil. No `py/`.
-- GitHub Actions on push and pull request, `ubuntu-latest`: pnpm install, biome check, typecheck (node, web, tests), vitest. Tests needing ffmpeg use `ffmpeg-static`; tests needing rclone download it in a setup step.
+- GitHub Actions on push and pull request. Job 1 on `ubuntu-latest`: pnpm install, biome check, typecheck (node, web, tests), vitest. Tests needing ffmpeg use `ffmpeg-static`; tests needing rclone download it in a setup step. Job 2 on `macos-latest` (arm64): build the unpacked app with electron-builder and run it with `--smoke-test`, which opens the database, round-trips tags on a fixture, runs the bundled rclone and ffmpeg, and exits non-zero on failure. Signing and notarization need the owner's credentials, so the signed install on both architectures is a manual release gate, not CI.
 - Delete: `py/`, `mypy.ini`, ExifTool and uv references, unused npm deps (`googleapis`, `ytmusic-api`, `musicbrainz-api`), ESLint and Prettier leftovers, `reports/`.
+
+## Spike results (milestone 0, done)
+
+- **YouTube Music**: youtubei.js 18.1 cannot parse the current liked-songs page (it returns 2 items and throws type errors). A plain `fetch` Innertube client with SAPISIDHASH works: the owner's account is `X-Goog-AuthUser: 1`, and liked songs paged through 14 continuations to 1,355 items. Timed lyrics work with the `ANDROID_MUSIC` client only when sent without cookies. ytmusicapi's `get_watch_playlist` currently crashes (`KeyError: 'endpoint'`), so the ported `next` parser must be defensive.
+- Remaining spikes (yt-dlp with Electron-as-Node, node-taglib-sharp on real v5 files, rclone hash listings on local, SFTP read-only, and a no-hash backend) run at the start of milestone 1 and their results are added here.
 
 ## Milestones
 
 Each milestone ends with passing tests. Straightforward backend modules can be delegated to Codex with a precise interface spec and fixtures; the UI is built here.
 
-0. **Spikes** (half a day each, keep notes in the PR description):
-   - youtubei.js with cookies from the Electron session: liked songs paging past 5000? (ytmusicapi caps at the requested limit), album, artist albums with continuation, timed lyrics via Android Music client.
-   - yt-dlp standalone binary with `--js-runtimes node:<electron binary>` and `ELECTRON_RUN_AS_NODE=1`, plus the bgutil plugin, on a real video. Fallback: bundle Deno.
-   - node-taglib-sharp: read a real v5 file from the library copy, round-trip every LMS freeform atom, raw `©day`, cover, lyrics.
-   - `rclone lsjson --hash` on the local backend and on SFTP (read-only listing of a scratch path only).
-1. **Foundation**: new `src/main` skeleton, Drizzle schema and first migration, settings with safeStorage, zod IPC, window lifecycle, CI workflow.
-2. **Session and catalog**: sign-in window, dev cookie import, account probing; catalog adapter and parsers with fixtures.
-3. **Tags and acquisition**: tag schema module, yt-dlp manager, download, convert, cover crop, atomic placement.
-4. **Matcher and lyrics**: port resolution rules and golden tests; lyrics finder with the three providers.
-5. **Library store and adoption**: scanner, Managed vs Unmanaged, Outside Edit detection, adoption of v5 files, layout moves.
-6. **Remote**: rclone wrapper, upload records, Remote State, fallback read.
-7. **Reconciler**: step derivation, executor, retries, Activity events, 30-minute check, Refresh scopes, delete.
+1. **Foundation and remaining spikes**: new `src/main` skeleton, Drizzle schema and first migration, settings with safeStorage, zod IPC, window lifecycle, request scheduler, CI workflow.
+2. **Thin vertical slice**: sign in (dev cookie import), fetch liked songs, match one track, acquire and tag it, restart and adopt it back from tags, upload it to a local rclone remote, all driven by a minimal reconciler. Later milestones widen this path instead of building modules in isolation.
+3. **Catalog and matcher breadth**: every parser with fixtures, full resolution rules and golden tests, catalogs for Favorite Artists, snapshots.
+4. **Lyrics and artwork**: lyrics finder with three providers, language detection, cover processing, retag repair of sidecars and artwork.
+5. **Inventory and adoption**: Unmanaged Files, Outside Edits, adoption of v5 files including favorites, layout moves with collision handling.
+6. **Remote breadth**: hash algorithm detection, Remote State with field diffs, full check, fallback read.
+7. **Reconciler breadth**: every step, crash recovery, retries, re-keying and merges, account switching, Refresh scopes, deletes, 30-minute check.
 8. **Renderer**: new UI kit and every screen from wireframe v4, driven by real IPC.
-9. **Cut over**: delete old code and Python, update README and docs (`docs/local-library-index.md` rewritten for the new scanner, `docs/browser-authentication.md` replaced with in-app sign-in notes), close PR #5.
-10. **Verification**: run the real app with the dev cookie import against a copy of part of the library and a local rclone remote; screenshot every screen and compare with wireframe v4; exercise a new like arriving, a failed upload, retry, refresh, and adoption moves.
+9. **Cut over**: delete old code and Python, update README and docs (`docs/local-library-index.md` rewritten for the new inventory, `docs/browser-authentication.md` replaced with in-app sign-in notes), close PR #5.
+10. **Verification**: run the real app with the dev cookie import against a copy of part of the library and a local rclone remote; screenshot every screen and compare with wireframe v4; exercise a new like arriving, a failed upload, retry, refresh, an Outside Edit, adoption moves, and a crash mid-step.
 
 ## Testing strategy
 
@@ -156,12 +195,13 @@ Each milestone ends with passing tests. Straightforward backend modules can be d
 - Recorded fixtures for catalog parsing; golden cases for the matcher and lyrics classification captured from the Python code before deletion.
 - Real files for tags and acquisition (ffmpeg-generated audio, no network).
 - rclone local backend for remote.
-- Reconciler tests with fakes covering: new like end to end, merge of liked and catalog contributions, retry and backoff to Needs Attention, crash mid-step then resume, Refresh, No Longer Wanted, Outside Edit, layout move with remote move.
+- Reconciler tests with fakes covering: new like end to end, merge of liked and catalog contributions, re-keying a Standalone Track onto a Release with and without an existing target, account switching both ways with overlapping likes, a partial liked-songs check that must not deactivate anything, retry and backoff to Needs Attention, crash injection at every side-effect boundary, Refresh, No Longer Wanted gating, Outside Edit pause and Rewrite, layout moves with collisions and remote moves.
+- Tag schema tests cover partial `©day` values, unknown atom preservation, artwork and lyrics replacement, and reading real v5 files.
 - Renderer: component tests for the filter URL state and the Activity scroll rules; manual screenshot verification for visuals.
 
 ## Risks
 
-- **youtubei.js parity**: response parsing breaks when YouTube changes. Mitigation: ported ytmusicapi parsers with fixtures, and the catalog module is the only place that knows response shapes.
+- **YouTube Music response changes**: parsing breaks when YouTube changes pages. Mitigation: defensive ported parsers with fixtures, and the catalog module is the only place that knows response shapes.
 - **Google blocking in-app sign-in**: no fallback by design (ADR 0004). If it happens, reopen that ADR.
 - **yt-dlp JS runtime**: Electron-as-Node may not satisfy EJS. Fallback is bundling Deno.
 - **Silent matching drift**: golden tests from the Python code.
