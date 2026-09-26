@@ -147,7 +147,8 @@ export function readTags(path: string): ReadResult {
     let mbRecordingId: string | null = null
     if (apple) {
       const version = freeform(apple, LMS_KEYS.schemaVersion)
-      lms.schemaVersion = version && /^\d+$/.test(version) ? Number(version) : null
+      lms.schemaVersion =
+        version && /^\d+$/.test(version) ? Number(version) : null
       lms.sourceVideoId = freeform(apple, LMS_KEYS.sourceVideoId)
       lms.resolvedVideoId = freeform(apple, LMS_KEYS.resolvedVideoId)
       lms.spotifyTrackId = freeform(apple, LMS_KEYS.spotifyTrackId)
@@ -162,7 +163,8 @@ export function readTags(path: string): ReadResult {
       isrc = freeform(apple, 'ISRC')
       mbRecordingId = freeform(apple, 'MusicBrainz Track Id')
     }
-    if (!lms.sourceVideoId) lms.sourceVideoId = legacyVideoId(blank(tag.comment))
+    if (!lms.sourceVideoId)
+      lms.sourceVideoId = legacyVideoId(blank(tag.comment))
     if (!lms.resolvedVideoId) lms.resolvedVideoId = lms.sourceVideoId
     const props = file.properties
     return {
@@ -270,7 +272,9 @@ export function writeTags(
 /** Names of fields whose values differ. Used for Remote State and Outside Edit detail. */
 export function fieldDiff(a: TagFields, b: TagFields): string[] {
   const diffs: string[] = []
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)].filter((key) => key !== 'lms'))
+  const keys = new Set(
+    [...Object.keys(a), ...Object.keys(b)].filter((key) => key !== 'lms')
+  )
   for (const key of keys) {
     const left = (a as unknown as Record<string, unknown>)[key] ?? null
     const right = (b as unknown as Record<string, unknown>)[key] ?? null
@@ -279,7 +283,8 @@ export function fieldDiff(a: TagFields, b: TagFields): string[] {
   const lmsA = (a.lms ?? {}) as unknown as Record<string, unknown>
   const lmsB = (b.lms ?? {}) as unknown as Record<string, unknown>
   for (const key of new Set([...Object.keys(lmsA), ...Object.keys(lmsB)])) {
-    if (JSON.stringify(lmsA[key] ?? null) !== JSON.stringify(lmsB[key] ?? null)) diffs.push(`lms.${key}`)
+    if (JSON.stringify(lmsA[key] ?? null) !== JSON.stringify(lmsB[key] ?? null))
+      diffs.push(`lms.${key}`)
   }
   return diffs
 }

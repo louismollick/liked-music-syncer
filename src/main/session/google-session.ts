@@ -1,14 +1,32 @@
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import Database from 'better-sqlite3'
-import { BrowserWindow, type Session, session as electronSession } from 'electron'
+import {
+  BrowserWindow,
+  session as electronSession,
+  type Session,
+} from 'electron'
+import type { AccountView, SessionView } from '../../shared/ipc'
 import { createInnertubeTransport } from '../catalog/transport'
 import type { InnertubeTransport } from '../catalog/types'
 import type { HttpClient } from '../net/http'
 import type { SettingsStore } from '../settings'
-import type { AccountView, SessionView } from '../../shared/ipc'
-import { cookieHeader, parseAccountMenu, sapisidFrom, sapisidHash, type SimpleCookie, YTM_ORIGIN } from './headers'
+import {
+  cookieHeader,
+  parseAccountMenu,
+  type SimpleCookie,
+  sapisidFrom,
+  sapisidHash,
+  YTM_ORIGIN,
+} from './headers'
 
 const PARTITION = 'persist:ytmusic'
 const MAX_SLOTS = 5
@@ -40,7 +58,10 @@ export class GoogleSession {
     }
   ) {
     this.partition = electronSession.fromPartition(PARTITION)
-    this.transport = createInnertubeTransport({ http: options.http, auth: { headers: () => this.headers() } })
+    this.transport = createInnertubeTransport({
+      http: options.http,
+      auth: { headers: () => this.headers() },
+    })
   }
 
   generation(): number {
@@ -54,7 +75,9 @@ export class GoogleSession {
 
   private selected(): SlotAccount | undefined {
     const wanted = this.options.settings.get().selectedAccountId
-    return this.accounts.find((account) => account.id === wanted) ?? this.accounts[0]
+    return (
+      this.accounts.find((account) => account.id === wanted) ?? this.accounts[0]
+    )
   }
 
   view(): SessionView {
@@ -68,13 +91,20 @@ export class GoogleSession {
 
   private async cookies(): Promise<SimpleCookie[]> {
     const cookies = await this.partition.cookies.get({ url: YTM_ORIGIN })
-    return cookies.map((cookie) => ({ name: cookie.name, value: cookie.value, domain: cookie.domain }))
+    return cookies.map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+    }))
   }
 
   private async headersForSlot(slot: number): Promise<Record<string, string>> {
     const cookies = await this.cookies()
     const sapisid = sapisidFrom(cookies)
-    if (!sapisid) throw Object.assign(new Error('Not signed in to YouTube Music'), { kind: 'permanent' })
+    if (!sapisid)
+      throw Object.assign(new Error('Not signed in to YouTube Music'), {
+        kind: 'permanent',
+      })
     return {
       cookie: cookieHeader(cookies),
       authorization: sapisidHash(sapisid, Math.floor(Date.now() / 1000)),
@@ -87,7 +117,10 @@ export class GoogleSession {
   }
 
   async init(): Promise<void> {
-    if (!this.options.isPackaged && process.env.LMS_DEV_IMPORT_COOKIES === 'zen') {
+    if (
+      !this.options.isPackaged &&
+      process.env.LMS_DEV_IMPORT_COOKIES === 'zen'
+    ) {
       try {
         const imported = await this.importZenCookies()
         console.log(`[session] dev: imported ${imported} cookies from Zen`)
@@ -112,20 +145,42 @@ export class GoogleSession {
       }
       const found: SlotAccount[] = []
       for (let slot = 0; slot < MAX_SLOTS; slot += 1) {
-        const transport = createInnertubeTransport({ http: this.options.http, auth: { headers: () => this.headersForSlot(slot) } })
+        const transport = createInnertubeTransport({
+          http: this.options.http,
+          auth: { headers: () => this.headersForSlot(slot) },
+        })
         let parsed: ReturnType<typeof parseAccountMenu> = null
         try {
-          parsed = parseAccountMenu(await transport.call({ endpoint: 'account/account_menu', body: {}, authenticated: true }))
+          parsed = parseAccountMenu(
+            await transport.call({
+              endpoint: 'account/account_menu',
+              body: {},
+              authenticated: true,
+            })
+          )
         } catch {
           break
         }
         if (!parsed) break
-        if (!parsed.channelId || found.some((account) => account.id === parsed!.channelId)) continue
-        found.push({ id: parsed.channelId, name: parsed.name, handle: parsed.handle, photoUrl: parsed.photoUrl, likedCount: null, slot })
+        if (
+          !parsed.channelId ||
+          found.some((account) => account.id === parsed!.channelId)
+        )
+          continue
+        found.push({
+          id: parsed.channelId,
+          name: parsed.name,
+          handle: parsed.handle,
+          photoUrl: parsed.photoUrl,
+          likedCount: null,
+          slot,
+        })
       }
       this.accounts = found
       this.state = found.length ? 'signed_in' : 'error'
-      this.message = found.length ? null : 'Signed in, but no YouTube Music account with a channel was found.'
+      this.message = found.length
+        ? null
+        : 'Signed in, but no YouTube Music account with a channel was found.'
       const current = this.options.settings.get().selectedAccountId
       if (found.length && !found.some((account) => account.id === current)) {
         this.options.settings.update({ selectedAccountId: found[0].id })
@@ -145,11 +200,15 @@ export class GoogleSession {
 
   setLikedCount(accountId: string, count: number | null): void {
     const account = this.accounts.find((a) => a.id === accountId)
-    if (account) account.likedCount = count
+    if (account && account.likedCount !== count) {
+      account.likedCount = count
+      this.emit()
+    }
   }
 
   async selectAccount(id: string): Promise<SessionView> {
-    if (!this.accounts.some((account) => account.id === id)) throw new Error('Unknown account')
+    if (!this.accounts.some((account) => account.id === id))
+      throw new Error('Unknown account')
     this.options.settings.update({ selectedAccountId: id })
     this.gen += 1
     return this.emit()
@@ -166,14 +225,22 @@ export class GoogleSession {
         height: 720,
         title: 'Sign in to YouTube Music',
         backgroundColor: '#0b0b0c',
-        webPreferences: { partition: PARTITION, contextIsolation: true, sandbox: true },
+        webPreferences: {
+          partition: PARTITION,
+          contextIsolation: true,
+          sandbox: true,
+        },
       })
       this.signInWindow = win
       const finish = async () => {
         if (!win.isDestroyed()) win.close()
       }
       win.webContents.on('did-navigate', async (_event, url) => {
-        if (new URL(url).host === 'music.youtube.com' && sapisidFrom(await this.cookies())) void finish()
+        if (
+          new URL(url).host === 'music.youtube.com' &&
+          sapisidFrom(await this.cookies())
+        )
+          void finish()
       })
       win.on('closed', async () => {
         this.signInWindow = null
@@ -196,7 +263,13 @@ export class GoogleSession {
 
   /** Dev only: copies YouTube/Google cookies from the newest Zen profile into the partition. */
   private async importZenCookies(): Promise<number> {
-    const profilesDir = path.join(homedir(), 'Library', 'Application Support', 'zen', 'Profiles')
+    const profilesDir = path.join(
+      homedir(),
+      'Library',
+      'Application Support',
+      'zen',
+      'Profiles'
+    )
     const profiles = readdirSync(profilesDir)
       .map((name) => path.join(profilesDir, name, 'cookies.sqlite'))
       .filter((file) => existsSync(file))
@@ -206,14 +279,25 @@ export class GoogleSession {
     try {
       const copy = path.join(dir, 'cookies.sqlite')
       copyFileSync(profiles[0], copy)
-      for (const ext of ['-wal', '-shm']) if (existsSync(profiles[0] + ext)) copyFileSync(profiles[0] + ext, copy + ext)
+      for (const ext of ['-wal', '-shm'])
+        if (existsSync(profiles[0] + ext))
+          copyFileSync(profiles[0] + ext, copy + ext)
       const db = new Database(copy, { readonly: true })
       const rows = db
         .prepare(
           `SELECT name, value, host, path, expiry, isSecure, isHttpOnly, sameSite FROM moz_cookies
            WHERE host LIKE '%youtube.com' OR host LIKE '%google.com'`
         )
-        .all() as Array<{ name: string; value: string; host: string; path: string; expiry: number; isSecure: number; isHttpOnly: number; sameSite: number }>
+        .all() as Array<{
+        name: string
+        value: string
+        host: string
+        path: string
+        expiry: number
+        isSecure: number
+        isHttpOnly: number
+        sameSite: number
+      }>
       db.close()
       let count = 0
       for (const row of rows) {
@@ -228,8 +312,14 @@ export class GoogleSession {
             path: row.path || '/',
             secure: Boolean(row.isSecure),
             httpOnly: Boolean(row.isHttpOnly),
-            expirationDate: row.expiry > 1e11 ? Math.floor(row.expiry / 1000) : row.expiry,
-            sameSite: row.sameSite === 2 ? 'strict' : row.sameSite === 1 ? 'lax' : 'no_restriction',
+            expirationDate:
+              row.expiry > 1e11 ? Math.floor(row.expiry / 1000) : row.expiry,
+            sameSite:
+              row.sameSite === 2
+                ? 'strict'
+                : row.sameSite === 1
+                  ? 'lax'
+                  : 'no_restriction',
           })
           count += 1
         } catch {

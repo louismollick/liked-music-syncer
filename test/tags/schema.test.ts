@@ -63,7 +63,11 @@ describe('tag schema', () => {
     const file = makeM4a(path.join(tempDir(), 'b.m4a'))
     writeTags(file, sampleFields({ date: '2019' }), null)
     expect(readTags(file).fields.date).toBe('2019')
-    writeTags(file, sampleFields({ date: '2019-11-02', coverSha256: null }), null)
+    writeTags(
+      file,
+      sampleFields({ date: '2019-11-02', coverSha256: null }),
+      null
+    )
     const read = readTags(file)
     expect(read.fields.date).toBe('2019-11-02')
     expect(read.cover).toBeNull()
@@ -74,7 +78,12 @@ describe('tag schema', () => {
     writeTags(file, sampleFields(), TINY_JPEG)
     writeTags(
       file,
-      sampleFields({ isrc: null, lyrics: null, genre: null, coverSha256: null }),
+      sampleFields({
+        isrc: null,
+        lyrics: null,
+        genre: null,
+        coverSha256: null,
+      }),
       null
     )
     const read = readTags(file)

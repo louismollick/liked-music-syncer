@@ -9,7 +9,12 @@ import type {
 import { CatalogShapeError } from '../catalog/types'
 import { joinArtistNames } from '../domain'
 import type { Db } from '../library/db'
-import { artists, contributions, sourceSnapshots, tracks } from '../library/schema'
+import {
+  artists,
+  contributions,
+  sourceSnapshots,
+  tracks,
+} from '../library/schema'
 import { releaseIdentityKey } from '../match/types'
 
 /**
@@ -42,7 +47,11 @@ export function likedSourceKey(accountId: string, videoId: string): string {
   return `ytm-liked:${accountId}:${videoId}`
 }
 
-export function catalogSourceKey(artistId: string, releaseId: string, videoId: string): string {
+export function catalogSourceKey(
+  artistId: string,
+  releaseId: string,
+  videoId: string
+): string {
   return `catalog:${artistId}:${releaseId}:${videoId}`
 }
 
@@ -64,9 +73,16 @@ function markSnapshot(
   patch: Partial<typeof sourceSnapshots.$inferInsert>,
   startedAt: string
 ) {
-  const existing = db.select().from(sourceSnapshots).where(eq(sourceSnapshots.source, source)).get()
+  const existing = db
+    .select()
+    .from(sourceSnapshots)
+    .where(eq(sourceSnapshots.source, source))
+    .get()
   if (existing) {
-    db.update(sourceSnapshots).set(patch).where(eq(sourceSnapshots.source, source)).run()
+    db.update(sourceSnapshots)
+      .set(patch)
+      .where(eq(sourceSnapshots.source, source))
+      .run()
   } else {
     db.insert(sourceSnapshots)
       .values({ source, status: 'running', startedAt, ...patch })
@@ -86,7 +102,11 @@ export function validateLikedSnapshot(
   }
   const confirmedByHeader =
     declaredCount !== null && songs.length >= Math.floor(declaredCount * 0.5)
-  if (previousActive >= 20 && songs.length < previousActive * 0.5 && !confirmedByHeader) {
+  if (
+    previousActive >= 20 &&
+    songs.length < previousActive * 0.5 &&
+    !confirmedByHeader
+  ) {
     throw new SuspiciousSnapshotError(
       `Liked songs dropped from ${previousActive} to ${songs.length}; keeping the previous list.`
     )
@@ -113,15 +133,28 @@ export async function checkLikedSongs(options: {
   const now = options.now ?? (() => new Date())
   const source = likedSnapshotSource(accountId)
   const startedAt = nowIso(now)
-  markSnapshot(db, source, { status: 'running', startedAt, error: null }, startedAt)
+  markSnapshot(
+    db,
+    source,
+    { status: 'running', startedAt, error: null },
+    startedAt
+  )
   try {
     const result = await options.catalog.likedSongs(options.signal)
-    if (!options.stillCurrent()) throw new Error('Account changed during the liked-songs check')
-    const previousActive = db
-      .select({ count: sql<number>`count(*)` })
-      .from(contributions)
-      .where(and(eq(contributions.kind, 'liked'), eq(contributions.accountId, accountId), eq(contributions.active, true)))
-      .get()?.count ?? 0
+    if (!options.stillCurrent())
+      throw new Error('Account changed during the liked-songs check')
+    const previousActive =
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(contributions)
+        .where(
+          and(
+            eq(contributions.kind, 'liked'),
+            eq(contributions.accountId, accountId),
+            eq(contributions.active, true)
+          )
+        )
+        .get()?.count ?? 0
     const songs = result.tracks.filter((song) => song.videoId)
     validateLikedSnapshot(songs, result.declaredCount, previousActive)
 
@@ -135,7 +168,11 @@ export async function checkLikedSongs(options: {
         if (seen.has(key)) continue
         seen.add(key)
         const raw: LikedRaw = { kind: 'liked', song }
-        const existing = tx.select().from(contributions).where(eq(contributions.sourceKey, key)).get()
+        const existing = tx
+          .select()
+          .from(contributions)
+          .where(eq(contributions.sourceKey, key))
+          .get()
         if (existing) {
           tx.update(contributions)
             .set({
@@ -168,14 +205,21 @@ export async function checkLikedSongs(options: {
       const stale = tx
         .select({ id: contributions.id, sourceKey: contributions.sourceKey })
         .from(contributions)
-        .where(and(eq(contributions.kind, 'liked'), eq(contributions.active, true)))
+        .where(
+          and(eq(contributions.kind, 'liked'), eq(contributions.active, true))
+        )
         .all()
         .filter((row) => !seen.has(row.sourceKey))
       if (stale.length) {
         removed = stale.length
         tx.update(contributions)
           .set({ active: false })
-          .where(inArray(contributions.id, stale.map((row) => row.id)))
+          .where(
+            inArray(
+              contributions.id,
+              stale.map((row) => row.id)
+            )
+          )
           .run()
       }
       markSnapshot(
@@ -194,7 +238,12 @@ export async function checkLikedSongs(options: {
     return { total: songs.length, added, removed }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    markSnapshot(db, source, { status: 'failed', completedAt: nowIso(now), error: message }, startedAt)
+    markSnapshot(
+      db,
+      source,
+      { status: 'failed', completedAt: nowIso(now), error: message },
+      startedAt
+    )
     throw error
   }
 }
@@ -218,18 +267,27 @@ export async function checkArtistCatalog(options: {
   const now = options.now ?? (() => new Date())
   const source = catalogSnapshotSource(artistId)
   const startedAt = nowIso(now)
-  markSnapshot(db, source, { status: 'running', startedAt, error: null }, startedAt)
+  markSnapshot(
+    db,
+    source,
+    { status: 'running', startedAt, error: null },
+    startedAt
+  )
   try {
-    const refs = (await catalog.artistReleases(options.channelId, options.signal)).filter((ref) =>
-      isMainCatalogRelease(ref.kindLabel)
-    )
+    const refs = (
+      await catalog.artistReleases(options.channelId, options.signal)
+    ).filter((ref) => isMainCatalogRelease(ref.kindLabel))
     if (refs.length === 0) {
-      throw new CatalogShapeError('The artist page listed no albums or singles.')
+      throw new CatalogShapeError(
+        'The artist page listed no albums or singles.'
+      )
     }
     const staged: CatalogRaw[] = []
     for (const ref of refs) {
       const release = await catalog.release(ref.browseId, options.signal)
-      const available = release.tracks.filter((track) => track.videoId && track.isAvailable)
+      const available = release.tracks.filter(
+        (track) => track.videoId && track.isAvailable
+      )
       if (release.tracks.length === 0) {
         throw new CatalogShapeError(`Release ${ref.title} returned no tracks.`)
       }
@@ -242,13 +300,25 @@ export async function checkArtistCatalog(options: {
     db.transaction((tx) => {
       const seen = new Set<string>()
       for (const raw of staged) {
-        const key = catalogSourceKey(artistId, raw.release.browseId, raw.track.videoId)
+        const key = catalogSourceKey(
+          artistId,
+          raw.release.browseId,
+          raw.track.videoId
+        )
         if (seen.has(key)) continue
         seen.add(key)
-        const existing = tx.select().from(contributions).where(eq(contributions.sourceKey, key)).get()
+        const existing = tx
+          .select()
+          .from(contributions)
+          .where(eq(contributions.sourceKey, key))
+          .get()
         if (existing) {
           tx.update(contributions)
-            .set({ lastSeenAt: committedAt, active: true, raw: JSON.stringify(raw) })
+            .set({
+              lastSeenAt: committedAt,
+              active: true,
+              raw: JSON.stringify(raw),
+            })
             .where(eq(contributions.id, existing.id))
             .run()
         } else {
@@ -271,27 +341,52 @@ export async function checkArtistCatalog(options: {
       const stale = tx
         .select({ id: contributions.id, sourceKey: contributions.sourceKey })
         .from(contributions)
-        .where(and(eq(contributions.kind, 'catalog'), eq(contributions.artistId, artistId), eq(contributions.active, true)))
+        .where(
+          and(
+            eq(contributions.kind, 'catalog'),
+            eq(contributions.artistId, artistId),
+            eq(contributions.active, true)
+          )
+        )
         .all()
         .filter((row) => !seen.has(row.sourceKey))
       if (stale.length) {
         tx.update(contributions)
           .set({ active: false })
-          .where(inArray(contributions.id, stale.map((row) => row.id)))
+          .where(
+            inArray(
+              contributions.id,
+              stale.map((row) => row.id)
+            )
+          )
           .run()
       }
-      tx.update(artists).set({ catalogCheckedAt: committedAt }).where(eq(artists.id, artistId)).run()
+      tx.update(artists)
+        .set({ catalogCheckedAt: committedAt })
+        .where(eq(artists.id, artistId))
+        .run()
       markSnapshot(
         tx as unknown as Db,
         source,
-        { status: 'ok', completedAt: committedAt, itemCount: seen.size, error: null, lastSuccessAt: committedAt },
+        {
+          status: 'ok',
+          completedAt: committedAt,
+          itemCount: seen.size,
+          error: null,
+          lastSuccessAt: committedAt,
+        },
         startedAt
       )
     })
     return { total: staged.length }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    markSnapshot(db, source, { status: 'failed', completedAt: nowIso(now), error: message }, startedAt)
+    markSnapshot(
+      db,
+      source,
+      { status: 'failed', completedAt: nowIso(now), error: message },
+      startedAt
+    )
     throw error
   }
 }
@@ -300,7 +395,12 @@ export async function checkArtistCatalog(options: {
 export function deactivateArtistCatalog(db: Db, artistId: string): void {
   db.update(contributions)
     .set({ active: false })
-    .where(and(eq(contributions.kind, 'catalog'), eq(contributions.artistId, artistId)))
+    .where(
+      and(
+        eq(contributions.kind, 'catalog'),
+        eq(contributions.artistId, artistId)
+      )
+    )
     .run()
 }
 
@@ -309,7 +409,10 @@ export function deactivateArtistCatalog(db: Db, artistId: string): void {
  * identity; liked contributions get a provisional track (no identity key)
  * that the match step re-keys or merges.
  */
-export function linkContributions(db: Db, now: () => Date = () => new Date()): string[] {
+export function linkContributions(
+  db: Db,
+  now: () => Date = () => new Date()
+): string[] {
   const created: string[] = []
   const at = nowIso(now)
   db.transaction((tx) => {
@@ -322,23 +425,41 @@ export function linkContributions(db: Db, now: () => Date = () => new Date()): s
       const raw = JSON.parse(row.raw) as LikedRaw | CatalogRaw
       if (raw.kind === 'catalog') {
         const key = releaseIdentityKey(raw.release.browseId, raw.track.videoId)
-        const existing = tx.select({ id: tracks.id }).from(tracks).where(eq(tracks.identityKey, key)).get()
+        const existing = tx
+          .select({ id: tracks.id })
+          .from(tracks)
+          .where(eq(tracks.identityKey, key))
+          .get()
         const adopted = existing
           ? null
           : tx
               .select({ id: tracks.id })
               .from(tracks)
-              .where(and(eq(tracks.adopted, true), eq(tracks.releaseId, raw.release.browseId), like(tracks.identityKey, `adopted:%:${raw.track.videoId}`)))
+              .where(
+                and(
+                  eq(tracks.adopted, true),
+                  eq(tracks.releaseId, raw.release.browseId),
+                  like(tracks.identityKey, `adopted:%:${raw.track.videoId}`)
+                )
+              )
               .get()
         const targetId = existing?.id ?? adopted?.id
         if (targetId) {
           if (adopted) {
             tx.update(tracks)
-              .set({ identityKey: key, adopted: false, refreshRequested: true, updatedAt: at })
+              .set({
+                identityKey: key,
+                adopted: false,
+                refreshRequested: true,
+                updatedAt: at,
+              })
               .where(eq(tracks.id, adopted.id))
               .run()
           }
-          tx.update(contributions).set({ trackId: targetId }).where(eq(contributions.id, row.id)).run()
+          tx.update(contributions)
+            .set({ trackId: targetId })
+            .where(eq(contributions.id, row.id))
+            .run()
           continue
         }
         const id = randomUUID()
@@ -350,7 +471,9 @@ export function linkContributions(db: Db, now: () => Date = () => new Date()): s
             artistCredits: JSON.stringify(raw.track.artists),
             artist: joinArtistNames(raw.track.artists),
             album: raw.release.title,
-            albumArtist: joinArtistNames(raw.release.artists) || joinArtistNames(raw.track.artists),
+            albumArtist:
+              joinArtistNames(raw.release.artists) ||
+              joinArtistNames(raw.track.artists),
             releaseId: raw.release.browseId,
             trackNumber: raw.track.trackNumber,
             durationSeconds: raw.track.durationSeconds,
@@ -361,7 +484,10 @@ export function linkContributions(db: Db, now: () => Date = () => new Date()): s
             updatedAt: at,
           })
           .run()
-        tx.update(contributions).set({ trackId: id }).where(eq(contributions.id, row.id)).run()
+        tx.update(contributions)
+          .set({ trackId: id })
+          .where(eq(contributions.id, row.id))
+          .run()
         created.push(id)
       } else {
         const song = raw.song
@@ -382,7 +508,10 @@ export function linkContributions(db: Db, now: () => Date = () => new Date()): s
             updatedAt: at,
           })
           .run()
-        tx.update(contributions).set({ trackId: id }).where(eq(contributions.id, row.id)).run()
+        tx.update(contributions)
+          .set({ trackId: id })
+          .where(eq(contributions.id, row.id))
+          .run()
         created.push(id)
       }
     }
@@ -416,7 +545,8 @@ export function updateWantedStates(
     .where(inArray(sourceSnapshots.source, required))
     .all()
     .filter((row) => row.lastSuccessAt)
-  if (withSuccess.length < required.length || done.length < required.length) return
+  if (withSuccess.length < required.length || done.length < required.length)
+    return
   db.transaction((tx) => {
     tx.run(sql`
       UPDATE tracks SET state = 'no_longer_wanted', updated_at = ${new Date().toISOString()}

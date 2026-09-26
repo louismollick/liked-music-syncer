@@ -1,46 +1,56 @@
-# Local library inventory
+# Library inventory and remote mirror
 
-The configured output directory is the authority for local file existence and
-paths. SQLite stores the last successfully reconciled inventory so the renderer
-can open without waiting for a filesystem walk.
+This note records how the app keeps its database, the output folder, and the
+remote in agreement, and why. The plan in `docs/plans/overhaul.md` has the full
+design; this is the part an operator or a future contributor needs.
 
-`LibraryService.reconcileLocalLibrary()` is the only entry point that refreshes
-the local inventory. Startup and file-producing jobs call it in the background.
-Operations that read local paths await it before building their work.
+## The folder is app-owned
 
-Each pass asks the Python worker for a complete snapshot of `.m4a` files and
-their same-stem `.lrc` sidecars. The main process applies the snapshot inside a
-SQLite savepoint. A walk or database failure rolls back the pass and keeps the
-previous inventory available for browsing. It does not start an automatic retry
-loop.
+Only files the app created belong to the Library. The app recognises them by
+their `LMS_*` freeform MP4 atoms. Anything else in the folder is an Unmanaged
+File: it is listed (Songs → Unmanaged) and never merged into the Library. There
+is deliberately no "guess the identity of a foreign file" logic.
 
-The file inventory records two content observations. `tag_fingerprint` is a
-SHA-256 digest of metadata owned by Liked Music Syncer: the standard fields the
-tag writer manages, LMS identity and provenance fields, embedded lyrics, and
-embedded artwork. It deliberately excludes comments, ratings, play counts, and
-unknown player-specific fields. Those fields may change without authorizing a
-remote overwrite. `sidecar_sha256` records the bytes of the same-stem `.lrc`
-file independently so sidecar drift can be repaired without copying the audio
-file.
+If the database is lost, the app rebuilds it from those tags on the next start
+(adoption). Adoption reconstructs only facts the tags contain, keeps each
+file's identity provisional (`adopted:…`) until a liked song or catalog track
+claims it, and never re-downloads a file whose audio already came from the
+right video. Tracks only become No Longer Wanted after every configured source
+has completed a full check since the database was created, so a fresh database
+cannot mark the whole library unwanted.
 
-Managed files also store ordered Artist Credits with their trusted YouTube
-Music channel IDs. A later database rebuild can therefore keep same-name
-Artists separate and restore collaboration relationships without searching by
-artist name. Files without trusted IDs remain browseable as Unidentified
-Artists, but they do not receive remote artist images.
+## Every write is journalled
 
-Remote reconciliation computes both observations from the files currently on
-the remote server. It never trusts a fingerprint stored inside an audio file.
-An owned-metadata difference replaces the remote `.m4a`; an `.lrc` difference
-copies only the local sidecar. A remote sidecar with no local counterpart is
-left in place because removing it is destructive.
+Audio and `.lrc` files are written in `<folder>/.lms-staging/` (same volume),
+tagged there, then placed with a no-clobber hard link (new paths) or an atomic
+rename (paths the app already owns). Before touching a file the app writes an
+`operations` row with the expected SHA-256. On startup it resolves leftover
+rows by hash: a file that matches its pending operation is the app's own write
+and its record is committed; only a file that matches neither the record nor a
+pending operation is an Outside Edit. The staging folder is then deleted.
 
-Calls made during an active pass share its promise and request at most one
-trailing pass. This absorbs the burst of completion events produced by a sync or
-reprocess job without running one scan per song.
+Outside Edits pause all automatic work on that track until the user chooses
+Rewrite or Stop managing. The app never silently overwrites a file someone
+changed.
 
-The inventory has no age threshold, readiness bootstrap, or index version.
-Filesystem-dependent work either completes a current reconcile or stops with
-its error. Callers also check a local file immediately before destructive work
-or remote copy so an out-of-band deletion after the walk becomes a per-item
-failure instead of an invalid copy attempt.
+## Tags are rewritten from saved facts, not the network
+
+Each track stores its Match (catalog track, Release, MusicBrainz data, lyrics
+text, processed cover). When tag rules change, the app recomputes the intended
+tags from those saved facts and rewrites only files that differ. A difference
+in `LMS_TAG_SCHEMA_VERSION` alone never triggers a rewrite, so an app update
+does not rewrite and re-upload the whole library.
+
+## The remote is a mirror only the app writes
+
+Remote uploads go through rclone and work with any backend. After each upload
+the app verifies the object: with a common hash when the backend has one (the
+owner's SFTP remote exposes MD5 and SHA-1), otherwise by downloading it and
+comparing SHA-256 locally. It records the upload (path, hash, size, and the tag
+fields uploaded) so "stale" can say which fields differ without reading the
+remote. Nothing runs on the server.
+
+When a track has no upload record (fresh database or adoption), the app lists
+the remote once per session with hashes and accepts an identical copy at the
+same path instead of uploading it again. On SFTP that listing makes the server
+hash every file, so it only happens when records are missing.

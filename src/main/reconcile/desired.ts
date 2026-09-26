@@ -1,4 +1,8 @@
-import { type ArtistCredit, joinArtistNames, normalizeArtistCredits } from '../domain'
+import {
+  type ArtistCredit,
+  joinArtistNames,
+  normalizeArtistCredits,
+} from '../domain'
 import { layoutPath } from '../inventory/layout'
 import type { TrackRow } from '../library/schema'
 import type { Match } from '../match/types'

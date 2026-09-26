@@ -18,8 +18,8 @@
     "start": "pnpm rebuild:native:electron && env -u ELECTRON_RUN_AS_NODE electron-vite preview",
     "test": "pnpm rebuild:native:node && vitest run",
     "build": "pnpm typecheck && electron-vite build",
-    "build:unpack": "electron-vite build && electron-builder --dir",
-    "build:mac": "electron-vite build && electron-builder --mac",
+    "build:unpack": "pnpm rebuild:native:electron && electron-vite build && electron-builder --dir",
+    "build:mac": "pnpm rebuild:native:electron && electron-vite build && electron-builder --mac",
     "postinstall": "electron-builder install-app-deps",
     "tools:fetch": "node ./scripts/fetch-tools.mjs"
   },

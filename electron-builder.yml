@@ -1,42 +1,36 @@
-appId: com.electron.app
-productName: liked-music-syncer
+appId: com.louismollick.likedmusicsyncer
+productName: Liked Music
 directories:
   buildResources: build
 files:
+  - out/**
+  - package.json
   - '!**/.vscode/*'
   - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md,biome.json,drizzle.config.ts}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!test/*'
+  - '!docs/*'
+  - '!scripts/*'
 asarUnpack:
-  - resources/**
   - node_modules/ffmpeg-static/**
+  - node_modules/better-sqlite3/**
 extraResources:
   - from: resources/bin
     to: bin
-win:
-  executableName: liked-music-syncer
-nsis:
-  artifactName: ${name}-${version}-setup.${ext}
-  shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
-  createDesktopShortcut: always
+    filter:
+      - '**/*'
+      - '!README.txt'
 mac:
-  entitlementsInherit: build/entitlements.mac.plist
-  extendInfo:
-    - NSDocumentsFolderUsageDescription: liked-music-syncer needs access to write audio files to your selected library.
-    - NSDownloadsFolderUsageDescription: liked-music-syncer may access downloaded tooling and exported media.
-  notarize: false
-dmg:
-  artifactName: ${name}-${version}.${ext}
-linux:
+  category: public.app-category.music
   target:
-    - AppImage
-    - snap
-    - deb
-  maintainer: mollicl
-  category: Utility
-appImage:
-  artifactName: ${name}-${version}.${ext}
+    - dmg
+    - zip
+  hardenedRuntime: true
+  entitlementsInherit: build/entitlements.mac.plist
+  entitlements: build/entitlements.mac.plist
+  extendInfo:
+    NSDocumentsFolderUsageDescription: Liked Music saves your songs to the folder you choose.
+    NSDownloadsFolderUsageDescription: Liked Music saves your songs to the folder you choose.
+    NSMusicFolderUsageDescription: Liked Music saves your songs to the folder you choose.
+dmg:
+  artifactName: liked-music-${version}-${arch}.${ext}
 npmRebuild: false

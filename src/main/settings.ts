@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
+import type { Settings } from '../shared/ipc'
 import type { Db } from './library/db'
 import { settings as settingsTable } from './library/schema'
-import type { Settings } from '../shared/ipc'
 
 export const DEFAULT_SETTINGS: Settings = {
   libraryFolder: '',
@@ -47,9 +47,16 @@ export class SettingsStore {
       for (const [key, value] of Object.entries(patch)) {
         if (!(key in DEFAULT_SETTINGS)) continue
         const serialized = JSON.stringify(value)
-        const existing = tx.select().from(settingsTable).where(eq(settingsTable.key, key)).get()
+        const existing = tx
+          .select()
+          .from(settingsTable)
+          .where(eq(settingsTable.key, key))
+          .get()
         if (existing) {
-          tx.update(settingsTable).set({ value: serialized }).where(eq(settingsTable.key, key)).run()
+          tx.update(settingsTable)
+            .set({ value: serialized })
+            .where(eq(settingsTable.key, key))
+            .run()
         } else {
           tx.insert(settingsTable).values({ key, value: serialized }).run()
         }

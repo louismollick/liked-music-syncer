@@ -20,7 +20,19 @@ export async function runSmokeTest(tools: ToolPaths): Promise<number> {
 
     await runChecked(tools.ffmpeg, ['-version'])
     const audio = path.join(dir, 'tone.m4a')
-    await runChecked(tools.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.3', '-c:a', 'aac', '-y', audio])
+    await runChecked(tools.ffmpeg, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:duration=0.3',
+      '-c:a',
+      'aac',
+      '-y',
+      audio,
+    ])
     console.log('[smoke] ffmpeg ok')
 
     writeTags(
@@ -46,7 +58,10 @@ export async function runSmokeTest(tools: ToolPaths): Promise<number> {
       null
     )
     const read = readTags(audio)
-    if (read.fields.date !== '2026-09' || read.fields.lms.sourceVideoId !== 'smoke') {
+    if (
+      read.fields.date !== '2026-09' ||
+      read.fields.lms.sourceVideoId !== 'smoke'
+    ) {
       throw new Error('tag round-trip mismatch')
     }
     console.log('[smoke] tags ok')

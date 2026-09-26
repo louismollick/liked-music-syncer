@@ -1,12 +1,37 @@
 import { spawnSync } from 'node:child_process'
-import { cp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { chmod, cp, mkdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 
+/**
+ * Downloads the tools bundled into resources/bin, each pinned and checksummed:
+ * the bgutil PO token provider (yt-dlp plugin + server) and rclone for the
+ * target architecture. yt-dlp is not bundled: the app downloads and updates it
+ * at runtime. ffmpeg comes from the ffmpeg-static dependency.
+ *
+ * Set LMS_TOOLS_ARCH=x64|arm64 to fetch rclone for another macOS architecture.
+ */
+
 const BGUTIL_VERSION = '1.3.2'
-const BGUTIL_PLUGIN_URL = `https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/${BGUTIL_VERSION}/bgutil-ytdlp-pot-provider.zip`
-const BGUTIL_SOURCE_URL = `https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/${BGUTIL_VERSION}.tar.gz`
+const BGUTIL_PLUGIN = {
+  url: `https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/download/${BGUTIL_VERSION}/bgutil-ytdlp-pot-provider.zip`,
+  sha256: 'd51cf1c54e487137df749bd8778cceaa62304e6c5054c955b95f028f93ad6d57',
+}
+const BGUTIL_SOURCE = {
+  url: `https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/${BGUTIL_VERSION}.tar.gz`,
+  sha256: '3545ac7ffc0869498755cb3b4760a72fa2f176689d0890a6f5b898d163012ba2',
+}
+const RCLONE_VERSION = '1.75.0'
+const RCLONE_SHA256 = {
+  'osx-arm64':
+    '35e8f2a666ce789b29111db0dd843ddabc0d59c6b609d07bcaae5d1a07cba6f8',
+  'osx-amd64':
+    '19edbb8e5e73096eb66e92a42abbc5c34bfa8981ea3986a53872c7eef85a22f4',
+  'linux-amd64':
+    'aa2804e08f48250e71009c727124b6341cd0288465804a9a09d14663cabafbaa',
+}
 
 const repositoryRoot = process.cwd()
 const binDirectory = path.resolve(repositoryRoot, 'resources/bin')
@@ -17,101 +42,86 @@ const providerRootDirectory = path.join(
 )
 const providerServerDirectory = path.join(providerRootDirectory, 'server')
 
-async function downloadFile(url, targetPath) {
+async function download(url, target, sha256) {
   const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(
-      `Failed to download ${url}: ${response.status} ${response.statusText}`
-    )
-  }
-
-  const arrayBuffer = await response.arrayBuffer()
-  await writeFile(targetPath, Buffer.from(arrayBuffer))
+  if (!response.ok)
+    throw new Error(`Failed to download ${url}: ${response.status}`)
+  const bytes = Buffer.from(await response.arrayBuffer())
+  const digest = createHash('sha256').update(bytes).digest('hex')
+  if (digest !== sha256)
+    throw new Error(`Checksum mismatch for ${url}: ${digest}`)
+  await writeFile(target, bytes)
 }
 
-function runOrThrow(command, args, cwd) {
+function run(command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: 'inherit',
     env: process.env,
   })
-
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(' ')} failed with exit code ${result.status ?? 'unknown'}`
-    )
-  }
+  if (result.status !== 0)
+    throw new Error(`${command} ${args.join(' ')} failed (${result.status})`)
 }
 
-const tempDirectory = await rm(
-  path.join(os.tmpdir(), 'liked-music-syncer-tools'),
-  {
-    force: true,
-    recursive: true,
-  }
-).then(async () => {
-  const tempRoot = path.join(
-    os.tmpdir(),
-    `liked-music-syncer-tools-${Date.now()}`
-  )
-  await mkdir(tempRoot, { recursive: true })
-  return tempRoot
-})
+function rcloneTarget() {
+  const arch = process.env.LMS_TOOLS_ARCH ?? process.arch
+  const platform = process.platform === 'darwin' ? 'osx' : 'linux'
+  return `${platform}-${arch === 'arm64' ? 'arm64' : 'amd64'}`
+}
 
-await mkdir(binDirectory, { recursive: true })
+const temp = path.join(os.tmpdir(), `liked-music-syncer-tools-${Date.now()}`)
+await mkdir(temp, { recursive: true })
 await mkdir(pluginDirectory, { recursive: true })
 
-const pluginZipPath = path.join(
-  pluginDirectory,
-  'bgutil-ytdlp-pot-provider.zip'
-)
-const sourceArchivePath = path.join(
-  tempDirectory,
-  `bgutil-ytdlp-pot-provider-${BGUTIL_VERSION}.tar.gz`
-)
-
 console.log(`Downloading bgutil provider plugin ${BGUTIL_VERSION}...`)
-await downloadFile(BGUTIL_PLUGIN_URL, pluginZipPath)
+await download(
+  BGUTIL_PLUGIN.url,
+  path.join(pluginDirectory, 'bgutil-ytdlp-pot-provider.zip'),
+  BGUTIL_PLUGIN.sha256
+)
 
 console.log(`Downloading bgutil provider source ${BGUTIL_VERSION}...`)
-await downloadFile(BGUTIL_SOURCE_URL, sourceArchivePath)
-
-runOrThrow(
-  'tar',
-  ['-xzf', sourceArchivePath, '-C', tempDirectory],
-  repositoryRoot
-)
-
-const extractedRootDirectory = path.join(
-  tempDirectory,
-  `bgutil-ytdlp-pot-provider-${BGUTIL_VERSION}`
-)
-const extractedServerDirectory = path.join(extractedRootDirectory, 'server')
-
+const sourceArchive = path.join(temp, 'bgutil.tar.gz')
+await download(BGUTIL_SOURCE.url, sourceArchive, BGUTIL_SOURCE.sha256)
+run('tar', ['-xzf', sourceArchive, '-C', temp], repositoryRoot)
 await rm(providerRootDirectory, { force: true, recursive: true })
 await mkdir(providerRootDirectory, { recursive: true })
-await cp(extractedServerDirectory, providerServerDirectory, { recursive: true })
-
-console.log('Installing bgutil provider dependencies...')
-runOrThrow('npm', ['ci'], providerServerDirectory)
-
+await cp(
+  path.join(temp, `bgutil-ytdlp-pot-provider-${BGUTIL_VERSION}`, 'server'),
+  providerServerDirectory,
+  { recursive: true }
+)
 console.log('Building bgutil provider server...')
-runOrThrow('npx', ['tsc'], providerServerDirectory)
+run('npm', ['ci'], providerServerDirectory)
+run('npx', ['tsc'], providerServerDirectory)
+run('npm', ['prune', '--omit=dev'], providerServerDirectory)
 
-console.log('Pruning bgutil provider dev dependencies...')
-runOrThrow('npm', ['prune', '--omit=dev'], providerServerDirectory)
+const target = rcloneTarget()
+const rcloneName = `rclone-v${RCLONE_VERSION}-${target}`
+console.log(`Downloading ${rcloneName}...`)
+const rcloneZip = path.join(temp, `${rcloneName}.zip`)
+await download(
+  `https://downloads.rclone.org/v${RCLONE_VERSION}/${rcloneName}.zip`,
+  rcloneZip,
+  RCLONE_SHA256[target]
+)
+run('unzip', ['-q', '-o', rcloneZip, '-d', temp], repositoryRoot)
+await cp(
+  path.join(temp, rcloneName, 'rclone'),
+  path.join(binDirectory, 'rclone')
+)
+await chmod(path.join(binDirectory, 'rclone'), 0o755)
 
-const readmeContents = `Bundled tooling for liked-music-syncer.
+await writeFile(
+  path.join(binDirectory, 'README.txt'),
+  `Bundled tooling for liked-music-syncer (generated by pnpm tools:fetch).
 
-- ffmpeg -> installed by pnpm through the pinned ffmpeg-static dependency
-- yt-dlp plugin zip -> resources/bin/yt-dlp-plugins/bgutil-ytdlp-pot-provider.zip
-- bgutil provider server -> resources/bin/bgutil-ytdlp-pot-provider/server/build/main.js
-
-Pinned bgutil version: ${BGUTIL_VERSION}
-
-Packaged builds bundle these exact paths.
-`
-
-await writeFile(path.join(binDirectory, 'README.txt'), readmeContents, 'utf8')
-
-console.log(`Prepared ${binDirectory}. pnpm provides ffmpeg-static separately.`)
+- bgutil PO token provider ${BGUTIL_VERSION}: yt-dlp-plugins/ and bgutil-ytdlp-pot-provider/server/
+- rclone ${RCLONE_VERSION} (${target}): rclone
+- ffmpeg: from the ffmpeg-static dependency
+- yt-dlp: downloaded by the app at runtime into its data folder
+`,
+  'utf8'
+)
+await rm(temp, { recursive: true, force: true })
+console.log(`Prepared ${binDirectory}`)

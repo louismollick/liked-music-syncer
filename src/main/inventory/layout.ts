@@ -8,11 +8,17 @@ import { createHash } from 'node:crypto'
  * release files keep their paths.
  */
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: Control characters are invalid in managed filenames.
 const INVALID_PATH_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g
 const MAX_SEGMENT_BYTES = 200
 
 export function sanitizeSegment(value: string, fallback = '_'): string {
-  const compact = value.normalize('NFC').trim().split(/\s+/).filter(Boolean).join(' ')
+  const compact = value
+    .normalize('NFC')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ')
   let cleaned = compact.replace(INVALID_PATH_CHARS, '_')
   // Leading dots would hide files on macOS/Linux.
   cleaned = cleaned.replace(/^\.+/, (dots) => '_'.repeat(dots.length))
@@ -45,8 +51,15 @@ export function pathKey(relativePath: string): string {
   return relativePath.normalize('NFC').toLowerCase()
 }
 
-export function withSuffix(relativePath: string, identityKey: string, length: number): string {
-  const digest = createHash('sha256').update(identityKey).digest('hex').slice(0, length)
+export function withSuffix(
+  relativePath: string,
+  identityKey: string,
+  length: number
+): string {
+  const digest = createHash('sha256')
+    .update(identityKey)
+    .digest('hex')
+    .slice(0, length)
   return relativePath.replace(/\.m4a$/i, ` [${digest}].m4a`)
 }
 

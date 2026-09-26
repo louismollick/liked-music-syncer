@@ -1,7 +1,7 @@
 import { readdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
-import type { ToolPaths } from '../platform/tools'
 import { ProcessError, run, runChecked } from '../platform/process'
+import type { ToolPaths } from '../platform/tools'
 import { POT_BASE_URL, type PotProvider } from './pot-provider'
 import type { YtDlpBinary } from './ytdlp-binary'
 

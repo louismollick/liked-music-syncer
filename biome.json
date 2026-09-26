@@ -6,10 +6,11 @@
       "!**/out",
       "!**/dist",
       "!**/release",
-      "!**/drizzle/meta",
-      "!resources/bin/bgutil-ytdlp-pot-provider",
-      "!py/.venv",
-      "!**/*.css"
+      "!**/*.css",
+      "!test/fixtures",
+      "!resources/bin",
+      "!docs/plans/wireframes-v4.html",
+      "!release"
     ]
   },
   "formatter": {
@@ -26,7 +27,13 @@
         "noNonNullAssertion": "off"
       },
       "suspicious": {
-        "noConsole": "off"
+        "noConsole": "off",
+        "noConfusingVoidType": "off",
+        "noArrayIndexKey": "off"
+      },
+      "a11y": {
+        "useKeyWithClickEvents": "off",
+        "noStaticElementInteractions": "off"
       }
     }
   },

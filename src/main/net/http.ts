@@ -55,10 +55,7 @@ export interface HttpClient {
   bytes(url: string, options: RequestOptions): Promise<Uint8Array>
 }
 
-export type FetchLike = (
-  input: string,
-  init?: RequestInit
-) => Promise<Response>
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 function classifyStatus(status: number): ErrorKind {
   if (status === 408 || status === 425 || status === 429 || status >= 500) {

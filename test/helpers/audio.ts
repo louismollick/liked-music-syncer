@@ -9,7 +9,11 @@ export function tempDir(prefix = 'lms-test-'): string {
 }
 
 /** Generates a short AAC .m4a with a sine tone. */
-export function makeM4a(target: string, seconds = 0.5, frequency = 440): string {
+export function makeM4a(
+  target: string,
+  seconds = 0.5,
+  frequency = 440
+): string {
   execFileSync(
     ffmpegPath as unknown as string,
     [

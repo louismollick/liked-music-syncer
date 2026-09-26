@@ -15,7 +15,11 @@ import type {
   SongRowView,
   TrackDetailView,
 } from '../../shared/ipc'
-import { albumQuerySchema, artistQuerySchema, songQuerySchema } from '../../shared/ipc'
+import {
+  albumQuerySchema,
+  artistQuerySchema,
+  songQuerySchema,
+} from '../../shared/ipc'
 import { albumKey, decodeAlbumKey } from '../reconcile/reconciler'
 import { fieldDiff, type TagFields } from '../tags/schema'
 import type { Db } from './db'
@@ -25,7 +29,10 @@ import type { Db } from './db'
  * shows; it never receives table rows.
  */
 
-export type CoverUrl = (coverPath: string | null, fallback: string | null) => string | null
+export type CoverUrl = (
+  coverPath: string | null,
+  fallback: string | null
+) => string | null
 
 interface SongSqlRow {
   id: string
@@ -79,7 +86,9 @@ export class LibraryQueries {
   constructor(
     private readonly db: Db,
     private readonly coverUrl: CoverUrl,
-    private readonly artistImageUrl: (imagePath: string | null) => string | null,
+    private readonly artistImageUrl: (
+      imagePath: string | null
+    ) => string | null,
     private readonly settings: () => Settings
   ) {}
 
@@ -90,7 +99,12 @@ export class LibraryQueries {
   private toSong(row: SongSqlRow): SongRowView {
     const remoteOn = this.remoteOn()
     let remoteState: RemoteState = remoteOn ? row.remote_state : 'off'
-    if (remoteOn && row.state === 'needs_attention' && row.last_error_step === 'upload') remoteState = 'failed'
+    if (
+      remoteOn &&
+      row.state === 'needs_attention' &&
+      row.last_error_step === 'upload'
+    )
+      remoteState = 'failed'
     return {
       id: row.id,
       title: row.title,
@@ -113,7 +127,11 @@ export class LibraryQueries {
 
   private remoteOn(): boolean {
     const s = this.settings()
-    return s.remoteEnabled && Boolean(s.rcloneRemote.trim()) && Boolean(s.remoteFolder.trim())
+    return (
+      s.remoteEnabled &&
+      Boolean(s.rcloneRemote.trim()) &&
+      Boolean(s.remoteFolder.trim())
+    )
   }
 
   songs(input: SongQuery): SongPage {
@@ -122,7 +140,8 @@ export class LibraryQueries {
     const params: unknown[] = []
     const f = query.filters
     if (f.state === 'needs_attention') where.push(`t.state = 'needs_attention'`)
-    else if (f.state === 'no_longer_wanted') where.push(`t.state = 'no_longer_wanted' AND ${IN_LIBRARY}`)
+    else if (f.state === 'no_longer_wanted')
+      where.push(`t.state = 'no_longer_wanted' AND ${IN_LIBRARY}`)
     else where.push(IN_LIBRARY)
     if (f.lyrics) {
       where.push('t.lyrics_status = ?')
@@ -137,15 +156,21 @@ export class LibraryQueries {
       params.push(f.remote)
     }
     if (f.favorite) {
-      where.push(`EXISTS (SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = t.id AND a.favorite = 1)`)
+      where.push(
+        `EXISTS (SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = t.id AND a.favorite = 1)`
+      )
     }
     if (query.artistId) {
-      where.push('EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id AND ta.artist_id = ?)')
+      where.push(
+        'EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id AND ta.artist_id = ?)'
+      )
       params.push(query.artistId)
     }
     if (query.albumKey) {
       const [album, artist] = decodeAlbumKey(query.albumKey)
-      where.push('t.album = ? AND t.album_artist = ? AND t.release_id IS NOT NULL')
+      where.push(
+        't.album = ? AND t.album_artist = ? AND t.release_id IS NOT NULL'
+      )
       params.push(album, artist)
     }
     const direction = query.descending ? 'DESC' : 'ASC'
@@ -162,16 +187,24 @@ export class LibraryQueries {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
     const total = (
       this.sqlite
-        .prepare(`SELECT COUNT(*) AS n FROM tracks t LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id ${whereSql}`)
+        .prepare(
+          `SELECT COUNT(*) AS n FROM tracks t LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id ${whereSql}`
+        )
         .get(...params) as { n: number }
     ).n
     const rows = this.sqlite
-      .prepare(`${SONG_SELECT} ${whereSql} ORDER BY ${order[query.sort]} LIMIT ? OFFSET ?`)
+      .prepare(
+        `${SONG_SELECT} ${whereSql} ORDER BY ${order[query.sort]} LIMIT ? OFFSET ?`
+      )
       .all(...params, query.limit, query.offset) as SongSqlRow[]
     return { total, rows: rows.map((row) => this.toSong(row)) }
   }
 
-  private artistRows(where: string, params: unknown[], orderBy: string): ArtistView[] {
+  private artistRows(
+    where: string,
+    params: unknown[],
+    orderBy: string
+  ): ArtistView[] {
     const rows = this.sqlite
       .prepare(
         `SELECT a.id, a.name, a.image_path, a.favorite, a.suggested, a.channel_id,
@@ -211,11 +244,18 @@ export class LibraryQueries {
       query.favorites ? 'AND a.favorite = 1' : '',
       query.suggested ? 'AND a.suggested = 1' : '',
     ].join(' ')
-    const order = query.sort === 'name' ? 'a.name COLLATE NOCASE' : 'song_count DESC, a.name COLLATE NOCASE'
+    const order =
+      query.sort === 'name'
+        ? 'a.name COLLATE NOCASE'
+        : 'song_count DESC, a.name COLLATE NOCASE'
     return this.artistRows(where, [], order)
   }
 
-  private albumRows(where: string, params: unknown[], orderBy: string): AlbumView[] {
+  private albumRows(
+    where: string,
+    params: unknown[],
+    orderBy: string
+  ): AlbumView[] {
     const rows = this.sqlite
       .prepare(
         `SELECT t.album, t.album_artist, MAX(t.year) AS year, COUNT(*) AS song_count,
@@ -274,7 +314,9 @@ export class LibraryQueries {
     )
     const standalone = (
       this.sqlite
-        .prepare(`${SONG_SELECT} WHERE ${IN_LIBRARY} AND t.release_id IS NULL AND EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id AND ta.artist_id = ?) ORDER BY liked_at IS NULL, liked_at DESC, t.title`)
+        .prepare(
+          `${SONG_SELECT} WHERE ${IN_LIBRARY} AND t.release_id IS NULL AND EXISTS (SELECT 1 FROM track_artists ta WHERE ta.track_id = t.id AND ta.artist_id = ?) ORDER BY liked_at IS NULL, liked_at DESC, t.title`
+        )
         .all(id) as SongSqlRow[]
     ).map((row) => this.toSong(row))
     return { artist, albums, standalone, albumCount: albums.length }
@@ -282,34 +324,69 @@ export class LibraryQueries {
 
   album(key: string): AlbumDetailView | null {
     const [album, albumArtist] = decodeAlbumKey(key)
-    const [view] = this.albumRows('AND t.album = ? AND t.album_artist = ?', [album, albumArtist], 't.album')
+    const [view] = this.albumRows(
+      'AND t.album = ? AND t.album_artist = ?',
+      [album, albumArtist],
+      't.album'
+    )
     if (!view) return null
-    return { album: view, tracks: this.songs({ albumKey: key, limit: 5000, sort: 'liked' }).rows }
+    return {
+      album: view,
+      tracks: this.songs({ albumKey: key, limit: 5000, sort: 'liked' }).rows,
+    }
   }
 
   track(id: string): TrackDetailView | null {
-    const row = this.sqlite.prepare(`${SONG_SELECT} WHERE t.id = ?`).get(id) as SongSqlRow | undefined
+    const row = this.sqlite.prepare(`${SONG_SELECT} WHERE t.id = ?`).get(id) as
+      | SongSqlRow
+      | undefined
     if (!row) return null
-    const full = this.sqlite.prepare('SELECT * FROM tracks WHERE id = ?').get(id) as Record<string, unknown>
-    const file = this.sqlite.prepare('SELECT * FROM files WHERE track_id = ?').get(id) as Record<string, unknown> | undefined
-    const upload = this.sqlite.prepare('SELECT * FROM uploads WHERE track_id = ?').get(id) as Record<string, unknown> | undefined
+    const full = this.sqlite
+      .prepare('SELECT * FROM tracks WHERE id = ?')
+      .get(id) as Record<string, unknown>
+    const file = this.sqlite
+      .prepare('SELECT * FROM files WHERE track_id = ?')
+      .get(id) as Record<string, unknown> | undefined
+    const upload = this.sqlite
+      .prepare('SELECT * FROM uploads WHERE track_id = ?')
+      .get(id) as Record<string, unknown> | undefined
     const artistRows = this.sqlite
-      .prepare('SELECT a.id, a.name FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = ? ORDER BY ta.position')
+      .prepare(
+        'SELECT a.id, a.name FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = ? ORDER BY ta.position'
+      )
       .all(id) as Array<{ id: string; name: string }>
     const contributionRows = this.sqlite
       .prepare(
         `SELECT c.kind, c.first_seen_at, a.name AS artist_name FROM contributions c
          LEFT JOIN artists a ON a.id = c.artist_id WHERE c.track_id = ? AND c.active = 1 ORDER BY c.first_seen_at`
       )
-      .all(id) as Array<{ kind: 'liked' | 'catalog'; first_seen_at: string; artist_name: string | null }>
-    const match = full.match ? (JSON.parse(String(full.match)) as { catalogVideoId?: string; sourceVideoId?: string; release?: { title?: string; year?: number }; resolutionMethod?: string }) : null
+      .all(id) as Array<{
+      kind: 'liked' | 'catalog'
+      first_seen_at: string
+      artist_name: string | null
+    }>
+    const match = full.match
+      ? (JSON.parse(String(full.match)) as {
+          catalogVideoId?: string
+          sourceVideoId?: string
+          release?: { title?: string; year?: number }
+          resolutionMethod?: string
+        })
+      : null
     const song = this.toSong(row)
     let differences: string[] = []
     if (file && upload?.tag_fields && song.remoteState === 'stale') {
-      differences = fieldDiff(JSON.parse(String(upload.tag_fields)) as TagFields, JSON.parse(String(file.tag_fields)) as TagFields)
+      differences = fieldDiff(
+        JSON.parse(String(upload.tag_fields)) as TagFields,
+        JSON.parse(String(file.tag_fields)) as TagFields
+      )
         .filter((field) => field !== 'lms.schemaVersion')
         .map(humanField)
-      if (differences.length === 0 && upload.local_sha256 !== file.content_sha256) differences = ['audio']
+      if (
+        differences.length === 0 &&
+        upload.local_sha256 !== file.content_sha256
+      )
+        differences = ['audio']
       if (upload.remote_path !== file.relative_path) differences.push('path')
     }
     const settings = this.settings()
@@ -319,7 +396,10 @@ export class LibraryQueries {
       artists: artistRows,
       contributions: contributionRows.map((c) => ({
         kind: c.kind,
-        label: c.kind === 'liked' ? 'Liked on YouTube Music' : `In ${c.artist_name ?? 'a Favorite Artist'}'s catalog (Favorite Artist)`,
+        label:
+          c.kind === 'liked'
+            ? 'Liked on YouTube Music'
+            : `In ${c.artist_name ?? 'a Favorite Artist'}'s catalog (Favorite Artist)`,
         at: c.kind === 'liked' ? c.first_seen_at : null,
       })),
       match: {
@@ -338,11 +418,18 @@ export class LibraryQueries {
       },
       file: {
         path: relative,
-        absolutePath: relative && settings.libraryFolder ? path.join(settings.libraryFolder, relative) : null,
+        absolutePath:
+          relative && settings.libraryFolder
+            ? path.join(settings.libraryFolder, relative)
+            : null,
       },
       remote: { state: song.remoteState, differences },
-      outsideEdit: file?.outside_edit ? (JSON.parse(String(file.outside_edit)) as string[]) : null,
-      enrichmentErrors: JSON.parse(String(full.enrichment_errors ?? '{}')) as Record<string, string>,
+      outsideEdit: file?.outside_edit
+        ? (JSON.parse(String(file.outside_edit)) as string[])
+        : null,
+      enrichmentErrors: JSON.parse(
+        String(full.enrichment_errors ?? '{}')
+      ) as Record<string, string>,
       lastError: (full.last_error as string | null) ?? null,
     }
   }
@@ -350,31 +437,56 @@ export class LibraryQueries {
   search(text: string): SearchResultsView {
     const term = `%${text.trim().replace(/[%_]/g, (c) => `\\${c}`)}%`
     if (!text.trim()) return { artists: [], albums: [], songs: [] }
-    const artists = this.artistRows(`AND a.name LIKE ? ESCAPE '\\'`, [term], 'song_count DESC').slice(0, 6)
-    const albums = this.albumRows(`AND (t.album LIKE ? ESCAPE '\\' OR t.album_artist LIKE ? ESCAPE '\\')`, [term, term], 'year DESC').slice(0, 6)
+    const artists = this.artistRows(
+      `AND a.name LIKE ? ESCAPE '\\'`,
+      [term],
+      'song_count DESC'
+    ).slice(0, 6)
+    const albums = this.albumRows(
+      `AND (t.album LIKE ? ESCAPE '\\' OR t.album_artist LIKE ? ESCAPE '\\')`,
+      [term, term],
+      'year DESC'
+    ).slice(0, 6)
     const songs = (
       this.sqlite
-        .prepare(`${SONG_SELECT} WHERE ${IN_LIBRARY} AND (t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\') ORDER BY liked_at IS NULL, liked_at DESC LIMIT 8`)
+        .prepare(
+          `${SONG_SELECT} WHERE ${IN_LIBRARY} AND (t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\') ORDER BY liked_at IS NULL, liked_at DESC LIMIT 8`
+        )
         .all(term, term) as SongSqlRow[]
     ).map((row) => this.toSong(row))
     return { artists, albums, songs }
   }
 
   counts(): LibraryCounts {
-    const one = (query: string) => (this.sqlite.prepare(query).get() as { n: number }).n
+    const one = (query: string) =>
+      (this.sqlite.prepare(query).get() as { n: number }).n
     const base = `FROM tracks t LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id`
     return {
       songs: one(`SELECT COUNT(*) AS n ${base} WHERE ${IN_LIBRARY}`),
-      artists: one(`SELECT COUNT(DISTINCT ta.artist_id) AS n FROM track_artists ta JOIN tracks t ON t.id = ta.track_id LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id WHERE ${IN_LIBRARY}`),
-      albums: one(`SELECT COUNT(*) AS n FROM (SELECT 1 ${base} WHERE ${IN_LIBRARY} AND t.release_id IS NOT NULL GROUP BY t.album, t.album_artist)`),
-      needsAttention: one(`SELECT COUNT(*) AS n FROM tracks WHERE state = 'needs_attention'`) + one(`SELECT COUNT(*) AS n FROM files WHERE outside_edit IS NOT NULL`),
-      noLongerWanted: one(`SELECT COUNT(*) AS n ${base} WHERE t.state = 'no_longer_wanted' AND ${IN_LIBRARY}`),
+      artists: one(
+        `SELECT COUNT(DISTINCT ta.artist_id) AS n FROM track_artists ta JOIN tracks t ON t.id = ta.track_id LEFT JOIN files f ON f.track_id = t.id LEFT JOIN uploads u ON u.track_id = t.id WHERE ${IN_LIBRARY}`
+      ),
+      albums: one(
+        `SELECT COUNT(*) AS n FROM (SELECT 1 ${base} WHERE ${IN_LIBRARY} AND t.release_id IS NOT NULL GROUP BY t.album, t.album_artist)`
+      ),
+      needsAttention:
+        one(
+          `SELECT COUNT(*) AS n FROM tracks WHERE state = 'needs_attention'`
+        ) +
+        one(`SELECT COUNT(*) AS n FROM files WHERE outside_edit IS NOT NULL`),
+      noLongerWanted: one(
+        `SELECT COUNT(*) AS n ${base} WHERE t.state = 'no_longer_wanted' AND ${IN_LIBRARY}`
+      ),
       unmanaged: one('SELECT COUNT(*) AS n FROM unmanaged_files'),
     }
   }
 
   unmanaged(): Array<{ path: string; size: number }> {
-    return (this.sqlite.prepare('SELECT relative_path AS path, size FROM unmanaged_files ORDER BY relative_path').all() as Array<{ path: string; size: number }>)
+    return this.sqlite
+      .prepare(
+        'SELECT relative_path AS path, size FROM unmanaged_files ORDER BY relative_path'
+      )
+      .all() as Array<{ path: string; size: number }>
   }
 }
 

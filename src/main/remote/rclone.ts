@@ -47,7 +47,10 @@ export function remoteSpec(target: RemoteTarget, relativePath = ''): string {
   return `${name}:${joined}`
 }
 
-export function hashFile(file: string, algo: HashAlgo | 'sha256'): Promise<string> {
+export function hashFile(
+  file: string,
+  algo: HashAlgo | 'sha256'
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash(algo)
     createReadStream(file)
@@ -92,13 +95,19 @@ export interface Rclone {
     signal?: AbortSignal
   ): Promise<void>
   /** Deletes an object; succeeds when it is already gone. */
-  delete(target: RemoteTarget, relativePath: string, signal?: AbortSignal): Promise<void>
+  delete(
+    target: RemoteTarget,
+    relativePath: string,
+    signal?: AbortSignal
+  ): Promise<void>
 }
 
 export function createRclone(binary: string): Rclone {
   const capabilityCache = new Map<string, RemoteCapabilities>()
 
-  async function capabilities(target: RemoteTarget): Promise<RemoteCapabilities> {
+  async function capabilities(
+    target: RemoteTarget
+  ): Promise<RemoteCapabilities> {
     const key = target.remote
     const cached = capabilityCache.get(key)
     if (cached) return cached
@@ -113,8 +122,13 @@ export function createRclone(binary: string): Rclone {
     }
     const hashes = (parsed.Hashes ?? []).map((value) => value.toLowerCase())
     const caps: RemoteCapabilities = {
-      hashAlgo: hashes.includes('md5') ? 'md5' : hashes.includes('sha1') ? 'sha1' : null,
-      precisionNs: typeof parsed.Precision === 'number' ? parsed.Precision : null,
+      hashAlgo: hashes.includes('md5')
+        ? 'md5'
+        : hashes.includes('sha1')
+          ? 'sha1'
+          : null,
+      precisionNs:
+        typeof parsed.Precision === 'number' ? parsed.Precision : null,
     }
     capabilityCache.set(key, caps)
     return caps
@@ -151,7 +165,10 @@ export function createRclone(binary: string): Rclone {
       return null
     }
     if (result.code !== 0) {
-      throw new ProcessError(`rclone lsjson failed: ${result.stderr.trim()}`, result)
+      throw new ProcessError(
+        `rclone lsjson failed: ${result.stderr.trim()}`,
+        result
+      )
     }
     const [item] = parseObjects(result.stdout, hashAlgo)
     return item ? { ...item, path: relativePath } : null
@@ -169,19 +186,33 @@ export function createRclone(binary: string): Rclone {
     if (caps.hashAlgo && object.hash) {
       const local = await hashFile(localPath, caps.hashAlgo)
       if (local !== object.hash) return null
-      return { size: object.size, modTime: object.modTime, hashAlgo: caps.hashAlgo, hash: local }
+      return {
+        size: object.size,
+        modTime: object.modTime,
+        hashAlgo: caps.hashAlgo,
+        hash: local,
+      }
     }
     // No comparable hash on this backend: download and compare locally.
     const dir = await mkdtemp(path.join(tmpdir(), 'lms-verify-'))
     try {
       const copy = path.join(dir, 'object')
-      await runChecked(binary, ['copyto', remoteSpec(target, relativePath), copy], { signal })
+      await runChecked(
+        binary,
+        ['copyto', remoteSpec(target, relativePath), copy],
+        { signal }
+      )
       const [remoteDigest, localDigest] = await Promise.all([
         hashFile(copy, 'sha256'),
         hashFile(localPath, 'sha256'),
       ])
       if (remoteDigest !== localDigest) return null
-      return { size: object.size, modTime: object.modTime, hashAlgo: null, hash: null }
+      return {
+        size: object.size,
+        modTime: object.modTime,
+        hashAlgo: null,
+        hash: null,
+      }
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -197,7 +228,10 @@ export function createRclone(binary: string): Rclone {
         return new Map()
       }
       if (result.code !== 0) {
-        throw new ProcessError(`rclone lsjson failed: ${result.stderr.trim()}`, result)
+        throw new ProcessError(
+          `rclone lsjson failed: ${result.stderr.trim()}`,
+          result
+        )
       }
       const map = new Map<string, RemoteObject>()
       for (const item of parseObjects(result.stdout, options.hashAlgo)) {
@@ -230,26 +264,41 @@ export function createRclone(binary: string): Rclone {
       onProgress(1)
       const verified = await verify(target, localPath, relativePath, signal)
       if (!verified) {
-        throw Object.assign(new Error(`Upload verification failed for ${relativePath}`), {
-          kind: 'transient' as const,
-        })
+        throw Object.assign(
+          new Error(`Upload verification failed for ${relativePath}`),
+          {
+            kind: 'transient' as const,
+          }
+        )
       }
       return verified
     },
     async move(target, fromRelative, toRelative, signal) {
       await runChecked(
         binary,
-        ['moveto', remoteSpec(target, fromRelative), remoteSpec(target, toRelative)],
+        [
+          'moveto',
+          remoteSpec(target, fromRelative),
+          remoteSpec(target, toRelative),
+        ],
         { signal }
       )
     },
     async delete(target, relativePath, signal) {
-      const result = await run(binary, ['deletefile', remoteSpec(target, relativePath)], {
-        signal,
-      })
+      const result = await run(
+        binary,
+        ['deletefile', remoteSpec(target, relativePath)],
+        {
+          signal,
+        }
+      )
       if (result.code === 0) return
-      if (result.code === 4 || /not found|doesn't exist/i.test(result.stderr)) return
-      throw new ProcessError(`rclone deletefile failed: ${result.stderr.trim()}`, result)
+      if (result.code === 4 || /not found|doesn't exist/i.test(result.stderr))
+        return
+      throw new ProcessError(
+        `rclone deletefile failed: ${result.stderr.trim()}`,
+        result
+      )
     },
   }
 }

@@ -1,6 +1,14 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type { HttpClient } from '../net/http'
@@ -34,7 +42,10 @@ export function createYtDlpBinary(options: {
 }): YtDlpBinary {
   const platform = options.platform ?? process.platform
   const binDir = path.join(options.userData, 'bin')
-  const binary = path.join(binDir, platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp')
+  const binary = path.join(
+    binDir,
+    platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'
+  )
   const stampFile = path.join(binDir, 'yt-dlp.checked')
   const now = options.now ?? Date.now
   let inflight: Promise<string> | null = null
@@ -53,8 +64,14 @@ export function createYtDlpBinary(options: {
   async function download(signal?: AbortSignal): Promise<void> {
     const asset = assetName(platform)
     const [bytes, sums] = await Promise.all([
-      options.http.bytes(`${RELEASE_BASE}/${asset}`, { host: 'images', signal }),
-      options.http.text(`${RELEASE_BASE}/SHA2-256SUMS`, { host: 'images', signal }),
+      options.http.bytes(`${RELEASE_BASE}/${asset}`, {
+        host: 'images',
+        signal,
+      }),
+      options.http.text(`${RELEASE_BASE}/SHA2-256SUMS`, {
+        host: 'images',
+        signal,
+      }),
     ])
     const expected = sums
       .split('\n')

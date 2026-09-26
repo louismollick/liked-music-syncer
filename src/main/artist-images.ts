@@ -24,7 +24,9 @@ export function createArtistImages(deps: {
         const todo = deps.db
           .select()
           .from(artists)
-          .where(and(isNotNull(artists.channelId), isNull(artists.imageCheckedAt)))
+          .where(
+            and(isNotNull(artists.channelId), isNull(artists.imageCheckedAt))
+          )
           .limit(limit)
           .all()
         await mkdir(deps.dir, { recursive: true })
@@ -36,7 +38,9 @@ export function createArtistImages(deps: {
             try {
               const artist = await deps.catalog.artist(next.channelId!)
               if (artist.thumbnailUrl) {
-                const bytes = await deps.http.bytes(artist.thumbnailUrl, { host: 'images' })
+                const bytes = await deps.http.bytes(artist.thumbnailUrl, {
+                  host: 'images',
+                })
                 imagePath = path.join(deps.dir, `${sha256(bytes)}.jpg`)
                 await writeFile(imagePath, bytes)
               }

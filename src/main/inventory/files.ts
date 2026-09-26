@@ -1,6 +1,15 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, link, lstat, mkdir, readdir, rename, rm, unlink } from 'node:fs/promises'
+import {
+  copyFile,
+  link,
+  lstat,
+  mkdir,
+  readdir,
+  rename,
+  rm,
+  unlink,
+} from 'node:fs/promises'
 import path from 'node:path'
 
 export const STAGING_DIR = '.lms-staging'
@@ -36,24 +45,34 @@ export class PathTakenError extends Error {
  * hard-link (fails with EEXIST if taken), then unlink the source. Both paths
  * must be on the same volume.
  */
-export async function placeNoClobber(source: string, target: string): Promise<void> {
+export async function placeNoClobber(
+  source: string,
+  target: string
+): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true })
   try {
     await link(source, target)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new PathTakenError(target)
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST')
+      throw new PathTakenError(target)
     throw error
   }
   await unlink(source)
 }
 
 /** Replaces a file the app owns with a staged version atomically. */
-export async function replaceOwned(source: string, target: string): Promise<void> {
+export async function replaceOwned(
+  source: string,
+  target: string
+): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true })
   await rename(source, target)
 }
 
-export async function copyToStaging(source: string, target: string): Promise<void> {
+export async function copyToStaging(
+  source: string,
+  target: string
+): Promise<void> {
   await mkdir(path.dirname(target), { recursive: true })
   await copyFile(source, target)
 }
@@ -66,7 +85,10 @@ export async function removeIfExists(file: string): Promise<void> {
 export async function pruneEmptyDirs(root: string, dir: string): Promise<void> {
   let current = dir
   const stop = path.resolve(root)
-  while (path.resolve(current).startsWith(stop) && path.resolve(current) !== stop) {
+  while (
+    path.resolve(current).startsWith(stop) &&
+    path.resolve(current) !== stop
+  ) {
     try {
       const entries = await readdir(current)
       if (entries.some((entry) => entry !== '.DS_Store')) return
@@ -102,7 +124,11 @@ export async function walkAudio(root: string): Promise<WalkEntry[]> {
         await visit(full, relative)
       } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.m4a')) {
         const info = await lstat(full)
-        out.push({ relativePath: relative.normalize('NFC'), size: info.size, mtimeMs: info.mtimeMs })
+        out.push({
+          relativePath: relative.normalize('NFC'),
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+        })
       }
     }
   }

@@ -12,7 +12,12 @@ import { openDatabase } from './library/db'
 import { LibraryQueries } from './library/queries'
 import { createLyricsFinder } from './lyrics/finder'
 import { createMatcher } from './match/matcher'
-import { artistImageUrlFor, coverUrlFor, handleMediaProtocol, registerMediaScheme } from './media-protocol'
+import {
+  artistImageUrlFor,
+  coverUrlFor,
+  handleMediaProtocol,
+  registerMediaScheme,
+} from './media-protocol'
 import { createHttpClient } from './net/http'
 import { killAllChildren } from './platform/process'
 import { resolveToolPaths } from './platform/tools'
@@ -97,9 +102,15 @@ async function main() {
   const matcher = createMatcher({ catalog, http })
   const lyrics = createLyricsFinder({ http, catalog })
   const pot = createPotProvider(tools)
-  const downloader = createAudioDownloader({ tools, ytdlp: createYtDlpBinary({ userData, http }), pot })
+  const downloader = createAudioDownloader({
+    tools,
+    ytdlp: createYtDlpBinary({ userData, http }),
+    pot,
+  })
   const rclone = createRclone(tools.rclone)
-  const queries = new LibraryQueries(db, coverUrlFor, artistImageUrlFor, () => settings.get())
+  const queries = new LibraryQueries(db, coverUrlFor, artistImageUrlFor, () =>
+    settings.get()
+  )
   const artistImages = createArtistImages({
     db,
     catalog,
@@ -119,7 +130,12 @@ async function main() {
     http,
     settings: () => settings.get(),
     now: () => new Date(),
-    session: { accountId: () => session.accountId(), generation: () => session.generation() },
+    session: {
+      accountId: () => session.accountId(),
+      generation: () => session.generation(),
+      likedCountChanged: (accountId, count) =>
+        session.setLikedCount(accountId, count),
+    },
     coverUrl: coverUrlFor,
     onActivity: (view) => broadcast('activity:changed', view),
     onLibraryChanged: (trackIds) => broadcast('library:changed', { trackIds }),
@@ -137,7 +153,10 @@ async function main() {
     'settings:update': async (patch) => {
       const before = settings.get()
       const next = settings.update(patch)
-      if (patch.libraryFolder !== undefined && patch.libraryFolder !== before.libraryFolder) {
+      if (
+        patch.libraryFolder !== undefined &&
+        patch.libraryFolder !== before.libraryFolder
+      ) {
         void reconciler.libraryFolderChanged()
       } else {
         reconciler.markDirty()
@@ -153,7 +172,10 @@ async function main() {
     },
     'session:signOut': () => session.signOut(),
     'session:selectAccount': async (id) => {
-      if (busy()) throw new Error('Wait for the current work to finish before switching accounts.')
+      if (busy())
+        throw new Error(
+          'Wait for the current work to finish before switching accounts.'
+        )
       const view = await session.selectAccount(id)
       void reconciler.check()
       return view
@@ -181,7 +203,8 @@ async function main() {
       broadcast('library:changed', { trackIds: null })
     },
     'library:refresh': (scope) => reconciler.refresh(scope),
-    'library:delete': ({ trackIds, where }) => reconciler.delete(trackIds, where),
+    'library:delete': ({ trackIds, where }) =>
+      reconciler.delete(trackIds, where),
     'library:unmanaged': () => queries.unmanaged(),
     'app:showInFinder': (absolutePath) => showInFinder(absolutePath),
   })

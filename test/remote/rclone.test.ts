@@ -12,9 +12,14 @@ function localTarget(): RemoteTarget {
 }
 
 function cryptTarget(): RemoteTarget {
-  const password = execFileSync(binary, ['obscure', 'test-password']).toString().trim()
+  const password = execFileSync(binary, ['obscure', 'test-password'])
+    .toString()
+    .trim()
   const base = tempDir('lms-crypt-')
-  return { remote: `:crypt,remote='${base}',password='${password}'`, folder: 'music' }
+  return {
+    remote: `:crypt,remote='${base}',password='${password}'`,
+    folder: 'music',
+  }
 }
 
 function localFile(content: string): string {
@@ -36,7 +41,9 @@ describe('rclone remote', () => {
     const target = localTarget()
     const file = localFile('hello audio')
     const progress: number[] = []
-    const uploaded = await rclone.upload(target, file, 'A/B/01 x.m4a', (f) => progress.push(f))
+    const uploaded = await rclone.upload(target, file, 'A/B/01 x.m4a', (f) =>
+      progress.push(f)
+    )
     expect(uploaded.hashAlgo).toBe('md5')
     expect(uploaded.size).toBe(11)
     expect(progress.at(-1)).toBe(1)

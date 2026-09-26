@@ -65,7 +65,13 @@ export interface ActivityView {
 }
 
 export type LyricsFilter = 'synced' | 'plain' | 'none'
-export type RemoteState = 'in_sync' | 'stale' | 'missing' | 'uploading' | 'failed' | 'off'
+export type RemoteState =
+  | 'in_sync'
+  | 'stale'
+  | 'missing'
+  | 'uploading'
+  | 'failed'
+  | 'off'
 
 export const songFiltersSchema = z.object({
   lyrics: z.enum(['synced', 'plain', 'none']).optional(),
@@ -76,7 +82,14 @@ export const songFiltersSchema = z.object({
 })
 export type SongFilters = z.infer<typeof songFiltersSchema>
 
-export const songSortSchema = z.enum(['liked', 'title', 'artist', 'album', 'year', 'time'])
+export const songSortSchema = z.enum([
+  'liked',
+  'title',
+  'artist',
+  'album',
+  'year',
+  'time',
+])
 export type SongSort = z.infer<typeof songSortSchema>
 
 export const songQuerySchema = z.object({
@@ -151,7 +164,11 @@ export interface AlbumDetailView {
 export interface TrackDetailView {
   song: SongRowView
   artists: Array<{ id: string; name: string }>
-  contributions: Array<{ kind: 'liked' | 'catalog'; label: string; at: string | null }>
+  contributions: Array<{
+    kind: 'liked' | 'catalog'
+    label: string
+    at: string | null
+  }>
   match: {
     catalogVideoId: string | null
     sourceVideoId: string | null
@@ -161,7 +178,11 @@ export interface TrackDetailView {
     genre: string | null
     genreSource: string | null
   }
-  lyrics: { status: LyricsFilter; source: string | null; language: string | null }
+  lyrics: {
+    status: LyricsFilter
+    source: string | null
+    language: string | null
+  }
   file: { path: string | null; absolutePath: string | null }
   remote: { state: RemoteState; differences: string[] }
   outsideEdit: string[] | null
@@ -264,7 +285,10 @@ export const invokeArgSchemas: Partial<Record<InvokeChannel, z.ZodType>> = {
   'library:album': z.string(),
   'library:track': z.string(),
   'library:search': z.string().max(200),
-  'library:setFavorite': z.object({ artistId: z.string(), favorite: z.boolean() }),
+  'library:setFavorite': z.object({
+    artistId: z.string(),
+    favorite: z.boolean(),
+  }),
   'library:refresh': refreshScopeSchema,
   'library:delete': deleteRequestSchema,
   'app:showInFinder': z.string(),
@@ -275,5 +299,8 @@ export interface RendererApi {
     channel: C,
     ...args: InvokeMap[C][0] extends void ? [] : [InvokeMap[C][0]]
   ): Promise<InvokeMap[C][1]>
-  on<C extends EventChannel>(channel: C, listener: (payload: EventMap[C]) => void): () => void
+  on<C extends EventChannel>(
+    channel: C,
+    listener: (payload: EventMap[C]) => void
+  ): () => void
 }

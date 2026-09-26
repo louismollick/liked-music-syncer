@@ -4,7 +4,13 @@ import path from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
 import { joinArtistNames } from '../domain'
 import type { Db } from '../library/db'
-import { artists, files, operations, tracks, unmanagedFiles } from '../library/schema'
+import {
+  artists,
+  files,
+  operations,
+  tracks,
+  unmanagedFiles,
+} from '../library/schema'
 import type { Match, MatchedRelease } from '../match/types'
 import { readTags, sha256, type TagFields } from '../tags/schema'
 import { exists, STAGING_DIR, sha256File, walkAudio } from './files'
@@ -37,13 +43,20 @@ function yearFromDate(date: string | null): number | null {
 
 function classifyLyrics(text: string | null): 'synced' | 'plain' | 'none' {
   if (!text) return 'none'
-  const timestamps = [...text.matchAll(/^\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/gm)]
+  const timestamps = [
+    ...text.matchAll(/^\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/gm),
+  ]
   if (timestamps.length === 0) return 'plain'
-  const allZero = timestamps.every((m) => Number(m[1]) === 0 && Number(m[2]) === 0 && Number(m[3] ?? 0) === 0)
+  const allZero = timestamps.every(
+    (m) => Number(m[1]) === 0 && Number(m[2]) === 0 && Number(m[3] ?? 0) === 0
+  )
   return allZero ? 'plain' : 'synced'
 }
 
-async function saveCover(dir: string, cover: Uint8Array | null): Promise<string | null> {
+async function saveCover(
+  dir: string,
+  cover: Uint8Array | null
+): Promise<string | null> {
   if (!cover) return null
   const digest = sha256(cover)
   await mkdir(dir, { recursive: true })
@@ -82,7 +95,9 @@ export function matchFromTags(fields: TagFields): Match | null {
     version: 1,
     sourceVideoId,
     catalogVideoId,
-    identityKey: releaseId ? `adopted:${releaseId}:${catalogVideoId}` : `adopted:video:${sourceVideoId}`,
+    identityKey: releaseId
+      ? `adopted:${releaseId}:${catalogVideoId}`
+      : `adopted:video:${sourceVideoId}`,
     release,
     title: fields.title ?? '',
     artists: credits,
@@ -91,7 +106,9 @@ export function matchFromTags(fields: TagFields): Match | null {
     durationSeconds: null,
     coverUrl: null,
     lyricsBrowseId: null,
-    resolutionMethod: (fields.lms.resolutionMethod as Match['resolutionMethod']) ?? 'watch_playlist',
+    resolutionMethod:
+      (fields.lms.resolutionMethod as Match['resolutionMethod']) ??
+      'watch_playlist',
   }
 }
 
@@ -112,8 +129,16 @@ export async function adoptFiles(
   root: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<AdoptResult> {
-  const known = new Set(deps.db.select({ path: files.relativePath }).from(files).all().map((row) => row.path))
-  const entries = (await walkAudio(root)).filter((entry) => !known.has(entry.relativePath))
+  const known = new Set(
+    deps.db
+      .select({ path: files.relativePath })
+      .from(files)
+      .all()
+      .map((row) => row.path)
+  )
+  const entries = (await walkAudio(root)).filter(
+    (entry) => !known.has(entry.relativePath)
+  )
   let adopted = 0
   let unmanaged = 0
   const suggested = new Set<string>()
@@ -125,29 +150,58 @@ export async function adoptFiles(
     try {
       read = readTags(absolute)
     } catch {
-      deps.db.insert(unmanagedFiles).values({ relativePath: entry.relativePath, size: entry.size, mtimeMs: entry.mtimeMs, seenAt: at }).onConflictDoNothing().run()
+      deps.db
+        .insert(unmanagedFiles)
+        .values({
+          relativePath: entry.relativePath,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          seenAt: at,
+        })
+        .onConflictDoNothing()
+        .run()
       unmanaged += 1
       continue
     }
-    const match = read.fields.lms.schemaVersion ? matchFromTags(read.fields) : null
+    const match = read.fields.lms.schemaVersion
+      ? matchFromTags(read.fields)
+      : null
     if (!match) {
       deps.db
         .insert(unmanagedFiles)
-        .values({ relativePath: entry.relativePath, size: entry.size, mtimeMs: entry.mtimeMs, seenAt: at })
-        .onConflictDoUpdate({ target: unmanagedFiles.relativePath, set: { size: entry.size, mtimeMs: entry.mtimeMs, seenAt: at } })
+        .values({
+          relativePath: entry.relativePath,
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          seenAt: at,
+        })
+        .onConflictDoUpdate({
+          target: unmanagedFiles.relativePath,
+          set: { size: entry.size, mtimeMs: entry.mtimeMs, seenAt: at },
+        })
         .run()
       unmanaged += 1
       continue
     }
     const lrcPath = path.join(root, sidecarPath(entry.relativePath))
-    const lrcText = (await exists(lrcPath)) ? (await readFile(lrcPath, 'utf8')).trim() : null
+    const lrcText = (await exists(lrcPath))
+      ? (await readFile(lrcPath, 'utf8')).trim()
+      : null
     const lyricsText = lrcText || read.fields.lyrics
     const lyricsStatus = classifyLyrics(lyricsText)
     const coverPath = await saveCover(deps.coversDir, read.cover)
     const contentSha = await sha256File(absolute)
     const lrcSha = lrcText !== null ? sha256(await readFile(lrcPath)) : null
     let identityKey = match.identityKey
-    for (let n = 2; deps.db.select({ id: tracks.id }).from(tracks).where(eq(tracks.identityKey, identityKey)).get(); n += 1) {
+    for (
+      let n = 2;
+      deps.db
+        .select({ id: tracks.id })
+        .from(tracks)
+        .where(eq(tracks.identityKey, identityKey))
+        .get();
+      n += 1
+    ) {
       identityKey = `${match.identityKey}:${n}`
     }
     const trackId = randomUUID()
@@ -199,28 +253,44 @@ export async function adoptFiles(
           writtenAt: at,
         })
         .run()
-      db.delete(unmanagedFiles).where(eq(unmanagedFiles.relativePath, entry.relativePath)).run()
+      db.delete(unmanagedFiles)
+        .where(eq(unmanagedFiles.relativePath, entry.relativePath))
+        .run()
     })
     linkAdoptedArtists(deps.db, trackId, match.artists)
     if (read.fields.lms.sourceOrigin === 'favorite_artist_release') {
-      for (const credit of match.artists) if (credit.channelId) suggested.add(`channel:${credit.channelId}`)
+      for (const credit of match.artists)
+        if (credit.channelId) suggested.add(`channel:${credit.channelId}`)
     }
     adopted += 1
   }
   for (const id of suggested) {
-    deps.db.update(artists).set({ suggested: true }).where(and(eq(artists.id, id), eq(artists.favorite, false))).run()
+    deps.db
+      .update(artists)
+      .set({ suggested: true })
+      .where(and(eq(artists.id, id), eq(artists.favorite, false)))
+      .run()
   }
   onProgress?.(entries.length, entries.length)
   return { adopted, unmanaged, suggestedArtists: suggested.size }
 }
 
-function linkAdoptedArtists(db: Db, trackId: string, credits: Match['artists']): void {
+function linkAdoptedArtists(
+  db: Db,
+  trackId: string,
+  credits: Match['artists']
+): void {
   credits.forEach((credit, position) => {
     const id = credit.channelId
       ? `channel:${credit.channelId}`
       : `name:${credit.name.normalize('NFKC').toLowerCase().trim()}`
-    db.insert(artists).values({ id, name: credit.name, channelId: credit.channelId }).onConflictDoNothing().run()
-    db.run(sql`INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (${trackId}, ${id}, ${position})`)
+    db.insert(artists)
+      .values({ id, name: credit.name, channelId: credit.channelId })
+      .onConflictDoNothing()
+      .run()
+    db.run(
+      sql`INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (${trackId}, ${id}, ${position})`
+    )
   })
 }
 
@@ -235,10 +305,18 @@ export interface OutsideEditReport {
  * hash; a hash that matches neither the record nor a pending operation is an
  * Outside Edit, recorded with which parts changed. Edited files are paused.
  */
-export async function detectOutsideEdits(deps: InventoryDeps, root: string): Promise<OutsideEditReport> {
+export async function detectOutsideEdits(
+  deps: InventoryDeps,
+  root: string
+): Promise<OutsideEditReport> {
   const rows = deps.db.select().from(files).all()
   const pending = new Set(
-    deps.db.select({ sha: operations.expectedSha256 }).from(operations).all().map((row) => row.sha).filter(Boolean)
+    deps.db
+      .select({ sha: operations.expectedSha256 })
+      .from(operations)
+      .all()
+      .map((row) => row.sha)
+      .filter(Boolean)
   )
   let edited = 0
   let missing = 0
@@ -253,17 +331,25 @@ export async function detectOutsideEdits(deps: InventoryDeps, root: string): Pro
       parts.push('deleted')
       missing += 1
     }
-    if (info && (info.size !== row.size || Math.abs(info.mtimeMs - row.mtimeMs) > 1)) {
+    if (
+      info &&
+      (info.size !== row.size || Math.abs(info.mtimeMs - row.mtimeMs) > 1)
+    ) {
       const digest = await sha256File(absolute)
       if (digest === row.contentSha256) {
-        deps.db.update(files).set({ mtimeMs: info.mtimeMs }).where(eq(files.trackId, row.trackId)).run()
+        deps.db
+          .update(files)
+          .set({ mtimeMs: info.mtimeMs })
+          .where(eq(files.trackId, row.trackId))
+          .run()
       } else if (!pending.has(digest)) {
         try {
           const read = readTags(absolute)
           const written = JSON.parse(row.tagFields) as TagFields
           const { coverSha256: a, ...restRead } = read.fields
           const { coverSha256: b, ...restWritten } = written
-          if (JSON.stringify(restRead) !== JSON.stringify(restWritten)) parts.push('tags')
+          if (JSON.stringify(restRead) !== JSON.stringify(restWritten))
+            parts.push('tags')
           if (a !== b) parts.push('artwork')
           if (parts.length === 0) parts.push('audio')
         } catch {
@@ -274,11 +360,16 @@ export async function detectOutsideEdits(deps: InventoryDeps, root: string): Pro
     if (row.lrcSha256 && info) {
       const lrc = path.join(root, sidecarPath(row.relativePath))
       const lrcDigest = (await exists(lrc)) ? sha256(await readFile(lrc)) : null
-      if (lrcDigest !== row.lrcSha256 && !(lrcDigest && pending.has(lrcDigest))) parts.push('sidecar')
+      if (lrcDigest !== row.lrcSha256 && !(lrcDigest && pending.has(lrcDigest)))
+        parts.push('sidecar')
     }
     if (parts.length) {
       edited += 1
-      deps.db.update(files).set({ outsideEdit: JSON.stringify(parts) }).where(eq(files.trackId, row.trackId)).run()
+      deps.db
+        .update(files)
+        .set({ outsideEdit: JSON.stringify(parts) })
+        .where(eq(files.trackId, row.trackId))
+        .run()
     }
   }
   return { checked: rows.length, edited, missing }
@@ -289,7 +380,10 @@ export async function detectOutsideEdits(deps: InventoryDeps, root: string): Pro
  * Artifacts whose final path holds the expected bytes are committed; the rest
  * are left for their step to run again.
  */
-export async function recoverOperations(deps: InventoryDeps, root: string): Promise<number> {
+export async function recoverOperations(
+  deps: InventoryDeps,
+  root: string
+): Promise<number> {
   const ops = deps.db.select().from(operations).all()
   let recovered = 0
   for (const op of ops) {
@@ -304,22 +398,45 @@ export async function recoverOperations(deps: InventoryDeps, root: string): Prom
         } catch {
           fields = null
         }
-        const existing = deps.db.select().from(files).where(eq(files.trackId, op.trackId)).get()
+        const existing = deps.db
+          .select()
+          .from(files)
+          .where(eq(files.trackId, op.trackId))
+          .get()
         if (existing) {
           deps.db
             .update(files)
-            .set({ relativePath: op.toPath, contentSha256: digest, size: info.size, mtimeMs: info.mtimeMs, ...(fields ? { tagFields: fields } : {}), outsideEdit: null })
+            .set({
+              relativePath: op.toPath,
+              contentSha256: digest,
+              size: info.size,
+              mtimeMs: info.mtimeMs,
+              ...(fields ? { tagFields: fields } : {}),
+              outsideEdit: null,
+            })
             .where(eq(files.trackId, op.trackId))
             .run()
         } else if (fields) {
           deps.db
             .insert(files)
-            .values({ trackId: op.trackId, relativePath: op.toPath, size: info.size, mtimeMs: info.mtimeMs, contentSha256: digest, tagFields: fields, writtenAt: deps.now().toISOString() })
+            .values({
+              trackId: op.trackId,
+              relativePath: op.toPath,
+              size: info.size,
+              mtimeMs: info.mtimeMs,
+              contentSha256: digest,
+              tagFields: fields,
+              writtenAt: deps.now().toISOString(),
+            })
             .onConflictDoNothing()
             .run()
         }
       } else {
-        deps.db.update(files).set({ lrcSha256: digest }).where(eq(files.trackId, op.trackId)).run()
+        deps.db
+          .update(files)
+          .set({ lrcSha256: digest })
+          .where(eq(files.trackId, op.trackId))
+          .run()
       }
       recovered += 1
     }
