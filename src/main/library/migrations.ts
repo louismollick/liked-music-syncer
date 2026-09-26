@@ -143,6 +143,7 @@ export const MIGRATIONS: string[] = [
     track_id TEXT,
     kind TEXT NOT NULL,
     path TEXT NOT NULL,
+    remote_target TEXT,
     reason TEXT NOT NULL,
     created_at TEXT NOT NULL,
     done_at TEXT
@@ -157,6 +158,7 @@ export const MIGRATIONS: string[] = [
     from_path TEXT,
     to_path TEXT NOT NULL,
     expected_sha256 TEXT,
+    audio_video_id TEXT,
     phase TEXT NOT NULL,
     started_at TEXT NOT NULL
   );

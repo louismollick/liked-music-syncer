@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -13,7 +19,11 @@ import {
   sourceSnapshots,
   tracks,
 } from '../../src/main/library/schema'
-import { updateWantedStates } from '../../src/main/reconcile/sources'
+import {
+  checkArtistCatalog,
+  SuspiciousSnapshotError,
+  updateWantedStates,
+} from '../../src/main/reconcile/sources'
 import { readTags, writeTags } from '../../src/main/tags/schema'
 import { credit, Harness, release, releaseMatch, song } from './harness'
 
@@ -152,6 +162,60 @@ describe('reconciler', () => {
     expect(h.contributions().filter((row) => row.active)).toHaveLength(24)
   })
 
+  it('keeps the previous Favorite Artist catalog after a suspicious partial response', async () => {
+    const h = harness()
+    const artistId = 'channel:artist-1'
+    const full = release(
+      'catalog-full',
+      ...Array.from({ length: 24 }, (_, i) => song(`catalog-${i}`))
+    )
+    h.catalog.refs = [
+      {
+        browseId: full.browseId,
+        title: full.title,
+        kindLabel: 'Album',
+        year: 2024,
+        thumbnailUrl: null,
+      },
+    ]
+    h.catalog.releases.set(full.browseId, full)
+    h.db
+      .insert(artists)
+      .values({
+        id: artistId,
+        name: credit.name,
+        channelId: credit.channelId,
+        favorite: true,
+      })
+      .run()
+    const check = () =>
+      checkArtistCatalog({
+        db: h.db,
+        catalog: h.catalog,
+        artistId,
+        channelId: credit.channelId!,
+        now: () => h.time,
+      })
+    await check()
+    const checkedAt = h.db
+      .select()
+      .from(artists)
+      .where(eq(artists.id, artistId))
+      .get()?.catalogCheckedAt
+    h.catalog.releases.set(
+      full.browseId,
+      release('catalog-full', song('catalog-0'), song('catalog-1'))
+    )
+    await expect(check()).rejects.toBeInstanceOf(SuspiciousSnapshotError)
+    expect(
+      h.contributions().filter((row) => row.active && row.kind === 'catalog')
+    ).toHaveLength(24)
+    expect(
+      h.db.select().from(artists).where(eq(artists.id, artistId)).get()
+        ?.catalogCheckedAt
+    ).toBe(checkedAt)
+  })
+
   it('retries transient match errors with a fake clock, stops after backoff, and resets on retry', async () => {
     const h = harness()
     h.settings.remoteEnabled = false
@@ -264,6 +328,128 @@ describe('reconciler', () => {
     expect(h.file(h.rows()[0].id)?.relativePath).toBe(first.relativePath)
   })
 
+  it('keeps an unmanaged sidecar beside a free audio path', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    h.lyricsText = '[00:01.00]App lyrics'
+    const blocker = path.join(h.library, 'Test Artist', 'Lyrics', 'Lyrics.lrc')
+    mkdirSync(path.dirname(blocker), { recursive: true })
+    writeFileSync(blocker, 'unmanaged lyrics')
+    await liked(h, song('lyrics-collision', 'Lyrics'))
+    const file = h.file(h.rows()[0].id)!
+    expect(file.relativePath).toMatch(/Lyrics \[[a-f0-9]{6}\]\.m4a$/)
+    expect(readFileSync(blocker, 'utf8')).toBe('unmanaged lyrics')
+    expect(
+      existsSync(
+        path.join(h.library, file.relativePath.replace(/\.m4a$/, '.lrc'))
+      )
+    ).toBe(true)
+  })
+
+  it('moves a retag to a suffix when an unowned sidecar appeared', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    await liked(h, song('late-lyrics', 'Late Lyrics'))
+    const track = h.rows()[0]
+    const original = h.file(track.id)!.relativePath
+    const blocker = path.join(h.library, original.replace(/\.m4a$/, '.lrc'))
+    writeFileSync(blocker, 'unmanaged lyrics')
+    h.lyricsText = '[00:01.00]App lyrics'
+    h.reconciler.refresh({ kind: 'track', id: track.id })
+    await h.idle()
+    expect(h.file(track.id)!.relativePath).not.toBe(original)
+    expect(readFileSync(blocker, 'utf8')).toBe('unmanaged lyrics')
+  })
+
+  it('reuploads a remote object deleted after its upload was recorded', async () => {
+    const h = harness()
+    await liked(h, song('remote-audit'))
+    const track = h.rows()[0]
+    const remote = path.join(h.remote, h.file(track.id)!.relativePath)
+    rmSync(remote)
+    await h.check()
+    expect(existsSync(remote)).toBe(true)
+    expect(h.upload(track.id)?.remoteSize).toBeGreaterThan(0)
+  })
+
+  it('leaves an in-flight track No Longer Wanted after a check removes its like', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    let entered!: () => void
+    let release!: () => void
+    const downloading = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const original = h.deps.downloader.download
+    h.deps.downloader.download = async (...args) => {
+      entered()
+      await blocked
+      return original(...args)
+    }
+    h.catalog.likes = [song('unliked-during-download')]
+    await h.reconciler.start()
+    await downloading
+    const id = h.rows()[0].id
+    h.catalog.likes = []
+    h.catalog.declaredCount = 0
+    await h.reconciler.check()
+    expect(h.rows()[0].state).toBe('no_longer_wanted')
+    release()
+    await h.idle()
+    expect(
+      h.db.select().from(tracks).where(eq(tracks.id, id)).get()?.state
+    ).toBe('no_longer_wanted')
+  })
+
+  it('waits for an aborted step before preparing a changed library folder', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    let entered!: () => void
+    let release!: () => void
+    const downloading = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const original = h.deps.downloader.download
+    h.deps.downloader.download = async (...args) => {
+      entered()
+      await blocked
+      return original(...args)
+    }
+    h.catalog.likes = [song('folder-switch')]
+    await h.reconciler.start()
+    await downloading
+    const oldFolder = h.library
+    h.settings.libraryFolder = path.join(h.root, 'new-library')
+    mkdirSync(h.settings.libraryFolder)
+    let changed = false
+    const change = h.reconciler.libraryFolderChanged().then(() => {
+      changed = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(changed).toBe(false)
+    release()
+    await change
+    await h.idle()
+    expect(h.file(h.rows()[0].id)).toBeTruthy()
+    expect(
+      existsSync(path.join(oldFolder, h.file(h.rows()[0].id)!.relativePath))
+    ).toBe(false)
+    expect(
+      existsSync(
+        path.join(
+          h.settings.libraryFolder,
+          h.file(h.rows()[0].id)!.relativePath
+        )
+      )
+    ).toBe(true)
+  })
+
   it('gates No Longer Wanted until all configured sources have succeeded', async () => {
     const h = harness()
     h.settings.remoteEnabled = false
@@ -333,6 +519,7 @@ describe('reconciler', () => {
         kind: 'place',
         toPath: file.relativePath,
         expectedSha256: file.contentSha256,
+        audioVideoId: file.audioVideoId,
         phase: 'started',
         startedAt: h.time.toISOString(),
       })
@@ -343,6 +530,7 @@ describe('reconciler', () => {
     )
     expect(count).toBe(1)
     expect(h.file(row.id)?.outsideEdit).toBeNull()
+    expect(h.file(row.id)?.audioVideoId).toBe('crash')
     expect(existsSync(path.join(h.library, '.lms-staging'))).toBe(false)
     expect(h.db.select().from(operations).all()).toHaveLength(0)
   })

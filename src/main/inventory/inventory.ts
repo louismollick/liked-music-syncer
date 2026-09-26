@@ -410,6 +410,7 @@ export async function recoverOperations(
             .set({
               relativePath: op.toPath,
               contentSha256: digest,
+              audioVideoId: op.audioVideoId,
               size: info.size,
               mtimeMs: info.mtimeMs,
               ...(fields ? { tagFields: fields } : {}),
@@ -426,6 +427,7 @@ export async function recoverOperations(
               size: info.size,
               mtimeMs: info.mtimeMs,
               contentSha256: digest,
+              audioVideoId: op.audioVideoId,
               tagFields: fields,
               writtenAt: deps.now().toISOString(),
             })

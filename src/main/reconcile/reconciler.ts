@@ -42,6 +42,7 @@ import {
   updateWantedStates,
 } from './sources'
 import {
+  auditRemote,
   coversDir,
   createRemoteIndexCache,
   deleteTracks,
@@ -105,6 +106,8 @@ export class Reconciler {
   private sourceErrors = new Map<string, string>()
   private readonly remoteIndex
   private loopPromise: Promise<void> | null = null
+  private workPromise: Promise<void> | null = null
+  private folderChangePromise: Promise<void> | null = null
 
   constructor(private readonly deps: ReconcilerDeps) {
     this.remoteIndex = createRemoteIndexCache(deps.rclone)
@@ -119,6 +122,7 @@ export class Reconciler {
     if (this.running) return
     this.running = true
     await this.prepareLibrary()
+    await this.auditRemote()
     this.loopPromise = this.loop()
     this.checkTimer = setInterval(() => void this.check(), CHECK_INTERVAL_MS)
     void this.check()
@@ -148,8 +152,28 @@ export class Reconciler {
 
   /** Re-run inventory work after the library folder changes. */
   async libraryFolderChanged(): Promise<void> {
-    await this.prepareLibrary()
-    this.markDirty()
+    if (this.folderChangePromise) await this.folderChangePromise
+    const change = (async () => {
+      this.controller?.abort(new Error('library folder changed'))
+      await this.workPromise
+      await this.prepareLibrary()
+      await this.auditRemote()
+      this.markDirty()
+    })()
+    this.folderChangePromise = change
+    try {
+      await change
+    } finally {
+      if (this.folderChangePromise === change) this.folderChangePromise = null
+    }
+  }
+
+  private async auditRemote(): Promise<void> {
+    try {
+      if ((await auditRemote(this.deps)).length) this.markDirty()
+    } catch (error) {
+      console.warn('[reconciler] remote audit', error)
+    }
   }
 
   private async prepareLibrary(): Promise<void> {
@@ -251,6 +275,7 @@ export class Reconciler {
       linkContributions(this.db, this.deps.now)
       claimAdoptedFiles(this.db, this.deps.now)
       this.refreshWantedStates()
+      await this.auditRemote()
     } finally {
       this.checking = false
       this.deps.onLibraryChanged(null)
@@ -402,10 +427,11 @@ export class Reconciler {
     this.markDirty()
   }
 
-  delete(trackIds: string[], where: 'local' | 'remote' | 'both'): void {
-    deleteTracks(this.deps, trackIds, where)
+  delete(trackIds: string[], where: 'local' | 'remote' | 'both'): string[] {
+    const deleted = deleteTracks(this.deps, trackIds, where)
     this.deps.onLibraryChanged(null)
     this.markDirty()
+    return deleted
   }
 
   // ------------------------------------------------------------ worker
@@ -436,6 +462,7 @@ export class Reconciler {
     const toPending: string[] = []
     const toDone: string[] = []
     for (const track of rows) {
+      if (track.id === this.current?.trackId) continue
       const step = nextStep(
         this.db,
         track,
@@ -480,6 +507,7 @@ export class Reconciler {
 
   private async loop(): Promise<void> {
     while (this.running) {
+      if (this.folderChangePromise) await this.folderChangePromise
       if (!this.deps.settings().libraryFolder) {
         // Nothing can be written until a folder is chosen; wait instead of failing tracks.
         this.current = null
@@ -500,7 +528,13 @@ export class Reconciler {
         await this.idle(this.nextWakeDelay())
         continue
       }
-      await this.work(track.id)
+      const work = this.work(track.id)
+      this.workPromise = work
+      try {
+        await work
+      } finally {
+        if (this.workPromise === work) this.workPromise = null
+      }
     }
   }
 
@@ -548,7 +582,10 @@ export class Reconciler {
         .from(tracks)
         .where(eq(tracks.id, trackId))
         .get()
-      if (!track) return
+      if (!track || track.state === 'no_longer_wanted' || signal.aborted) {
+        this.current = null
+        return
+      }
       const file = this.db
         .select()
         .from(files)
@@ -571,7 +608,7 @@ export class Reconciler {
             lastError: null,
             ...(acquired ? { completedAt: this.deps.now().toISOString() } : {}),
           })
-          .where(eq(tracks.id, trackId))
+          .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
           .run()
         this.current = null
         this.deps.onLibraryChanged([trackId])
@@ -582,7 +619,7 @@ export class Reconciler {
       this.db
         .update(tracks)
         .set({ currentStep: step })
-        .where(eq(tracks.id, trackId))
+        .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
         .run()
       this.emitSoon()
       const run = {
@@ -615,8 +652,9 @@ export class Reconciler {
           this.db
             .update(tracks)
             .set({ state: 'pending', currentStep: null })
-            .where(eq(tracks.id, trackId))
+            .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
             .run()
+          this.current = null
           return
         }
         this.fail(trackId, step, error)
@@ -626,7 +664,7 @@ export class Reconciler {
     this.db
       .update(tracks)
       .set({ state: 'pending', currentStep: null })
-      .where(eq(tracks.id, trackId))
+      .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
       .run()
   }
 
@@ -638,6 +676,10 @@ export class Reconciler {
       .from(tracks)
       .where(eq(tracks.id, trackId))
       .get()
+    if (track?.state === 'no_longer_wanted') {
+      this.current = null
+      return
+    }
     const attempts = (track?.attempts ?? 0) + 1
     const giveUp = kind === 'permanent' || attempts > BACKOFF_MS.length
     console.warn(

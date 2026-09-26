@@ -170,6 +170,7 @@ export const tombstones = sqliteTable('tombstones', {
   trackId: text('track_id'),
   kind: text('kind').notNull(),
   path: text('path').notNull(),
+  remoteTarget: text('remote_target'),
   reason: text('reason').notNull(),
   createdAt: text('created_at').notNull(),
   doneAt: text('done_at'),
@@ -184,6 +185,7 @@ export const operations = sqliteTable('operations', {
   fromPath: text('from_path'),
   toPath: text('to_path').notNull(),
   expectedSha256: text('expected_sha256'),
+  audioVideoId: text('audio_video_id'),
   phase: text('phase').notNull(),
   startedAt: text('started_at').notNull(),
 })

@@ -296,6 +296,27 @@ export async function checkArtistCatalog(options: {
         staged.push({ kind: 'catalog', artistId, release: releaseInfo, track })
       }
     }
+    const previousActive =
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(contributions)
+        .where(
+          and(
+            eq(contributions.kind, 'catalog'),
+            eq(contributions.artistId, artistId),
+            eq(contributions.active, true)
+          )
+        )
+        .get()?.count ?? 0
+    const newCount = new Set(
+      staged.map((raw) =>
+        catalogSourceKey(artistId, raw.release.browseId, raw.track.videoId)
+      )
+    ).size
+    if (previousActive >= 20 && newCount < previousActive * 0.5)
+      throw new SuspiciousSnapshotError(
+        `Favorite Artist catalog dropped from ${previousActive} to ${newCount}; keeping the previous list.`
+      )
     const committedAt = nowIso(now)
     db.transaction((tx) => {
       const seen = new Set<string>()

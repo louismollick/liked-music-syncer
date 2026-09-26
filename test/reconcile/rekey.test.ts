@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -198,6 +204,80 @@ describe('Refresh and re-key', () => {
     ).toBeUndefined()
     expect(h.file('empty-target')?.relativePath).toBe(oldFile.relativePath)
     expect(h.db.select().from(tombstones).all()).toHaveLength(0)
+  })
+
+  it('transfers the good source file when the target record points to damaged audio', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    const source = song('source-damaged', 'Source')
+    const targetSong = song('target-damaged', 'Target')
+    const album = release('release-damaged', targetSong)
+    h.matcher.matches.set('target-damaged', releaseMatch(targetSong, album))
+    h.catalog.likes = [source, targetSong]
+    await h.start()
+    await h.stop()
+    const old = h.row('video:source-damaged')!
+    const target = h.row('release-damaged:target-damaged')!
+    const good = h.file(old.id)!
+    const targetFile = h.file(target.id)!
+    writeFileSync(
+      path.join(h.library, targetFile.relativePath),
+      Buffer.alloc(targetFile.size)
+    )
+    h.matcher.matches.set(
+      'source-damaged',
+      releaseMatch(source, album, 'target-damaged')
+    )
+    await runMatch(h.deps, old, {
+      signal: new AbortController().signal,
+      progress: () => {},
+    })
+    expect(h.file(target.id)?.relativePath).toBe(good.relativePath)
+    expect(existsSync(path.join(h.library, good.relativePath))).toBe(true)
+    expect(h.db.select().from(tombstones).all()).toHaveLength(0)
+  })
+
+  it('matches from an active catalog contribution before an inactive like', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    h.catalog.likes = [song('inactive-like')]
+    await h.start()
+    await h.stop()
+    const track = h.rows()[0]
+    const album = release('active-album', song('active-catalog'))
+    h.catalog.releases.set(album.browseId, album)
+    h.db
+      .update(contributions)
+      .set({ active: false })
+      .where(eq(contributions.trackId, track.id))
+      .run()
+    h.db
+      .insert(contributions)
+      .values({
+        id: 'active-catalog',
+        sourceKey: 'catalog:artist:active-album:active-catalog',
+        kind: 'catalog',
+        artistId: 'artist',
+        trackId: track.id,
+        sourceVideoId: 'active-catalog',
+        releaseId: album.browseId,
+        firstSeenAt: h.time.toISOString(),
+        lastSeenAt: h.time.toISOString(),
+        active: true,
+        raw: JSON.stringify({
+          kind: 'catalog',
+          artistId: 'artist',
+          release: { ...album, tracks: undefined },
+          track: album.tracks[0],
+        }),
+      })
+      .run()
+    const match = vi.spyOn(h.matcher, 'match')
+    await runMatch(h.deps, track, {
+      signal: new AbortController().signal,
+      progress: () => {},
+    })
+    expect(match.mock.calls[0][0].kind).toBe('catalog')
   })
 
   it('refreshes a changed catalog video and removes the old file after replacement', async () => {

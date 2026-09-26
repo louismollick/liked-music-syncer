@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { and, eq, inArray, like } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
@@ -98,6 +98,11 @@ export function libraryRoot(settings: Settings): string {
 
 export function targetKey(target: RemoteTarget): string {
   return `${target.remote.replace(/:$/, '')}|${target.folder.replace(/\/+$/, '')}`
+}
+
+function targetFromKey(key: string): RemoteTarget {
+  const separator = key.indexOf('|')
+  return { remote: key.slice(0, separator), folder: key.slice(separator + 1) }
 }
 
 export function remoteTarget(settings: Settings): RemoteTarget | null {
@@ -245,9 +250,11 @@ function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
     .from(contributions)
     .where(eq(contributions.trackId, track.id))
     .all()
-  const ordered = [...rows].sort((a, b) => Number(b.active) - Number(a.active))
-  const liked = ordered.find((row) => row.kind === 'liked')
-  const chosen = liked ?? ordered.find((row) => row.kind === 'catalog')
+  const active = rows.filter((row) => row.active)
+  const candidates = active.length ? active : rows
+  const chosen =
+    candidates.find((row) => row.kind === 'liked') ??
+    candidates.find((row) => row.kind === 'catalog')
   if (chosen) {
     const raw = JSON.parse(chosen.raw) as LikedRaw | CatalogRaw
     if (raw.kind === 'liked') return { kind: 'liked', song: raw.song }
@@ -350,7 +357,13 @@ function adoptedClaim(db: Db, match: Match): TrackRow | undefined {
 }
 
 /** Moves `from`'s contributions (and file, when `into` has none) into `into`, then deletes `from`. */
-function mergeTracks(db: Db, from: TrackRow, into: TrackRow, at: string): void {
+function mergeTracks(
+  db: Db,
+  from: TrackRow,
+  into: TrackRow,
+  at: string,
+  survivorFileValid: boolean
+): void {
   db.update(contributions)
     .set({ trackId: into.id })
     .where(eq(contributions.trackId, from.id))
@@ -370,7 +383,8 @@ function mergeTracks(db: Db, from: TrackRow, into: TrackRow, at: string): void {
     .from(uploads)
     .where(eq(uploads.trackId, from.id))
     .get()
-  if (fromFile && !intoFile) {
+  if (fromFile && (!intoFile || !survivorFileValid)) {
+    if (intoFile) db.delete(files).where(eq(files.trackId, into.id)).run()
     db.update(files)
       .set({ trackId: into.id })
       .where(eq(files.trackId, from.id))
@@ -421,6 +435,7 @@ function mergeTracks(db: Db, from: TrackRow, into: TrackRow, at: string): void {
           trackId: null,
           kind: 'remote',
           path: fromUpload.remotePath,
+          remoteTarget: fromUpload.remoteTarget,
           reason: 'merged',
           createdAt: at,
         })
@@ -432,6 +447,7 @@ function mergeTracks(db: Db, from: TrackRow, into: TrackRow, at: string): void {
           trackId: null,
           kind: 'remote',
           path: fromUpload.lrcRemotePath,
+          remoteTarget: fromUpload.remoteTarget,
           reason: 'merged',
           createdAt: at,
         })
@@ -448,6 +464,24 @@ function mergeTracks(db: Db, from: TrackRow, into: TrackRow, at: string): void {
     })
     .run()
   db.delete(tracks).where(eq(tracks.id, from.id)).run()
+}
+
+async function validFile(
+  root: string,
+  file: FileRow | undefined
+): Promise<boolean> {
+  if (!file) return false
+  const absolute = path.join(root, file.relativePath)
+  try {
+    const info = await stat(absolute)
+    return (
+      info.isFile() &&
+      info.size === file.size &&
+      (await sha256File(absolute)) === file.contentSha256
+    )
+  } catch {
+    return false
+  }
 }
 
 export interface MatchOutcome {
@@ -538,6 +572,25 @@ export async function runMatch(
 
   const at = iso(deps)
   let survivor = track.id
+  let candidate = deps.db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.identityKey, match.identityKey))
+    .get()
+  if (candidate?.id === track.id) candidate = undefined
+  if (!candidate) candidate = adoptedClaim(deps.db, match)
+  const candidateFile =
+    candidate && candidate.id !== track.id
+      ? deps.db
+          .select()
+          .from(files)
+          .where(eq(files.trackId, candidate.id))
+          .get()
+      : undefined
+  const survivorFileValid = candidateFile
+    ? await validFile(libraryRoot(settings), candidateFile)
+    : false
+  run.signal.throwIfAborted()
   deps.db.transaction((tx) => {
     const db = tx as unknown as Db
     const current = db
@@ -558,7 +611,7 @@ export async function runMatch(
       if (claimed && claimed.id !== current.id) target = claimed
     }
     if (target && target.id !== current.id) {
-      mergeTracks(db, current, target, at)
+      mergeTracks(db, current, target, at, survivorFileValid)
       survivor = target.id
     }
     const release = match.release
@@ -643,7 +696,7 @@ function takenChecker(db: Db, root: string, trackId: string) {
       .map((row) => pathKey(row.path))
   )
   const own = db
-    .select({ path: files.relativePath })
+    .select({ path: files.relativePath, lrcSha256: files.lrcSha256 })
     .from(files)
     .where(eq(files.trackId, trackId))
     .get()
@@ -651,6 +704,9 @@ function takenChecker(db: Db, root: string, trackId: string) {
   return async (relative: string) => {
     const key = pathKey(relative)
     if (reserved.has(key)) return true
+    const sidecar = sidecarPath(relative)
+    const ownsSidecar = key === ownKey && Boolean(own?.lrcSha256)
+    if (!ownsSidecar && (await exists(path.join(root, sidecar)))) return true
     // The track's own file is not a collision (case-only differences on macOS).
     if (key === ownKey) return false
     return exists(path.join(root, relative))
@@ -728,18 +784,25 @@ async function placeTrackFiles(
   step: StepKind,
   stagedAudio: string,
   stagedSidecar: string | null,
-  previous: FileRow | undefined
+  previous: FileRow | undefined,
+  audioVideoId: string | null,
+  signal: AbortSignal
 ): Promise<PlacedFile> {
+  signal.throwIfAborted()
   const at = iso(deps)
   const audioSha = await sha256File(stagedAudio)
   const sidecarSha = stagedSidecar
     ? sha256(await readFile(stagedSidecar))
     : null
+  const taken = takenChecker(deps.db, root, track.id)
   const keepPath =
-    previous && previous.relativePath === desiredPath(track)
+    previous &&
+    previous.relativePath === desiredPath(track) &&
+    !(await taken(previous.relativePath))
       ? previous.relativePath
       : null
   let target = keepPath ?? (await chooseFreePath(deps.db, root, track))
+  signal.throwIfAborted()
   deps.db.transaction((tx) => {
     journal(
       tx as unknown as Db,
@@ -752,6 +815,7 @@ async function placeTrackFiles(
           fromPath: previous?.relativePath ?? null,
           toPath: target,
           expectedSha256: audioSha,
+          audioVideoId,
         },
         ...(stagedSidecar
           ? [
@@ -772,9 +836,11 @@ async function placeTrackFiles(
   })
   const absolute = (relative: string) => path.join(root, relative)
   if (keepPath) {
+    signal.throwIfAborted()
     await replaceOwned(stagedAudio, absolute(target))
   } else {
     for (let attempt = 0; ; attempt += 1) {
+      signal.throwIfAborted()
       try {
         await placeNoClobber(stagedAudio, absolute(target))
         break
@@ -785,18 +851,21 @@ async function placeTrackFiles(
     }
   }
   const lrcTarget = absolute(sidecarPath(target))
+  signal.throwIfAborted()
   if (stagedSidecar) {
-    await replaceOwned(stagedSidecar, lrcTarget)
+    if (previous?.lrcSha256 && previous.relativePath === target)
+      await replaceOwned(stagedSidecar, lrcTarget)
+    else await placeNoClobber(stagedSidecar, lrcTarget)
   } else if (previous?.lrcSha256 && previous.relativePath === target) {
     await rm(lrcTarget, { force: true })
   }
   if (previous && previous.relativePath !== target) {
+    signal.throwIfAborted()
     await rm(absolute(previous.relativePath), { force: true })
     if (previous.lrcSha256)
       await rm(absolute(sidecarPath(previous.relativePath)), { force: true })
     await pruneEmptyDirs(root, path.dirname(absolute(previous.relativePath)))
   }
-  const { stat } = await import('node:fs/promises')
   const info = await stat(absolute(target))
   return {
     relativePath: target,
@@ -860,6 +929,7 @@ export async function runAcquire(
       ({ fraction }) => run.progress(fraction * 0.9),
       run.signal
     )
+    run.signal.throwIfAborted()
     const fields = desiredFieldsFor(deps.db, track)
     writeTags(audio, fields, await coverBytes(track))
     const sidecar = await writeSidecarStaged(dir, desiredSidecar(track))
@@ -875,7 +945,9 @@ export async function runAcquire(
       'acquire',
       audio,
       sidecar,
-      previous
+      previous,
+      match.catalogVideoId,
+      run.signal
     )
     commitFile(deps, track, 'acquire', placed, fields, match.catalogVideoId)
     run.progress(1)
@@ -901,14 +973,22 @@ export async function runRetag(
   await mkdir(dir, { recursive: true })
   try {
     const desired = desiredFieldsFor(deps.db, track)
-    if (materialDiff(parseFields(file), desired).length === 0) {
+    const content = desiredSidecar(track)
+    const lrc = path.join(root, sidecarPath(file.relativePath))
+    const sidecarBlocked = Boolean(
+      content && !file.lrcSha256 && (await exists(lrc))
+    )
+    if (
+      materialDiff(parseFields(file), desired).length === 0 &&
+      !sidecarBlocked
+    ) {
       // Only the sidecar differs: leave the audio (and its upload) untouched.
-      const content = desiredSidecar(track)
-      const lrc = path.join(root, sidecarPath(file.relativePath))
+      run.signal.throwIfAborted()
       if (content) {
         const staged = await writeSidecarStaged(dir, content)
-        await replaceOwned(staged!, lrc)
-      } else {
+        if (file.lrcSha256) await replaceOwned(staged!, lrc)
+        else await placeNoClobber(staged!, lrc)
+      } else if (file.lrcSha256) {
         await rm(lrc, { force: true })
       }
       deps.db
@@ -921,6 +1001,7 @@ export async function runRetag(
     }
     const staged = path.join(dir, 'audio.m4a')
     await copyToStaging(path.join(root, file.relativePath), staged)
+    run.signal.throwIfAborted()
     const fields = desiredFieldsFor(deps.db, track)
     writeTags(staged, fields, await coverBytes(track))
     const sidecar = await writeSidecarStaged(dir, desiredSidecar(track))
@@ -931,7 +1012,9 @@ export async function runRetag(
       'retag',
       staged,
       sidecar,
-      { ...file, relativePath: file.relativePath }
+      file,
+      file.audioVideoId,
+      run.signal
     )
     commitFile(deps, track, 'retag', placed, fields, file.audioVideoId)
     run.progress(1)
@@ -953,6 +1036,7 @@ export async function runMove(
     .get()
   if (!file) throw new Error('No file to move')
   let target = await chooseFreePath(deps.db, root, track)
+  run.signal.throwIfAborted()
   const at = iso(deps)
   deps.db.transaction((tx) => {
     journal(
@@ -996,10 +1080,16 @@ export async function runMove(
   }
   if (file.lrcSha256) {
     const lrcFrom = path.join(root, sidecarPath(file.relativePath))
-    if (await exists(lrcFrom))
-      await placeNoClobber(lrcFrom, path.join(root, sidecarPath(target))).catch(
-        async () => rm(lrcFrom, { force: true })
-      )
+    if (await exists(lrcFrom)) {
+      try {
+        await placeNoClobber(lrcFrom, path.join(root, sidecarPath(target)))
+      } catch (error) {
+        await placeNoClobber(path.join(root, target), from).catch(
+          () => undefined
+        )
+        throw error
+      }
+    }
   }
   await pruneEmptyDirs(root, path.dirname(from))
   deps.db.transaction((tx) => {
@@ -1045,6 +1135,36 @@ export function createRemoteIndexCache(rclone: Rclone): RemoteIndexCache {
       cached = null
     },
   }
+}
+
+/** Drop records for remote objects removed or resized outside the app. */
+export async function auditRemote(deps: StepDeps): Promise<string[]> {
+  const target = remoteTarget(deps.settings())
+  if (!target) return []
+  const listing = await deps.rclone.list(target, {})
+  const key = targetKey(target)
+  const stale: string[] = []
+  for (const row of deps.db
+    .select()
+    .from(uploads)
+    .where(eq(uploads.remoteTarget, key))
+    .all()) {
+    const audio = row.remotePath
+      ? listing.get(row.remotePath.normalize('NFC'))
+      : null
+    const sidecar = row.lrcRemotePath
+      ? listing.get(row.lrcRemotePath.normalize('NFC'))
+      : null
+    if (
+      (row.remotePath && (!audio || audio.size !== row.remoteSize)) ||
+      (row.lrcRemotePath && (!sidecar || sidecar.size !== row.lrcRemoteSize))
+    ) {
+      stale.push(row.trackId)
+    }
+  }
+  if (stale.length)
+    deps.db.delete(uploads).where(inArray(uploads.trackId, stale)).run()
+  return stale
 }
 
 export async function runUpload(
@@ -1244,7 +1364,10 @@ export async function processTombstones(
         await pruneEmptyDirs(settings.libraryFolder, path.dirname(absolute))
       }
     } else {
-      if (!target) continue
+      const storedTarget = row.remoteTarget
+        ? targetFromKey(row.remoteTarget)
+        : target
+      if (!storedTarget) continue
       const owner = row.path.endsWith('.lrc')
         ? deps.db
             .select()
@@ -1256,7 +1379,8 @@ export async function processTombstones(
             .from(uploads)
             .where(eq(uploads.remotePath, row.path))
             .get()
-      if (!owner) await deps.rclone.delete(target, row.path, signal)
+      if (!owner || owner.remoteTarget !== targetKey(storedTarget))
+        await deps.rclone.delete(storedTarget, row.path, signal)
     }
     deps.db
       .update(tombstones)
@@ -1302,11 +1426,25 @@ export function deleteTracks(
   deps: StepDeps,
   trackIds: string[],
   where: 'local' | 'remote' | 'both'
-): void {
+): string[] {
   const at = iso(deps)
+  const deleted: string[] = []
   deps.db.transaction((tx) => {
     const db = tx as unknown as Db
     for (const trackId of trackIds) {
+      const track = db.select().from(tracks).where(eq(tracks.id, trackId)).get()
+      const active = db
+        .select({ id: contributions.id })
+        .from(contributions)
+        .where(
+          and(
+            eq(contributions.trackId, trackId),
+            eq(contributions.active, true)
+          )
+        )
+        .get()
+      if (track?.state !== 'no_longer_wanted' || active) continue
+      deleted.push(trackId)
       const file = db
         .select()
         .from(files)
@@ -1349,6 +1487,7 @@ export function deleteTracks(
               trackId,
               kind: 'remote',
               path: upload.remotePath,
+              remoteTarget: upload.remoteTarget,
               reason: 'deleted',
               createdAt: at,
             })
@@ -1360,6 +1499,7 @@ export function deleteTracks(
               trackId,
               kind: 'remote',
               path: upload.lrcRemotePath,
+              remoteTarget: upload.remoteTarget,
               reason: 'deleted',
               createdAt: at,
             })
@@ -1400,5 +1540,5 @@ export function deleteTracks(
       }
     }
   })
-  void inArray
+  return deleted
 }

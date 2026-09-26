@@ -175,7 +175,7 @@ async function main() {
         patch.libraryFolder !== undefined &&
         patch.libraryFolder !== before.libraryFolder
       ) {
-        void reconciler.libraryFolderChanged()
+        await reconciler.libraryFolderChanged()
       } else {
         reconciler.markDirty()
       }

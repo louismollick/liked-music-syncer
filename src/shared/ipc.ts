@@ -257,7 +257,7 @@ export interface InvokeMap {
   'library:search': [string, SearchResultsView]
   'library:setFavorite': [{ artistId: string; favorite: boolean }, void]
   'library:refresh': [RefreshScope, void]
-  'library:delete': [z.infer<typeof deleteRequestSchema>, void]
+  'library:delete': [z.infer<typeof deleteRequestSchema>, string[]]
   'library:unmanaged': [void, Array<{ path: string; size: number }>]
   'app:showInFinder': [string, void]
 }
