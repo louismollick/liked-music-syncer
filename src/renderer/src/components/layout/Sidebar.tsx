@@ -106,10 +106,15 @@ function StatusSection() {
                   : activity?.checking
                     ? 'Checking liked songs'
                     : working
-                      ? `Working · ${upNext} up next`
+                      ? 'Working'
                       : 'Up to date'}
               </span>
             </div>
+            {signedIn && working && !activity?.checking && upNext > 0 && (
+              <div className="text-[11px] text-zinc-400 mt-1 tabular-nums">
+                {plural(upNext, 'song')} up next
+              </div>
+            )}
             <div className="text-[11px] text-zinc-500 mt-1">
               Liked songs checked{' '}
               {timeAgo(activity?.lastCheckedAt ?? null, now)}
