@@ -10,6 +10,12 @@ import { ProcessError, run, runChecked } from '../platform/process'
  * every upload is verified and recorded; nothing runs on the server.
  */
 
+/**
+ * rclone's messages for a missing directory or object. Matched exactly, because
+ * stderr can also say `Config file "…" not found - using defaults`.
+ */
+const MISSING_OBJECT = /directory not found|object not found|doesn't exist/i
+
 export type HashAlgo = 'md5' | 'sha1'
 
 export interface RemoteTarget {
@@ -161,7 +167,7 @@ export function createRclone(binary: string): Rclone {
     const args = ['lsjson', remoteSpec(target, relativePath)]
     if (hashAlgo) args.push('--hash', '--hash-type', hashAlgo)
     const result = await run(binary, args, { signal })
-    if (result.code === 3 || /not found|doesn't exist/i.test(result.stderr)) {
+    if (result.code === 3 || MISSING_OBJECT.test(result.stderr)) {
       return null
     }
     if (result.code !== 0) {
@@ -224,7 +230,7 @@ export function createRclone(binary: string): Rclone {
       const args = ['lsjson', '--recursive', '--files-only', remoteSpec(target)]
       if (options.hashAlgo) args.push('--hash', '--hash-type', options.hashAlgo)
       const result = await run(binary, args, { signal })
-      if (result.code === 3 || /directory not found/i.test(result.stderr)) {
+      if (result.code === 3 || MISSING_OBJECT.test(result.stderr)) {
         return new Map()
       }
       if (result.code !== 0) {
@@ -293,7 +299,7 @@ export function createRclone(binary: string): Rclone {
         }
       )
       if (result.code === 0) return
-      if (result.code === 4 || /not found|doesn't exist/i.test(result.stderr))
+      if (result.code === 4 || MISSING_OBJECT.test(result.stderr))
         return
       throw new ProcessError(
         `rclone deletefile failed: ${result.stderr.trim()}`,

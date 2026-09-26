@@ -54,6 +54,8 @@ export function createAudioDownloader(deps: {
         '--no-playlist',
         '--no-warnings',
         '--newline',
+        // --print implies --quiet; --progress keeps the progress lines coming.
+        '--progress',
         '--js-runtimes',
         `node:${deps.tools.nodeRuntime}`,
         '--plugin-dirs',
