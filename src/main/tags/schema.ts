@@ -270,17 +270,16 @@ export function writeTags(
 /** Names of fields whose values differ. Used for Remote State and Outside Edit detail. */
 export function fieldDiff(a: TagFields, b: TagFields): string[] {
   const diffs: string[] = []
-  const keys = Object.keys(a).filter((key) => key !== 'lms') as Array<
-    Exclude<keyof TagFields, 'lms'>
-  >
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)].filter((key) => key !== 'lms'))
   for (const key of keys) {
-    if ((a[key] ?? null) !== (b[key] ?? null)) diffs.push(key)
+    const left = (a as unknown as Record<string, unknown>)[key] ?? null
+    const right = (b as unknown as Record<string, unknown>)[key] ?? null
+    if (left !== right) diffs.push(key)
   }
-  const lmsKeys = Object.keys(a.lms) as Array<keyof LmsFields>
-  for (const key of lmsKeys) {
-    const left = JSON.stringify(a.lms[key] ?? null)
-    const right = JSON.stringify(b.lms[key] ?? null)
-    if (left !== right) diffs.push(`lms.${key}`)
+  const lmsA = (a.lms ?? {}) as unknown as Record<string, unknown>
+  const lmsB = (b.lms ?? {}) as unknown as Record<string, unknown>
+  for (const key of new Set([...Object.keys(lmsA), ...Object.keys(lmsB)])) {
+    if (JSON.stringify(lmsA[key] ?? null) !== JSON.stringify(lmsB[key] ?? null)) diffs.push(`lms.${key}`)
   }
   return diffs
 }
