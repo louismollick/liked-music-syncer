@@ -51,6 +51,8 @@ export function StatusIcons({
           strokeWidth={1.8}
         />
       </span>
+      {/* Keep the slot so icons line up across rows with and without a remote state. */}
+      {remote === 'off' && <span className="w-[15px]" aria-hidden />}
       {remote !== 'off' && (
         <span title={REMOTE_LABEL[remote]}>
           {remote === 'failed' ? (
