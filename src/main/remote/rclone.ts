@@ -299,8 +299,7 @@ export function createRclone(binary: string): Rclone {
         }
       )
       if (result.code === 0) return
-      if (result.code === 4 || MISSING_OBJECT.test(result.stderr))
-        return
+      if (result.code === 4 || MISSING_OBJECT.test(result.stderr)) return
       throw new ProcessError(
         `rclone deletefile failed: ${result.stderr.trim()}`,
         result
