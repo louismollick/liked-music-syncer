@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
 import { joinArtistNames } from '../domain'
@@ -8,6 +8,7 @@ import {
   artists,
   files,
   operations,
+  tombstones,
   tracks,
   unmanagedFiles,
 } from '../library/schema'
@@ -130,13 +131,31 @@ export async function adoptFiles(
   root: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<AdoptResult> {
-  const known = new Set(
-    deps.db
+  // Skip files the app already tracks, files the user stopped managing, and
+  // files waiting to be deleted (a quit before the delete ran must not undo it).
+  const known = new Set([
+    ...deps.db
       .select({ path: files.relativePath })
       .from(files)
       .all()
-      .map((row) => row.path)
-  )
+      .map((row) => row.path),
+    ...deps.db
+      .select({ path: unmanagedFiles.relativePath })
+      .from(unmanagedFiles)
+      .where(eq(unmanagedFiles.released, true))
+      .all()
+      .map((row) => row.path),
+    ...deps.db
+      .select({
+        path: tombstones.path,
+        kind: tombstones.kind,
+        doneAt: tombstones.doneAt,
+      })
+      .from(tombstones)
+      .all()
+      .filter((row) => row.kind === 'local' && !row.doneAt)
+      .map((row) => row.path),
+  ])
   const entries = (await walkAudio(root)).filter(
     (entry) => !known.has(entry.relativePath)
   )
@@ -310,6 +329,9 @@ export async function detectOutsideEdits(
   deps: InventoryDeps,
   root: string
 ): Promise<OutsideEditReport> {
+  // An unmounted or unreadable folder is not the user deleting every file.
+  if (!(await readableDirectory(root)))
+    return { checked: 0, edited: 0, missing: 0 }
   const rows = deps.db.select().from(files).all()
   const pending = new Set(
     deps.db
@@ -322,8 +344,18 @@ export async function detectOutsideEdits(
   let edited = 0
   let missing = 0
   for (const row of rows) {
-    if (row.outsideEdit) continue
     const absolute = path.join(root, row.relativePath)
+    if (row.outsideEdit) {
+      // Clear the flag once the file is back exactly as the app wrote it.
+      if (await matchesRecord(root, row)) {
+        deps.db
+          .update(files)
+          .set({ outsideEdit: null })
+          .where(eq(files.trackId, row.trackId))
+          .run()
+      }
+      continue
+    }
     const parts: string[] = []
     let info: Awaited<ReturnType<typeof stat>> | null = null
     try {
@@ -385,6 +417,8 @@ export async function recoverOperations(
   deps: InventoryDeps,
   root: string
 ): Promise<number> {
+  // Keep the journal for later if the folder is not available right now.
+  if (!(await readableDirectory(root))) return 0
   const ops = deps.db.select().from(operations).all()
   let recovered = 0
   for (const op of ops) {
@@ -447,4 +481,37 @@ export async function recoverOperations(
   }
   await rm(path.join(root, STAGING_DIR), { recursive: true, force: true })
   return recovered
+}
+
+/** True when `root` exists and can be listed (e.g. the drive is mounted). */
+export async function readableDirectory(root: string): Promise<boolean> {
+  try {
+    await readdir(root)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function matchesRecord(
+  root: string,
+  row: typeof files.$inferSelect
+): Promise<boolean> {
+  const absolute = path.join(root, row.relativePath)
+  try {
+    const info = await stat(absolute)
+    if (
+      info.size !== row.size ||
+      (await sha256File(absolute)) !== row.contentSha256
+    )
+      return false
+  } catch {
+    return false
+  }
+  if (row.lrcSha256) {
+    const lrc = path.join(root, sidecarPath(row.relativePath))
+    if (!(await exists(lrc)) || sha256(await readFile(lrc)) !== row.lrcSha256)
+      return false
+  }
+  return true
 }

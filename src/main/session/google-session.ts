@@ -17,7 +17,7 @@ import {
 import type { AccountView, SessionView } from '../../shared/ipc'
 import { createInnertubeTransport } from '../catalog/transport'
 import type { InnertubeTransport } from '../catalog/types'
-import type { HttpClient } from '../net/http'
+import { type HttpClient, HttpError } from '../net/http'
 import type { SettingsStore } from '../settings'
 import {
   cookieHeader,
@@ -55,6 +55,8 @@ export class GoogleSession {
       settings: SettingsStore
       isPackaged: boolean
       onChange: (view: SessionView) => void
+      /** Called when a background re-probe succeeds (e.g. the network came back). */
+      onRecovered?: () => void
     }
   ) {
     this.partition = electronSession.fromPartition(PARTITION)
@@ -75,9 +77,10 @@ export class GoogleSession {
 
   private selected(): SlotAccount | undefined {
     const wanted = this.options.settings.get().selectedAccountId
-    return (
-      this.accounts.find((account) => account.id === wanted) ?? this.accounts[0]
-    )
+    // Never fall back to another account when the chosen one is missing from a
+    // probe: checking the wrong account's likes would flag the library unwanted.
+    if (wanted) return this.accounts.find((account) => account.id === wanted)
+    return this.accounts[0]
   }
 
   view(): SessionView {
@@ -144,6 +147,7 @@ export class GoogleSession {
         return this.emit()
       }
       const found: SlotAccount[] = []
+      let partial = false
       for (let slot = 0; slot < MAX_SLOTS; slot += 1) {
         const transport = createInnertubeTransport({
           http: this.options.http,
@@ -158,8 +162,11 @@ export class GoogleSession {
               authenticated: true,
             })
           )
-        } catch {
-          break
+        } catch (error) {
+          // 4xx: this slot has no account. Anything else (offline, 5xx): try again later.
+          if (error instanceof HttpError && error.kind === 'permanent') break
+          partial = true
+          continue
         }
         if (!parsed) break
         if (
@@ -180,16 +187,42 @@ export class GoogleSession {
       this.state = found.length ? 'signed_in' : 'error'
       this.message = found.length
         ? null
-        : 'Signed in, but no YouTube Music account with a channel was found.'
+        : partial
+          ? 'Could not reach YouTube Music. Trying again shortly.'
+          : 'Signed in, but no YouTube Music account with a channel was found.'
       const current = this.options.settings.get().selectedAccountId
-      if (found.length && !found.some((account) => account.id === current)) {
+      // Only pick a default from a complete probe.
+      if (
+        !partial &&
+        found.length &&
+        !found.some((account) => account.id === current)
+      ) {
         this.options.settings.update({ selectedAccountId: found[0].id })
+        this.gen += 1
       }
+      if (partial) this.scheduleRetry()
+      else this.retryDelayMs = 60_000
     } catch (error) {
       this.state = 'error'
       this.message = error instanceof Error ? error.message : String(error)
+      this.scheduleRetry()
     }
     return this.emit()
+  }
+
+  private retryDelayMs = 60_000
+  private retryTimer: NodeJS.Timeout | null = null
+
+  /** Re-probe after a failed or partial probe, backing off up to 10 minutes. */
+  private scheduleRetry(): void {
+    if (this.retryTimer) return
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null
+      void this.refresh().then((view) => {
+        if (view.state === 'signed_in') this.options.onRecovered?.()
+      })
+    }, this.retryDelayMs)
+    this.retryDelayMs = Math.min(this.retryDelayMs * 2, 10 * 60_000)
   }
 
   private emit(): SessionView {

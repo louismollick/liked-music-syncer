@@ -10,8 +10,9 @@ import {
   User,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import type { ActivityTrackView } from '../../../../shared/ipc'
 import { invoke } from '../../lib/api'
-import { useAppState } from '../../lib/app-state'
+import { useActivity, useAppState } from '../../lib/app-state'
 import { cx, plural, timeAgo } from '../../lib/format'
 import { Artwork } from '../ui/Artwork'
 import { IconButton } from '../ui/Button'
@@ -32,7 +33,8 @@ function useNow(intervalMs = 30_000): number {
 }
 
 function StatusSection() {
-  const { activity, session } = useAppState()
+  const { session } = useAppState()
+  const activity = useActivity()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const now = useNow()
   const [spinning, setSpinning] = useState(false)
@@ -138,9 +140,7 @@ function StatusSection() {
   )
 }
 
-function stageFraction(
-  current: NonNullable<ReturnType<typeof useAppState>['activity']>['current']
-): number {
+function stageFraction(current: ActivityTrackView | null): number {
   if (!current?.stage) return 0
   const [base, weight] = {
     matching: [0, 0.15],
@@ -169,7 +169,8 @@ const NAV = [
 export function Sidebar() {
   const router = useRouter()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const { activity, session } = useAppState()
+  const { session } = useAppState()
+  const activity = useActivity()
   const account =
     session?.accounts.find((a) => a.id === session.selectedAccountId) ?? null
   const attention = activity?.needsAttention.length ?? 0

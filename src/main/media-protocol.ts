@@ -9,6 +9,7 @@ export function registerMediaScheme(): void {
     {
       scheme: MEDIA_SCHEME,
       privileges: {
+        corsEnabled: true,
         standard: true,
         secure: true,
         supportFetchAPI: true,

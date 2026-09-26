@@ -16,6 +16,8 @@ export type TrackState =
   | 'done'
   | 'needs_attention'
   | 'no_longer_wanted'
+  /** The user stopped managing the file; the app leaves the track alone. */
+  | 'released'
 
 export type StepKind = 'match' | 'acquire' | 'retag' | 'move' | 'upload'
 

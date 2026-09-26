@@ -6,9 +6,11 @@ export function useDominantColor(src: string | null): string | null {
   useEffect(() => {
     setColor(null)
     if (!src) return
+    let cancelled = false
     const image = new Image()
     image.crossOrigin = 'anonymous'
     image.onload = () => {
+      if (cancelled) return
       try {
         const canvas = document.createElement('canvas')
         canvas.width = 16
@@ -39,6 +41,9 @@ export function useDominantColor(src: string | null): string | null {
       }
     }
     image.src = src
+    return () => {
+      cancelled = true
+    }
   }, [src])
   return color
 }

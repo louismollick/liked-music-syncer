@@ -304,7 +304,10 @@ export class LibraryQueries {
         : query.sort === 'year'
           ? 'year IS NULL, year DESC, t.album COLLATE NOCASE'
           : 'liked_at IS NULL, liked_at DESC, t.album COLLATE NOCASE'
-    return this.albumRows('', [], order)
+    const where = query.favorites
+      ? 'AND EXISTS (SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = t.id AND a.favorite = 1)'
+      : ''
+    return this.albumRows(where, [], order)
   }
 
   artist(id: string): ArtistDetailView | null {

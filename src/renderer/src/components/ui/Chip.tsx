@@ -15,6 +15,7 @@ export function Chip({
       <button
         type="button"
         onClick={onRemove}
+        aria-label={`Remove ${label}`}
         className="text-zinc-500 hover:text-white"
       >
         <X className="w-3.5 h-3.5" />

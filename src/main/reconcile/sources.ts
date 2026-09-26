@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type {
   CatalogRelease,
   CatalogTrack,
@@ -100,8 +100,19 @@ export function validateLikedSnapshot(
       'YouTube Music returned no liked songs; keeping the previous list.'
     )
   }
+  if (
+    declaredCount !== null &&
+    declaredCount >= 20 &&
+    songs.length < declaredCount * 0.8
+  ) {
+    // Paging stopped early: the header promises far more songs than arrived.
+    // (Unavailable songs make the header count ~10% higher than what parses.)
+    throw new SuspiciousSnapshotError(
+      `Only ${songs.length} of ${declaredCount} liked songs arrived; keeping the previous list.`
+    )
+  }
   const confirmedByHeader =
-    declaredCount !== null && songs.length >= Math.floor(declaredCount * 0.5)
+    declaredCount !== null && songs.length >= Math.floor(declaredCount * 0.8)
   if (
     previousActive >= 20 &&
     songs.length < previousActive * 0.5 &&
@@ -489,7 +500,6 @@ export function linkContributions(
               .set({
                 identityKey: key,
                 adopted: false,
-                refreshRequested: true,
                 updatedAt: at,
               })
               .where(eq(tracks.id, adopted.id))
@@ -646,36 +656,30 @@ export function updateWantedStates(
   db: Db,
   options: { accountId: string | null; favoriteArtistIds: string[] }
 ): void {
-  const required = [
-    ...(options.accountId ? [likedSnapshotSource(options.accountId)] : []),
-    ...options.favoriteArtistIds.map(catalogSnapshotSource),
-  ]
+  const at = new Date().toISOString()
+  // A track that regained a source is always wanted again, whatever else failed.
+  db.run(sql`
+    UPDATE tracks SET state = 'pending', updated_at = ${at}
+    WHERE state = 'no_longer_wanted'
+      AND EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = tracks.id AND c.active = 1)
+  `)
+  // Marking tracks unwanted waits for the liked-songs source to have completed a
+  // full check (or, without an account, every Favorite Artist catalog), so a
+  // fresh database or a failing catalog can't flag the library.
+  const required = options.accountId
+    ? [likedSnapshotSource(options.accountId)]
+    : options.favoriteArtistIds.map(catalogSnapshotSource)
   if (required.length === 0) return
-  const done = db
-    .select({ source: sourceSnapshots.source })
-    .from(sourceSnapshots)
-    .where(inArray(sourceSnapshots.source, required))
-    .all()
-    .filter(Boolean)
-  const withSuccess = db
+  const succeeded = db
     .select()
     .from(sourceSnapshots)
     .where(inArray(sourceSnapshots.source, required))
     .all()
     .filter((row) => row.lastSuccessAt)
-  if (withSuccess.length < required.length || done.length < required.length)
-    return
-  db.transaction((tx) => {
-    tx.run(sql`
-      UPDATE tracks SET state = 'no_longer_wanted', updated_at = ${new Date().toISOString()}
-      WHERE state != 'no_longer_wanted'
-        AND NOT EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = tracks.id AND c.active = 1)
-    `)
-    tx.run(sql`
-      UPDATE tracks SET state = 'pending', updated_at = ${new Date().toISOString()}
-      WHERE state = 'no_longer_wanted'
-        AND EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = tracks.id AND c.active = 1)
-    `)
-  })
-  void ne
+  if (succeeded.length < required.length) return
+  db.run(sql`
+    UPDATE tracks SET state = 'no_longer_wanted', updated_at = ${at}
+    WHERE state NOT IN ('no_longer_wanted', 'released')
+      AND NOT EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = tracks.id AND c.active = 1)
+  `)
 }

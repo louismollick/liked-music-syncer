@@ -95,6 +95,7 @@ export function ArtistPage() {
                   key={album.key}
                   album={album}
                   from={`artist:${artist.id}`}
+                  fromName={artist.name}
                 />
               ))}
             </div>

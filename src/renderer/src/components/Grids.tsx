@@ -157,13 +157,21 @@ export function ArtistGrid(props: {
   )
 }
 
-export function AlbumTile({ album, from }: { album: AlbumView; from: string }) {
+export function AlbumTile({
+  album,
+  from,
+  fromName,
+}: {
+  album: AlbumView
+  from: string
+  fromName?: string
+}) {
   return (
     <Link
       key={album.key}
       to="/album/$albumKey"
       params={{ albumKey: album.key }}
-      search={{ from }}
+      search={{ from, fromName }}
       className="block group"
     >
       <Artwork

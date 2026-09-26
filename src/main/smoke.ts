@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { createPotProvider } from './acquire/pot-provider'
 import { openDatabase } from './library/db'
 import { runChecked } from './platform/process'
 import type { ToolPaths } from './platform/tools'
@@ -10,7 +11,10 @@ import { emptyLmsFields, readTags, writeTags } from './tags/schema'
  * `--smoke-test`: proves a packaged build can open its database, run its
  * bundled tools, and read/write tags. Exits non-zero on any failure.
  */
-export async function runSmokeTest(tools: ToolPaths): Promise<number> {
+export async function runSmokeTest(
+  tools: ToolPaths,
+  checkRenderer: () => Promise<void>
+): Promise<number> {
   const dir = mkdtempSync(path.join(tmpdir(), 'lms-smoke-'))
   try {
     const db = openDatabase(path.join(dir, 'smoke.db'))
@@ -68,6 +72,17 @@ export async function runSmokeTest(tools: ToolPaths): Promise<number> {
 
     await runChecked(tools.rclone, ['version'])
     console.log('[smoke] rclone ok')
+
+    const pot = createPotProvider(tools)
+    try {
+      await pot.ensureReady()
+    } finally {
+      pot.dispose()
+    }
+    console.log('[smoke] PO token provider ok')
+
+    await checkRenderer()
+    console.log('[smoke] renderer and preload ok')
     return 0
   } catch (error) {
     console.error('[smoke] failed', error)

@@ -1,5 +1,5 @@
 import { Disc3, User } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cx } from '../../lib/format'
 
 function hueFor(text: string): number {
@@ -22,6 +22,8 @@ export function Artwork({
   kind?: 'album' | 'artist'
 }) {
   const [failed, setFailed] = useState(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset when the image changes
+  useEffect(() => setFailed(false), [src])
   const hue = hueFor(label || '?')
   if (src && !failed) {
     return (

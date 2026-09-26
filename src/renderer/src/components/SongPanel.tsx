@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { FolderOpen, RefreshCw, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { TrackDetailView } from '../../../shared/ipc'
 import { invoke, useEvent } from '../lib/api'
 import { useAppState } from '../lib/app-state'
@@ -54,8 +54,15 @@ function Row({
 export function SongPanel() {
   const { songId, closeSong } = useAppState()
   const [detail, setDetail] = useState<TrackDetailView | null>(null)
+  const latest = useRef<string | null>(null)
+  latest.current = songId
   const load = () => {
-    if (songId) void invoke('library:track', songId).then(setDetail)
+    const id = songId
+    if (!id) return
+    void invoke('library:track', id).then((next) => {
+      // Ignore a slower response for a song the user has moved away from.
+      if (latest.current === id) setDetail(next)
+    })
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload when the song changes
   useEffect(() => {
@@ -77,6 +84,7 @@ export function SongPanel() {
   const song = detail?.song
   return (
     <aside
+      inert={!open}
       className={cx(
         'absolute top-0 right-0 bottom-0 z-40 w-[380px] bg-panel border-l border-line shadow-2xl overflow-y-auto scroll-thin transition-transform duration-300',
         open ? 'translate-x-0' : 'translate-x-full'
@@ -84,7 +92,11 @@ export function SongPanel() {
     >
       <div className="px-5 pb-6 text-[13px]">
         <div className="flex justify-end h-12 items-center">
-          <IconButton onClick={closeSong} title="Close">
+          <IconButton
+            onClick={closeSong}
+            title="Close"
+            aria-label="Close song panel"
+          >
             <X className="w-4 h-4" />
           </IconButton>
         </div>

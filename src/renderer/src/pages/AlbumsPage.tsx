@@ -3,13 +3,14 @@ import { useRef } from 'react'
 import { SetupEmptyState, useSetupNeeded } from '../components/EmptyState'
 import { AlbumGrid } from '../components/Grids'
 import { Page, PageTitle } from '../components/layout/Page'
-import { AddFilterButton, SortMenu } from '../components/ui/Chip'
+import { AddFilterButton, Chip, SortMenu } from '../components/ui/Chip'
 import { invoke, useLibraryData } from '../lib/api'
 import { plural } from '../lib/format'
 import { useScrollMargin } from '../lib/use-scroll-margin'
 
 export interface AlbumsSearch {
   sort?: 'liked' | 'title' | 'year'
+  favorites?: boolean
 }
 
 const SORT_LABEL = {
@@ -26,14 +27,15 @@ export function AlbumsPage() {
   const gridRef = useRef<HTMLDivElement>(null)
   const sort = search.sort ?? 'liked'
   const { data } = useLibraryData(
-    () => invoke('library:albums', { sort }),
-    [sort]
+    () => invoke('library:albums', { sort, favorites: search.favorites }),
+    [sort, search.favorites]
   )
   const margin = useScrollMargin(gridRef, scrollRef, data?.length)
   if (setup) return <SetupEmptyState />
   const albums = data ?? []
-  const set = (next: AlbumsSearch['sort']) =>
-    void navigate({ to: '/albums', search: { sort: next } })
+  const update = (patch: Partial<AlbumsSearch>) =>
+    void navigate({ to: '/albums', search: { ...search, ...patch } })
+  const set = (next: AlbumsSearch['sort']) => update({ sort: next })
   return (
     <div ref={scrollRef} className="h-full overflow-y-auto scroll-thin">
       <Page>
@@ -42,15 +44,21 @@ export function AlbumsPage() {
           meta={data ? plural(albums.length, 'album') : undefined}
         />
         <div className="flex items-center gap-2">
+          {search.favorites && (
+            <Chip
+              label="By Favorite Artists"
+              onRemove={() => update({ favorites: undefined })}
+            />
+          )}
           <AddFilterButton
             sections={[
               {
-                title: 'Filters',
+                title: 'Artists',
                 options: [
                   {
-                    label:
-                      'Coming soon: filter albums by lyrics, language, remote state',
-                    onSelect: () => undefined,
+                    label: 'By Favorite Artists',
+                    onSelect: () => update({ favorites: true }),
+                    active: search.favorites,
                   },
                 ],
               },

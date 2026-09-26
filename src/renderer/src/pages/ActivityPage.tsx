@@ -5,7 +5,7 @@ import { PageTitle } from '../components/layout/Page'
 import { Artwork } from '../components/ui/Artwork'
 import { Button } from '../components/ui/Button'
 import { isRowVisible, shouldRecenter } from '../lib/activity-scroll'
-import { useAppState } from '../lib/app-state'
+import { useActivity, useAppState } from '../lib/app-state'
 import { dayLabel, plural } from '../lib/format'
 
 const STAGE_LABEL = {
@@ -34,7 +34,8 @@ function stagePercent(track: ActivityTrackView): number {
  * scrolling.
  */
 export function ActivityPage() {
-  const { activity, setAttentionOpen, openSong } = useAppState()
+  const { setAttentionOpen, openSong } = useAppState()
+  const activity = useActivity()
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement>(null)
   const currentRef = useRef<HTMLDivElement>(null)

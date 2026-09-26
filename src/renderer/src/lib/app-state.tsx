@@ -18,7 +18,6 @@ import { invoke, useEvent } from './api'
 interface AppState {
   session: SessionView | null
   settings: Settings | null
-  activity: ActivityView | null
   counts: LibraryCounts | null
   updateSettings: (patch: Partial<Settings>) => Promise<void>
   /** Opens the Song panel for a track. */
@@ -36,7 +35,6 @@ const Context = createContext<AppState | null>(null)
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<SessionView | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
-  const [activity, setActivity] = useState<ActivityView | null>(null)
   const [counts, setCounts] = useState<LibraryCounts | null>(null)
   const [songId, setSongId] = useState<string | null>(null)
   const [attentionOpen, setAttentionOpen] = useState(false)
@@ -49,12 +47,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void invoke('session:get').then(setSession)
     void invoke('settings:get').then(setSettings)
-    void invoke('activity:get').then(setActivity)
     loadCounts()
   }, [loadCounts])
   useEvent('session:changed', setSession)
   useEvent('settings:changed', setSettings)
-  useEvent('activity:changed', setActivity)
   const countsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEvent('library:changed', () => {
     if (countsTimer.current) clearTimeout(countsTimer.current)
@@ -69,7 +65,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     () => ({
       session,
       settings,
-      activity,
       counts,
       updateSettings,
       openSong: setSongId,
@@ -83,7 +78,6 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     [
       session,
       settings,
-      activity,
       counts,
       updateSettings,
       songId,
@@ -98,4 +92,27 @@ export function useAppState(): AppState {
   const value = useContext(Context)
   if (!value) throw new Error('useAppState outside provider')
   return value
+}
+
+const ActivityContext = createContext<ActivityView | null>(null)
+
+/**
+ * Activity changes up to 10 times a second while downloading, so it lives in
+ * its own context: only components that show it re-render.
+ */
+export function ActivityProvider({ children }: { children: React.ReactNode }) {
+  const [activity, setActivity] = useState<ActivityView | null>(null)
+  useEffect(() => {
+    void invoke('activity:get').then(setActivity)
+  }, [])
+  useEvent('activity:changed', setActivity)
+  return (
+    <ActivityContext.Provider value={activity}>
+      {children}
+    </ActivityContext.Provider>
+  )
+}
+
+export function useActivity(): ActivityView | null {
+  return useContext(ActivityContext)
 }

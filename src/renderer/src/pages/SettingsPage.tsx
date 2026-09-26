@@ -135,6 +135,7 @@ export function SettingsPage() {
           help="New and changed songs upload automatically"
         >
           <Switch
+            label="Upload to remote"
             checked={settings.remoteEnabled}
             onChange={(v) => void updateSettings({ remoteEnabled: v })}
           />
@@ -161,6 +162,7 @@ export function SettingsPage() {
         <Heading>Lyrics</Heading>
         <Row label="Find lyrics" help="Off skips all lyrics lookups">
           <Switch
+            label="Find lyrics"
             checked={settings.lyricsEnabled}
             onChange={(v) => void updateSettings({ lyricsEnabled: v })}
           />

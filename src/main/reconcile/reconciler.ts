@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
+import path from 'node:path'
 import {
   and,
   asc,
@@ -17,21 +20,25 @@ import type {
   RefreshScope,
 } from '../../shared/ipc'
 import { stageForStep } from '../domain'
+import { sha256File } from '../inventory/files'
 import {
   adoptFiles,
   detectOutsideEdits,
+  readableDirectory,
   recoverOperations,
 } from '../inventory/inventory'
+import { sidecarPath } from '../inventory/layout'
 import type { Db } from '../library/db'
 import {
   artists,
-  contributions,
   files,
   sourceSnapshots,
   tracks,
+  unmanagedFiles,
   uploads,
 } from '../library/schema'
 import { errorKindOf } from '../net/http'
+import { readTags, sha256 } from '../tags/schema'
 import {
   checkArtistCatalog,
   checkLikedSongs,
@@ -47,7 +54,9 @@ import {
   createRemoteIndexCache,
   deleteTracks,
   nextStep,
+  OutsideEditError,
   processTombstones,
+  REWRITE_AUDIO,
   runAcquire,
   runMatch,
   runMove,
@@ -122,7 +131,8 @@ export class Reconciler {
     if (this.running) return
     this.running = true
     await this.prepareLibrary()
-    await this.auditRemote()
+    // The remote may be slow or unreachable; don't hold up the worker for it.
+    void this.auditRemote()
     this.loopPromise = this.loop()
     this.checkTimer = setInterval(() => void this.check(), CHECK_INTERVAL_MS)
     void this.check()
@@ -147,6 +157,7 @@ export class Reconciler {
    */
   remoteTargetChanged(): void {
     this.db.delete(uploads).run()
+    this.remoteIndex.invalidate()
     this.markDirty()
   }
 
@@ -178,7 +189,11 @@ export class Reconciler {
 
   private async prepareLibrary(): Promise<void> {
     const settings = this.deps.settings()
-    if (!settings.libraryFolder) return
+    if (
+      !settings.libraryFolder ||
+      !(await readableDirectory(settings.libraryFolder))
+    )
+      return
     const inventory = {
       db: this.db,
       coversDir: coversDir(this.deps),
@@ -199,7 +214,6 @@ export class Reconciler {
 
   markDirty(): void {
     this.planDirty = true
-    this.remoteIndex.invalidate()
     this.wake?.()
     this.emitSoon()
   }
@@ -383,24 +397,39 @@ export class Reconciler {
   }
 
   /** Outside Edit: restore the app's version of the file. */
-  rewrite(trackId: string): void {
+  /** Outside Edit: restore the app's version of the file. */
+  async rewrite(trackId: string): Promise<void> {
     const file = this.db
       .select()
       .from(files)
       .where(eq(files.trackId, trackId))
       .get()
-    if (file?.outsideEdit) {
+    const root = this.deps.settings().libraryFolder
+    if (file?.outsideEdit && root) {
       const parts = JSON.parse(file.outsideEdit) as string[]
-      if (parts.includes('deleted') || parts.includes('audio')) {
+      if (parts.includes('deleted')) {
         this.db.delete(files).where(eq(files.trackId, trackId)).run()
+      } else if (parts.includes('audio')) {
+        // Replace the edited file in place with a fresh download.
+        this.db
+          .update(files)
+          .set({ outsideEdit: null, audioVideoId: REWRITE_AUDIO })
+          .where(eq(files.trackId, trackId))
+          .run()
       } else {
-        // Force a retag by invalidating what we believe was written.
+        // Accept the edited file as the new baseline; retagging then restores the app's tags.
+        const absolute = path.join(root, file.relativePath)
+        const info = await stat(absolute)
+        const lrc = path.join(root, sidecarPath(file.relativePath))
         this.db
           .update(files)
           .set({
             outsideEdit: null,
-            tagFields: '{"lms":{}}',
-            lrcSha256: 'rewrite',
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+            contentSha256: await sha256File(absolute),
+            tagFields: JSON.stringify(readTags(absolute).fields),
+            lrcSha256: existsSync(lrc) ? sha256(readFileSync(lrc)) : null,
           })
           .where(eq(files.trackId, trackId))
           .run()
@@ -409,21 +438,48 @@ export class Reconciler {
     this.retry(trackId)
   }
 
-  /** Outside Edit: stop managing the file; it becomes an Unmanaged File. */
+  /**
+   * Outside Edit: stop managing the file. It becomes an Unmanaged File and the
+   * track is released, so later checks and restarts neither re-adopt nor
+   * re-download it.
+   */
   stopManaging(trackId: string): void {
+    const at = this.deps.now().toISOString()
     this.db.transaction((tx) => {
       const db = tx as unknown as Db
+      const file = db
+        .select()
+        .from(files)
+        .where(eq(files.trackId, trackId))
+        .get()
+      if (file) {
+        for (const relativePath of [
+          file.relativePath,
+          ...(file.lrcSha256 ? [sidecarPath(file.relativePath)] : []),
+        ]) {
+          db.insert(unmanagedFiles)
+            .values({
+              relativePath,
+              size: file.size,
+              mtimeMs: file.mtimeMs,
+              seenAt: at,
+              released: true,
+            })
+            .onConflictDoUpdate({
+              target: unmanagedFiles.relativePath,
+              set: { released: true, seenAt: at },
+            })
+            .run()
+        }
+      }
       db.delete(files).where(eq(files.trackId, trackId)).run()
       db.delete(uploads).where(eq(uploads.trackId, trackId)).run()
-      db.update(contributions)
-        .set({ active: false })
-        .where(eq(contributions.trackId, trackId))
-        .run()
       db.update(tracks)
-        .set({ state: 'no_longer_wanted' })
+        .set({ state: 'released', currentStep: null, updatedAt: at })
         .where(eq(tracks.id, trackId))
         .run()
     })
+    this.deps.onLibraryChanged(null)
     this.markDirty()
   }
 
@@ -508,10 +564,14 @@ export class Reconciler {
   private async loop(): Promise<void> {
     while (this.running) {
       if (this.folderChangePromise) await this.folderChangePromise
-      if (!this.deps.settings().libraryFolder) {
-        // Nothing can be written until a folder is chosen; wait instead of failing tracks.
+      const root = this.deps.settings().libraryFolder
+      if (!root || !(await readableDirectory(root))) {
+        // Nothing can be written until a folder is chosen and available (e.g. the
+        // drive is mounted); wait instead of failing tracks.
         this.current = null
+        this.emitSoon()
         await this.idle(60_000)
+        if (root && (await readableDirectory(root))) await this.prepareLibrary()
         continue
       }
       if (this.planDirty) this.plan()
@@ -553,6 +613,8 @@ export class Reconciler {
   }
 
   private idle(ms: number): Promise<void> {
+    // stop() may have run while the loop was between awaits; don't sleep then.
+    if (!this.running) return Promise.resolve()
     return new Promise((resolve) => {
       const timer = setTimeout(done, ms)
       function done() {
@@ -655,6 +717,18 @@ export class Reconciler {
             .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
             .run()
           this.current = null
+          return
+        }
+        if (error instanceof OutsideEditError) {
+          // The file changed outside the app: pause the track (shown in Needs Attention).
+          this.db
+            .update(tracks)
+            .set({ state: 'done', currentStep: null })
+            .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
+            .run()
+          this.current = null
+          this.deps.onLibraryChanged([trackId])
+          this.emitSoon()
           return
         }
         this.fail(trackId, step, error)
@@ -783,9 +857,11 @@ export class Reconciler {
           )
         )
       )
-      .orderBy(asc(tracks.completedAt))
+      .orderBy(desc(tracks.completedAt))
       .limit(400)
       .all()
+      // Newest 400, shown oldest-first above the current row.
+      .reverse()
     const attention: AttentionItemView[] = this.db
       .select()
       .from(tracks)

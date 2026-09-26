@@ -14,9 +14,9 @@ import {
 } from '../../src/main/inventory/inventory'
 import {
   artists,
+  contributions,
   files,
   operations,
-  sourceSnapshots,
   tracks,
 } from '../../src/main/library/schema'
 import {
@@ -298,7 +298,7 @@ describe('reconciler', () => {
     h.reconciler.markDirty()
     await h.idle()
     expect(readTags(absolute).fields.title).toBe('External title')
-    h.reconciler.rewrite(row.id)
+    await h.reconciler.rewrite(row.id)
     await h.idle()
     expect(readTags(absolute).fields.title).toBe('outside')
     h.reconciler.stopManaging(row.id)
@@ -478,16 +478,28 @@ describe('reconciler', () => {
         favorite: true,
       })
       .run()
+    // A failing Favorite Artist catalog must not freeze wanted states: once the
+    // liked-songs source has completed a check, unclaimed tracks are unwanted.
     h.catalog.likes = []
     h.catalog.refs = []
     await h.reconciler.check()
     expect(
       h.db.select().from(tracks).where(eq(tracks.id, 'adopted')).get()?.state
-    ).toBe('done')
+    ).toBe('no_longer_wanted')
+    // And a track that regains a source is wanted again even while the catalog still fails.
     h.db
-      .update(sourceSnapshots)
-      .set({ status: 'ok', lastSuccessAt: h.time.toISOString() })
-      .where(eq(sourceSnapshots.source, 'catalog:channel:favorite'))
+      .insert(contributions)
+      .values({
+        id: 'relike',
+        sourceKey: `ytm-liked:${h.account}:adopted-video`,
+        kind: 'liked',
+        accountId: h.account,
+        trackId: 'adopted',
+        sourceVideoId: 'adopted-video',
+        firstSeenAt: h.time.toISOString(),
+        lastSeenAt: h.time.toISOString(),
+        active: true,
+      })
       .run()
     updateWantedStates(h.db, {
       accountId: h.account,
@@ -495,7 +507,7 @@ describe('reconciler', () => {
     })
     expect(
       h.db.select().from(tracks).where(eq(tracks.id, 'adopted')).get()?.state
-    ).toBe('no_longer_wanted')
+    ).toBe('pending')
   })
 
   it('recovers a placed file before an acquire commit and clears staging', async () => {

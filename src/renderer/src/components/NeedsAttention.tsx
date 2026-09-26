@@ -1,12 +1,13 @@
 import { ExternalLink } from 'lucide-react'
 import { invoke } from '../lib/api'
-import { useAppState } from '../lib/app-state'
+import { useActivity, useAppState } from '../lib/app-state'
 import { Artwork } from './ui/Artwork'
 import { Button } from './ui/Button'
 import { Drawer } from './ui/Drawer'
 
 export function NeedsAttentionDrawer() {
-  const { activity, attentionOpen, setAttentionOpen, openSong } = useAppState()
+  const { attentionOpen, setAttentionOpen, openSong } = useAppState()
+  const activity = useActivity()
   const items = activity?.needsAttention ?? []
   return (
     <Drawer

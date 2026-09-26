@@ -53,11 +53,16 @@ function createWindow(): BrowserWindow {
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      sandbox: true,
       contextIsolation: true,
     },
   })
   window.on('ready-to-show', () => window.show())
+  // Dropped files or stray links must never navigate the app window away.
+  window.webContents.on('will-navigate', (event, url) => {
+    const allowed = process.env.ELECTRON_RENDERER_URL
+    if (!allowed || !url.startsWith(allowed)) event.preventDefault()
+  })
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
@@ -83,7 +88,23 @@ async function main() {
   })
 
   if (isSmokeTest) {
-    const code = await runSmokeTest(tools)
+    const code = await runSmokeTest(tools, async () => {
+      // The packaged renderer must load with its preload bridge.
+      const probe = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          preload: path.join(__dirname, '../preload/index.js'),
+          sandbox: true,
+          contextIsolation: true,
+        },
+      })
+      await probe.loadFile(path.join(__dirname, '../renderer/index.html'))
+      const bridge =
+        await probe.webContents.executeJavaScript('typeof window.lms')
+      probe.destroy()
+      if (bridge !== 'object')
+        throw new Error(`preload bridge missing (${bridge})`)
+    })
     app.exit(code)
     return
   }
@@ -92,11 +113,13 @@ async function main() {
   const db = openDatabase(path.join(userData, 'library.db'))
   const settings = new SettingsStore(db)
   const http = createHttpClient()
+  let reconcilerRef: Reconciler | null = null
   const session = new GoogleSession({
     http,
     settings,
     isPackaged: app.isPackaged,
     onChange: (view) => broadcast('session:changed', view),
+    onRecovered: () => void reconcilerRef?.check(),
   })
   const catalog = createYouTubeMusicCatalog(session.transport)
   const matcher = createMatcher({ catalog, http })
@@ -126,7 +149,7 @@ async function main() {
     imagesTimer = setTimeout(() => void artistImages.run(), 3_000)
   }
 
-  const reconciler = new Reconciler({
+  const reconciler: Reconciler = new Reconciler({
     db,
     tools,
     catalog,
@@ -151,6 +174,7 @@ async function main() {
     },
   })
 
+  reconcilerRef = reconciler
   settings.subscribe((next) => broadcast('settings:changed', next))
 
   const busy = () => {
@@ -163,14 +187,9 @@ async function main() {
     'settings:update': async (patch) => {
       const before = settings.get()
       const next = settings.update(patch)
-      if (
-        (patch.rcloneRemote !== undefined &&
-          patch.rcloneRemote.trim() !== before.rcloneRemote.trim()) ||
-        (patch.remoteFolder !== undefined &&
-          patch.remoteFolder.trim() !== before.remoteFolder.trim())
-      ) {
-        reconciler.remoteTargetChanged()
-      }
+      const targetOf = (value: typeof before) =>
+        `${value.rcloneRemote.trim().replace(/:$/, '')}|${value.remoteFolder.trim().replace(/\/+$/, '')}`
+      if (targetOf(before) !== targetOf(next)) reconciler.remoteTargetChanged()
       if (
         patch.libraryFolder !== undefined &&
         patch.libraryFolder !== before.libraryFolder

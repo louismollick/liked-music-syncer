@@ -97,7 +97,7 @@ export const songQuerySchema = z.object({
   sort: songSortSchema.default('liked'),
   descending: z.boolean().default(true),
   offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(5000).default(500),
+  limit: z.number().int().min(1).max(20000).default(500),
   artistId: z.string().optional(),
   albumKey: z.string().optional(),
 })
@@ -207,6 +207,8 @@ export type ArtistQuery = z.input<typeof artistQuerySchema>
 
 export const albumQuerySchema = z.object({
   sort: z.enum(['liked', 'title', 'year']).default('liked'),
+  /** Only albums with a track by a Favorite Artist. */
+  favorites: z.boolean().optional(),
 })
 export type AlbumQuery = z.input<typeof albumQuerySchema>
 

@@ -61,7 +61,7 @@ export function SongsPage() {
     favorite: search.favorite,
   }
   const { data } = useLibraryData(
-    () => invoke('library:songs', { filters, sort, descending, limit: 5000 }),
+    () => invoke('library:songs', { filters, sort, descending, limit: 20000 }),
     [
       search.lyrics,
       search.remote,
@@ -82,6 +82,21 @@ export function SongsPage() {
   }, [unmanagedOpen])
 
   if (setup) return <SetupEmptyState />
+  const confirmDelete = (where: 'local' | 'remote' | 'both') => {
+    const place =
+      where === 'local'
+        ? 'this Mac'
+        : where === 'remote'
+          ? 'the remote'
+          : 'this Mac and the remote'
+    if (
+      window.confirm(
+        `Delete ${plural(rows.length, 'song')} from ${place}? This removes the files.`
+      )
+    ) {
+      void invoke('library:delete', { trackIds: rows.map((r) => r.id), where })
+    }
+  }
   const set = (patch: Partial<SongsSearch>) =>
     void navigate({
       to: '/songs',
@@ -205,29 +220,17 @@ export function SongsPage() {
                   options: [
                     {
                       label: 'From this Mac',
-                      onSelect: () =>
-                        void invoke('library:delete', {
-                          trackIds: rows.map((r) => r.id),
-                          where: 'local',
-                        }),
+                      onSelect: () => confirmDelete('local'),
                     },
                     ...(remoteOn
                       ? [
                           {
                             label: 'From the remote',
-                            onSelect: () =>
-                              void invoke('library:delete', {
-                                trackIds: rows.map((r) => r.id),
-                                where: 'remote',
-                              }),
+                            onSelect: () => confirmDelete('remote'),
                           },
                           {
                             label: 'From both',
-                            onSelect: () =>
-                              void invoke('library:delete', {
-                                trackIds: rows.map((r) => r.id),
-                                where: 'both',
-                              }),
+                            onSelect: () => confirmDelete('both'),
                           },
                         ]
                       : []),

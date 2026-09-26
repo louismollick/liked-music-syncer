@@ -105,7 +105,8 @@ export const MIGRATIONS: string[] = [
     relative_path TEXT PRIMARY KEY,
     size INTEGER NOT NULL,
     mtime_ms REAL NOT NULL,
-    seen_at TEXT NOT NULL
+    seen_at TEXT NOT NULL,
+    released INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE artists (

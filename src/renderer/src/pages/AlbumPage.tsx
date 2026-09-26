@@ -10,7 +10,10 @@ import { formatMinutes, plural } from '../lib/format'
 
 export function AlbumPage() {
   const { albumKey } = useParams({ strict: false }) as { albumKey: string }
-  const search = useSearch({ strict: false }) as { from?: string }
+  const search = useSearch({ strict: false }) as {
+    from?: string
+    fromName?: string
+  }
   const { data } = useLibraryData(
     () => invoke('library:album', albumKey),
     [albumKey]
@@ -35,7 +38,9 @@ export function AlbumPage() {
             ...(album.artistId
               ? [
                   {
-                    label: album.albumArtist,
+                    label:
+                      (from.startsWith('artist:') && search.fromName) ||
+                      album.albumArtist,
                     to: '/artist/$artistId',
                     params: {
                       artistId: from.startsWith('artist:')

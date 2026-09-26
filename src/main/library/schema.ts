@@ -128,6 +128,8 @@ export const unmanagedFiles = sqliteTable('unmanaged_files', {
   size: integer('size').notNull(),
   mtimeMs: real('mtime_ms').notNull(),
   seenAt: text('seen_at').notNull(),
+  /** The app stopped managing this file (Outside Edit → Stop managing); never re-adopt it. */
+  released: integer('released', { mode: 'boolean' }).notNull().default(false),
 })
 
 export const artists = sqliteTable('artists', {

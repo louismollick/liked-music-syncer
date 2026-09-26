@@ -93,7 +93,16 @@ export function createHttpClient(
     if (slot > current) await sleep(slot - current)
   }
 
-  async function request(url: string, options: RequestOptions) {
+  /**
+   * Sends a request and reads its body with `read`. The timeout and the
+   * caller's abort signal stay active until the body is read, so a quit or a
+   * stalled server can always interrupt a large download.
+   */
+  async function send<T>(
+    url: string,
+    options: RequestOptions,
+    read: (response: Response) => Promise<T>
+  ): Promise<T> {
     const { host, signal, ...init } = options
     await waitForSlot(host)
     const controller = new AbortController()
@@ -103,44 +112,59 @@ export function createHttpClient(
     )
     const onAbort = () => controller.abort(signal?.reason)
     signal?.addEventListener('abort', onAbort, { once: true })
-    let response: Response
     try {
-      response = await fetchImpl(url, { ...init, signal: controller.signal })
-    } catch (error) {
-      if (signal?.aborted) throw error
-      const message = error instanceof Error ? error.message : String(error)
-      throw new HttpError(`${host}: ${message}`, 'transient', null)
+      let response: Response
+      try {
+        response = await fetchImpl(url, { ...init, signal: controller.signal })
+      } catch (error) {
+        if (signal?.aborted) throw error
+        const message = error instanceof Error ? error.message : String(error)
+        throw new HttpError(`${host}: ${message}`, 'transient', null)
+      }
+      if (!response.ok) {
+        const retryAfterMs = parseRetryAfter(
+          response.headers.get('retry-after')
+        )
+        if (retryAfterMs !== null) blockedUntil.set(host, now() + retryAfterMs)
+        throw new HttpError(
+          `${host}: HTTP ${response.status} for ${new URL(url).pathname}`,
+          classifyStatus(response.status),
+          response.status,
+          retryAfterMs
+        )
+      }
+      try {
+        return await read(response)
+      } catch (error) {
+        if (signal?.aborted) throw error
+        const message = error instanceof Error ? error.message : String(error)
+        throw new HttpError(`${host}: ${message}`, 'transient', null)
+      }
     } finally {
       clearTimeout(timeout)
       signal?.removeEventListener('abort', onAbort)
     }
-    if (!response.ok) {
-      const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'))
-      if (retryAfterMs !== null) blockedUntil.set(host, now() + retryAfterMs)
-      throw new HttpError(
-        `${host}: HTTP ${response.status} for ${new URL(url).pathname}`,
-        classifyStatus(response.status),
-        response.status,
-        retryAfterMs
-      )
-    }
-    return response
   }
 
   return {
-    request,
-    async json<T>(url: string, options: RequestOptions) {
-      const response = await request(url, options)
-      return (await response.json()) as T
-    },
-    async text(url: string, options: RequestOptions) {
-      const response = await request(url, options)
-      return response.text()
-    },
-    async bytes(url: string, options: RequestOptions) {
-      const response = await request(url, options)
-      return new Uint8Array(await response.arrayBuffer())
-    },
+    // The caller reads the body itself; buffer it here so the timeout still covers it.
+    request: (url, options) =>
+      send(url, options, async (response) => {
+        const body = await response.arrayBuffer()
+        return new Response(body, {
+          status: response.status,
+          headers: response.headers,
+        })
+      }),
+    json: <T>(url: string, options: RequestOptions) =>
+      send(url, options, async (response) => (await response.json()) as T),
+    text: (url, options) => send(url, options, (response) => response.text()),
+    bytes: (url, options) =>
+      send(
+        url,
+        options,
+        async (response) => new Uint8Array(await response.arrayBuffer())
+      ),
   }
 }
 

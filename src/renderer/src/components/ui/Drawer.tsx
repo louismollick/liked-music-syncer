@@ -33,6 +33,7 @@ export function Drawer({
         onClick={onClose}
       />
       <aside
+        inert={!open}
         style={{ width }}
         className={cx(
           'fixed top-0 right-0 bottom-0 z-50 bg-panel border-l border-line shadow-2xl flex flex-col transition-transform duration-300',
@@ -43,7 +44,7 @@ export function Drawer({
           <div className="text-[14px] font-semibold flex-1 min-w-0 truncate">
             {title}
           </div>
-          <IconButton className="no-drag" onClick={onClose}>
+          <IconButton className="no-drag" onClick={onClose} aria-label="Close">
             <X className="w-4 h-4" />
           </IconButton>
         </div>

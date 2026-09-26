@@ -167,7 +167,10 @@ export function createRclone(binary: string): Rclone {
     const args = ['lsjson', remoteSpec(target, relativePath)]
     if (hashAlgo) args.push('--hash', '--hash-type', hashAlgo)
     const result = await run(binary, args, { signal })
-    if (result.code === 3 || MISSING_OBJECT.test(result.stderr)) {
+    if (
+      result.code === 3 ||
+      (result.code !== 0 && MISSING_OBJECT.test(result.stderr))
+    ) {
       return null
     }
     if (result.code !== 0) {
@@ -230,7 +233,10 @@ export function createRclone(binary: string): Rclone {
       const args = ['lsjson', '--recursive', '--files-only', remoteSpec(target)]
       if (options.hashAlgo) args.push('--hash', '--hash-type', options.hashAlgo)
       const result = await run(binary, args, { signal })
-      if (result.code === 3 || MISSING_OBJECT.test(result.stderr)) {
+      if (
+        result.code === 3 ||
+        (result.code !== 0 && MISSING_OBJECT.test(result.stderr))
+      ) {
         return new Map()
       }
       if (result.code !== 0) {
@@ -299,7 +305,11 @@ export function createRclone(binary: string): Rclone {
         }
       )
       if (result.code === 0) return
-      if (result.code === 4 || MISSING_OBJECT.test(result.stderr)) return
+      if (
+        result.code === 4 ||
+        (result.code !== 0 && MISSING_OBJECT.test(result.stderr))
+      )
+        return
       throw new ProcessError(
         `rclone deletefile failed: ${result.stderr.trim()}`,
         result

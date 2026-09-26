@@ -40,7 +40,6 @@ function RootLayout() {
     <div className="flex h-full">
       <Sidebar />
       <main className="flex-1 min-w-0 relative">
-        <div className="absolute inset-x-0 top-0 h-12 drag z-10 pointer-events-none" />
         <SearchBox />
         <div className="h-full">
           <Outlet />
@@ -87,7 +86,7 @@ const albumsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/albums',
   validateSearch: (search: Record<string, unknown>): AlbumsSearch =>
-    pick<AlbumsSearch>(search, ['sort']),
+    pick<AlbumsSearch>(search, ['sort', 'favorites']),
   component: AlbumsPage,
 })
 
@@ -117,8 +116,10 @@ const artistRoute = createRoute({
 const albumRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/album/$albumKey',
-  validateSearch: (search: Record<string, unknown>): { from?: string } =>
-    pick<{ from?: string }>(search, ['from']),
+  validateSearch: (
+    search: Record<string, unknown>
+  ): { from?: string; fromName?: string } =>
+    pick<{ from?: string; fromName?: string }>(search, ['from', 'fromName']),
   component: AlbumPage,
 })
 

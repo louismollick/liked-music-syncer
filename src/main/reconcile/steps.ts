@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { and, eq, inArray, like } from 'drizzle-orm'
+import { and, eq, inArray, like, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
@@ -17,6 +17,7 @@ import {
   STAGING_DIR,
   sha256File,
 } from '../inventory/files'
+import { readableDirectory } from '../inventory/inventory'
 import { pathKey, resolveCollision, sidecarPath } from '../inventory/layout'
 import type { Db } from '../library/db'
 import {
@@ -44,7 +45,13 @@ import type {
   RemoteTarget,
 } from '../remote/rclone'
 import { hashFile } from '../remote/rclone'
-import { fieldDiff, sha256, type TagFields, writeTags } from '../tags/schema'
+import {
+  fieldDiff,
+  readTags,
+  sha256,
+  type TagFields,
+  writeTags,
+} from '../tags/schema'
 import {
   desiredPath,
   desiredSidecar,
@@ -484,6 +491,65 @@ async function validFile(
   }
 }
 
+/** A Managed File changed outside the app; the track pauses instead of overwriting it. */
+export class OutsideEditError extends Error {
+  readonly kind = 'permanent' as const
+  constructor(readonly parts: string[]) {
+    super(`Changed outside the app (${parts.join(', ')})`)
+    this.name = 'OutsideEditError'
+  }
+}
+
+/** Sentinel for "the user asked to rewrite this file": replace it even though it changed. */
+export const REWRITE_AUDIO = 'rewrite'
+
+/**
+ * Checks a Managed File still matches its record before the app writes over,
+ * moves, or uploads it. On a mismatch it records an Outside Edit and throws.
+ */
+export async function assertUnchanged(
+  deps: StepDeps,
+  root: string,
+  file: FileRow
+): Promise<void> {
+  const absolute = path.join(root, file.relativePath)
+  const parts: string[] = []
+  try {
+    const info = await stat(absolute)
+    if (
+      info.size !== file.size ||
+      (await sha256File(absolute)) !== file.contentSha256
+    ) {
+      try {
+        const read = readTags(absolute).fields
+        const written = parseFields(file)
+        const { coverSha256: readCover, ...readRest } = read
+        const { coverSha256: writtenCover, ...writtenRest } = written
+        if (JSON.stringify(readRest) !== JSON.stringify(writtenRest))
+          parts.push('tags')
+        if (readCover !== writtenCover) parts.push('artwork')
+      } catch {
+        // Unreadable tags: report it as an audio change below.
+      }
+      if (parts.length === 0) parts.push('audio')
+    }
+  } catch {
+    parts.push('deleted')
+  }
+  if (file.lrcSha256) {
+    const lrc = path.join(root, sidecarPath(file.relativePath))
+    const digest = (await exists(lrc)) ? sha256(await readFile(lrc)) : null
+    if (digest !== file.lrcSha256) parts.push('sidecar')
+  }
+  if (parts.length === 0) return
+  deps.db
+    .update(files)
+    .set({ outsideEdit: JSON.stringify(parts) })
+    .where(eq(files.trackId, file.trackId))
+    .run()
+  throw new OutsideEditError(parts)
+}
+
 export interface MatchOutcome {
   /** Track that now carries the work (may differ from the input after a merge). */
   trackId: string
@@ -515,10 +581,11 @@ export async function runMatch(
   const match = await deps.matcher.match(input, run.signal)
   run.progress(0.4)
   const errors: Record<string, string> = {}
+  // A provider outage must never strip what the track already has.
   let enrichment = {
-    mbRecordingId: null as string | null,
-    genre: null as string | null,
-    isrc: null as string | null,
+    mbRecordingId: track.mbRecordingId,
+    genre: track.genre,
+    isrc: track.isrc,
   }
   try {
     enrichment = await deps.matcher.enrich(match, run.signal)
@@ -527,10 +594,11 @@ export async function runMatch(
     errors.musicbrainz = error instanceof Error ? error.message : String(error)
   }
   run.progress(0.6)
-  let lyricsText: string | null = null
-  let lyricsStatus: 'synced' | 'plain' | 'none' = 'none'
-  let lyricsSource: string | null = null
-  let language: string | null = null
+  // Keep existing lyrics when lookups are off or every provider that could answer failed.
+  let lyricsText: string | null = track.lyricsText
+  let lyricsStatus = track.lyricsStatus as 'synced' | 'plain' | 'none'
+  let lyricsSource: string | null = track.lyricsSource
+  let language: string | null = track.language
   let spotifyTrackId = track.spotifyTrackId
   if (settings.lyricsEnabled) {
     const found = await deps.lyrics.find(
@@ -557,6 +625,12 @@ export async function runMatch(
       lyricsStatus = found.lyrics.synced ? 'synced' : 'plain'
       lyricsSource = found.lyrics.source
       language = found.lyrics.language
+    } else if (Object.keys(found.errors).length === 0) {
+      // Every provider answered and none has lyrics: the track has none.
+      lyricsText = null
+      lyricsStatus = 'none'
+      lyricsSource = null
+      language = null
     }
   }
   run.progress(0.8)
@@ -795,13 +869,22 @@ async function placeTrackFiles(
     ? sha256(await readFile(stagedSidecar))
     : null
   const taken = takenChecker(deps.db, root, track.id)
-  const keepPath =
+  let keepPath =
     previous &&
     previous.relativePath === desiredPath(track) &&
     !(await taken(previous.relativePath))
       ? previous.relativePath
       : null
   let target = keepPath ?? (await chooseFreePath(deps.db, root, track))
+  if (
+    !keepPath &&
+    previous &&
+    pathKey(target) === pathKey(previous.relativePath)
+  ) {
+    // Same file under a different case or suffix: replace it where it is.
+    keepPath = previous.relativePath
+    target = previous.relativePath
+  }
   signal.throwIfAborted()
   deps.db.transaction((tx) => {
     journal(
@@ -919,6 +1002,13 @@ export async function runAcquire(
   const root = libraryRoot(deps.settings())
   const match = parseMatch(track)
   if (!match) throw new Error('Cannot download before matching')
+  const existing = deps.db
+    .select()
+    .from(files)
+    .where(eq(files.trackId, track.id))
+    .get()
+  if (existing && existing.audioVideoId !== REWRITE_AUDIO)
+    await assertUnchanged(deps, root, existing)
   const dir = stagingDir(root, track.id)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
@@ -968,6 +1058,7 @@ export async function runRetag(
     .where(eq(files.trackId, track.id))
     .get()
   if (!file) throw new Error('No file to retag')
+  await assertUnchanged(deps, root, file)
   const dir = stagingDir(root, track.id)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
@@ -1035,6 +1126,7 @@ export async function runMove(
     .where(eq(files.trackId, track.id))
     .get()
   if (!file) throw new Error('No file to move')
+  await assertUnchanged(deps, root, file)
   let target = await chooseFreePath(deps.db, root, track)
   run.signal.throwIfAborted()
   const at = iso(deps)
@@ -1127,8 +1219,14 @@ export function createRemoteIndexCache(rclone: Rclone): RemoteIndexCache {
   return {
     get(target, algo) {
       const key = `${target.remote}|${target.folder}|${algo}`
-      if (!cached || cached.key !== key)
-        cached = { key, map: rclone.list(target, { hashAlgo: algo }) }
+      if (!cached || cached.key !== key) {
+        const map = rclone.list(target, { hashAlgo: algo })
+        cached = { key, map }
+        // Don't keep a failed listing: the next upload tries again.
+        map.catch(() => {
+          if (cached?.map === map) cached = null
+        })
+      }
       return cached.map
     },
     invalidate() {
@@ -1143,6 +1241,15 @@ export async function auditRemote(deps: StepDeps): Promise<string[]> {
   if (!target) return []
   const listing = await deps.rclone.list(target, {})
   const key = targetKey(target)
+  const recorded =
+    deps.db
+      .select({ n: sql<number>`count(*)` })
+      .from(uploads)
+      .where(eq(uploads.remoteTarget, key))
+      .get()?.n ?? 0
+  // An empty listing while uploads are recorded usually means the remote folder is
+  // briefly unavailable, not that every file was deleted.
+  if (listing.size === 0 && recorded >= 3) return []
   const stale: string[] = []
   for (const row of deps.db
     .select()
@@ -1183,6 +1290,7 @@ export async function runUpload(
     .where(eq(files.trackId, track.id))
     .get()
   if (!file) throw new Error('No file to upload')
+  await assertUnchanged(deps, root, file)
   const recorded = deps.db
     .select()
     .from(uploads)
@@ -1347,46 +1455,59 @@ export async function processTombstones(
   const pending = all.filter((row) => !row.doneAt)
   const settings = deps.settings()
   const target = remoteTarget(settings)
+  const rootReadable =
+    Boolean(settings.libraryFolder) &&
+    (await readableDirectory(settings.libraryFolder))
   for (const row of pending) {
     if (signal.aborted) return
-    if (row.kind === 'local') {
-      if (!settings.libraryFolder) continue
-      const absolute = path.join(settings.libraryFolder, row.path)
-      // Never delete a path another track now owns.
-      const audioPath = row.path.replace(/\.lrc$/i, '.m4a')
-      const owner = deps.db
-        .select()
-        .from(files)
-        .where(eq(files.relativePath, audioPath))
-        .get()
-      if (!owner) {
-        await rm(absolute, { force: true })
-        await pruneEmptyDirs(settings.libraryFolder, path.dirname(absolute))
+    // One failing tombstone (e.g. an unreachable remote) must not block the rest.
+    try {
+      if (row.kind === 'local') {
+        // An unmounted folder would make the delete a silent no-op; try again later.
+        if (!rootReadable) continue
+        const absolute = path.join(settings.libraryFolder, row.path)
+        // Never delete a path another track now owns.
+        const audioPath = row.path.replace(/\.lrc$/i, '.m4a')
+        const owner = deps.db
+          .select()
+          .from(files)
+          .where(eq(files.relativePath, audioPath))
+          .get()
+        if (!owner) {
+          await rm(absolute, { force: true })
+          await pruneEmptyDirs(settings.libraryFolder, path.dirname(absolute))
+        }
+      } else {
+        const storedTarget = row.remoteTarget
+          ? targetFromKey(row.remoteTarget)
+          : target
+        if (!storedTarget) continue
+        const owner = row.path.endsWith('.lrc')
+          ? deps.db
+              .select()
+              .from(uploads)
+              .where(eq(uploads.lrcRemotePath, row.path))
+              .get()
+          : deps.db
+              .select()
+              .from(uploads)
+              .where(eq(uploads.remotePath, row.path))
+              .get()
+        if (!owner || owner.remoteTarget !== targetKey(storedTarget))
+          await deps.rclone.delete(storedTarget, row.path, signal)
       }
-    } else {
-      const storedTarget = row.remoteTarget
-        ? targetFromKey(row.remoteTarget)
-        : target
-      if (!storedTarget) continue
-      const owner = row.path.endsWith('.lrc')
-        ? deps.db
-            .select()
-            .from(uploads)
-            .where(eq(uploads.lrcRemotePath, row.path))
-            .get()
-        : deps.db
-            .select()
-            .from(uploads)
-            .where(eq(uploads.remotePath, row.path))
-            .get()
-      if (!owner || owner.remoteTarget !== targetKey(storedTarget))
-        await deps.rclone.delete(storedTarget, row.path, signal)
+      deps.db
+        .update(tombstones)
+        .set({ doneAt: iso(deps) })
+        .where(eq(tombstones.id, row.id))
+        .run()
+    } catch (error) {
+      if (signal.aborted) return
+      console.warn(
+        `[tombstones] ${row.kind} delete of ${row.path} failed; will retry`,
+        error
+      )
     }
-    deps.db
-      .update(tombstones)
-      .set({ doneAt: iso(deps) })
-      .where(eq(tombstones.id, row.id))
-      .run()
   }
   for (const trackId of new Set(
     all.flatMap((row) => (row.trackId ? [row.trackId] : []))
