@@ -551,6 +551,72 @@ export function linkContributions(
 }
 
 /**
+ * Moves likes from untouched provisional tracks onto adopted files that record
+ * the same liked video. Covers the order where liked songs were checked before
+ * the library folder was chosen (so linkContributions ran before adoption).
+ */
+export function claimAdoptedFiles(
+  db: Db,
+  now: () => Date = () => new Date()
+): number {
+  const at = nowIso(now)
+  let claimed = 0
+  db.transaction((tx) => {
+    const adopted = new Map<string, string>()
+    for (const row of tx
+      .select({ id: tracks.id, match: tracks.match })
+      .from(tracks)
+      .where(eq(tracks.adopted, true))
+      .all()) {
+      try {
+        const saved = JSON.parse(row.match ?? 'null') as {
+          sourceVideoId?: string
+        } | null
+        if (saved?.sourceVideoId && !adopted.has(saved.sourceVideoId))
+          adopted.set(saved.sourceVideoId, row.id)
+      } catch {
+        // Unreadable saved match: leave unclaimed.
+      }
+    }
+    if (adopted.size === 0) return
+    const candidates = tx.all<{
+      id: string
+      track_id: string
+      source_video_id: string
+    }>(sql`
+      SELECT c.id, c.track_id, c.source_video_id FROM contributions c
+      JOIN tracks t ON t.id = c.track_id
+      WHERE c.kind = 'liked' AND c.active = 1 AND t.identity_key IS NULL
+        AND NOT EXISTS (SELECT 1 FROM files f WHERE f.track_id = t.id)
+    `)
+    for (const row of candidates) {
+      const target = adopted.get(row.source_video_id)
+      if (!target) continue
+      adopted.delete(row.source_video_id)
+      tx.update(contributions)
+        .set({ trackId: target })
+        .where(eq(contributions.id, row.id))
+        .run()
+      tx.update(tracks)
+        .set({ adopted: false, state: 'pending', updatedAt: at })
+        .where(eq(tracks.id, target))
+        .run()
+      const remaining = tx
+        .select({ id: contributions.id })
+        .from(contributions)
+        .where(eq(contributions.trackId, row.track_id))
+        .get()
+      if (!remaining) {
+        tx.run(sql`DELETE FROM track_artists WHERE track_id = ${row.track_id}`)
+        tx.delete(tracks).where(eq(tracks.id, row.track_id)).run()
+      }
+      claimed += 1
+    }
+  })
+  return claimed
+}
+
+/**
  * Marks tracks with no active contribution as No Longer Wanted, and brings
  * back tracks that regained one. Only runs once every configured source has
  * completed a full check since the database was created.

@@ -35,6 +35,7 @@ import { errorKindOf } from '../net/http'
 import {
   checkArtistCatalog,
   checkLikedSongs,
+  claimAdoptedFiles,
   deactivateArtistCatalog,
   likedSnapshotSource,
   linkContributions,
@@ -151,6 +152,8 @@ export class Reconciler {
     try {
       await recoverOperations(inventory, settings.libraryFolder)
       await adoptFiles(inventory, settings.libraryFolder)
+      claimAdoptedFiles(this.db, this.deps.now)
+      this.refreshWantedStates()
       await detectOutsideEdits(inventory, settings.libraryFolder)
     } catch (error) {
       console.error('[reconciler] library preparation failed', error)
@@ -228,17 +231,26 @@ export class Reconciler {
         }
       }
       linkContributions(this.db, this.deps.now)
-      updateWantedStates(this.db, {
-        accountId,
-        favoriteArtistIds: favorites
-          .filter((a) => a.channelId)
-          .map((a) => a.id),
-      })
+      claimAdoptedFiles(this.db, this.deps.now)
+      this.refreshWantedStates()
     } finally {
       this.checking = false
       this.deps.onLibraryChanged(null)
       this.markDirty()
     }
+  }
+
+  private refreshWantedStates(): void {
+    const favorites = this.db
+      .select()
+      .from(artists)
+      .where(eq(artists.favorite, true))
+      .all()
+      .filter((artist) => artist.channelId)
+    updateWantedStates(this.db, {
+      accountId: this.deps.session.accountId(),
+      favoriteArtistIds: favorites.map((artist) => artist.id),
+    })
   }
 
   setFavorite(artistId: string, favorite: boolean): void {

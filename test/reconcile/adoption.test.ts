@@ -13,6 +13,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { adoptFiles } from '../../src/main/inventory/inventory'
 import { artists, uploads } from '../../src/main/library/schema'
 import {
+  checkLikedSongs,
+  claimAdoptedFiles,
+  linkContributions,
+} from '../../src/main/reconcile/sources'
+import {
   desiredFieldsFor,
   materialDiff,
   parseFields,
@@ -259,6 +264,35 @@ describe('adoption of v5 managed files', () => {
     await h.start()
     expect(h.downloads).toEqual([])
     expect(readFileSync(absolute).equals(before)).toBe(true)
+  })
+
+  it('claims adopted files when likes were checked before the folder was adopted', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    legacyFile(h, 'Test Artist/Early/Early.m4a', {
+      source: 'early',
+      title: 'Early',
+    })
+    h.catalog.likes = [song('early', 'Early'), song('other', 'Other')]
+    await checkLikedSongs({
+      db: h.db,
+      catalog: h.catalog,
+      accountId: h.account!,
+      stillCurrent: () => true,
+      now: () => h.time,
+    })
+    linkContributions(h.db, () => h.time)
+    expect(h.rows()).toHaveLength(2)
+    await adopt(h)
+    expect(claimAdoptedFiles(h.db, () => h.time)).toBe(1)
+    const rows = h.rows()
+    expect(rows).toHaveLength(2)
+    const early = rows.find((row) => row.title === 'Early')!
+    expect(early.identityKey).toBe('adopted:video:early')
+    expect(early.adopted).toBe(false)
+    expect(
+      h.contributions().find((c) => c.sourceVideoId === 'early')?.trackId
+    ).toBe(early.id)
   })
 
   it('records an identical remote copy without uploading it', async () => {
