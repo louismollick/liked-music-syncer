@@ -100,7 +100,9 @@ export class LibraryQueries {
 
   private toSong(row: SongSqlRow): SongRowView {
     const remoteOn = this.remoteOn()
-    let remoteState: RemoteState = remoteOn ? row.remote_state : 'off'
+    // No Longer Wanted tracks are never uploaded; a remote state would be noise.
+    const synced = row.state !== 'no_longer_wanted'
+    let remoteState: RemoteState = remoteOn && synced ? row.remote_state : 'off'
     if (
       remoteOn &&
       row.state === 'needs_attention' &&
@@ -155,7 +157,7 @@ export class LibraryQueries {
       params.push(f.language)
     }
     if (f.remote) {
-      where.push(`(${REMOTE_STATE_SQL}) = ?`)
+      where.push(`t.state != 'no_longer_wanted' AND (${REMOTE_STATE_SQL}) = ?`)
       params.push(f.remote)
     }
     if (f.favorite) {

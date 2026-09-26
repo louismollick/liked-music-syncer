@@ -120,7 +120,11 @@ describe('LibraryQueries', () => {
     expect(ids({ lyrics: 'synced' })).toEqual([firstRow.id])
     expect(ids({ lyrics: 'plain' })).toEqual([plain.id])
     expect(ids({ remote: 'stale' })).toEqual([secondRow.id])
-    expect(ids({ remote: 'missing' })).toEqual([plain.id, 'catalog-only'])
+    // No Longer Wanted tracks are never uploaded, so they have no remote state.
+    expect(ids({ remote: 'missing' })).toEqual(['catalog-only'])
+    expect(
+      q.songs({}).rows.find((row) => row.id === plain.id)?.remoteState
+    ).toBe('off')
     expect(ids({ remote: 'in_sync' })).toHaveLength(2)
     expect(ids({ state: 'needs_attention' })).toEqual([attention.id])
     expect(ids({ state: 'no_longer_wanted' })).toEqual([plain.id])

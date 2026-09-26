@@ -70,6 +70,7 @@ const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000]
 const CHECK_INTERVAL_MS = 30 * 60_000
 const CATALOG_INTERVAL_MS = 24 * 60 * 60_000
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60_000
+const STOP_WAIT_MS = 5_000
 const STAGE_WEIGHTS: Record<
   'matching' | 'downloading' | 'uploading',
   [number, number]
@@ -117,6 +118,8 @@ export class Reconciler {
   private loopPromise: Promise<void> | null = null
   private workPromise: Promise<void> | null = null
   private folderChangePromise: Promise<void> | null = null
+  /** Checks and audits still touching the database; stop() waits for them. */
+  private readonly inFlight = new Set<Promise<unknown>>()
 
   constructor(private readonly deps: ReconcilerDeps) {
     this.remoteIndex = createRemoteIndexCache(deps.rclone)
@@ -148,6 +151,21 @@ export class Reconciler {
     this.controller?.abort(new Error('stopping'))
     this.wake?.()
     await this.loopPromise?.catch(() => undefined)
+    // Don't let a hung network request hold up quitting.
+    let timer: NodeJS.Timeout | undefined
+    await Promise.race([
+      Promise.allSettled([...this.inFlight]),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, STOP_WAIT_MS)
+      }),
+    ])
+    clearTimeout(timer)
+  }
+
+  private track<T>(promise: Promise<T>): Promise<T> {
+    this.inFlight.add(promise)
+    void promise.finally(() => this.inFlight.delete(promise)).catch(() => {})
+    return promise
   }
 
   /**
@@ -179,7 +197,11 @@ export class Reconciler {
     }
   }
 
-  private async auditRemote(): Promise<void> {
+  private auditRemote(): Promise<void> {
+    return this.track(this.runAudit())
+  }
+
+  private async runAudit(): Promise<void> {
     try {
       if ((await auditRemote(this.deps)).length) this.markDirty()
     } catch (error) {
@@ -219,9 +241,13 @@ export class Reconciler {
   }
 
   /** Checks liked songs (and due Favorite Artist catalogs), then plans work. */
-  async check(
-    options: { catalogs?: 'due' | 'all' | string[] } = {}
-  ): Promise<void> {
+  check(options: { catalogs?: 'due' | 'all' | string[] } = {}): Promise<void> {
+    return this.track(this.runCheck(options))
+  }
+
+  private async runCheck(options: {
+    catalogs?: 'due' | 'all' | string[]
+  }): Promise<void> {
     if (this.checking) {
       // Remember the request (e.g. a new favorite) and run it right after.
       this.queuedCheck = mergeCatalogRequests(
@@ -784,7 +810,7 @@ export class Reconciler {
   // ------------------------------------------------------------ activity
 
   private emitSoon(): void {
-    if (this.emitTimer) return
+    if (this.emitTimer || !this.running) return
     const wait = Math.max(0, 100 - (Date.now() - this.lastEmit))
     this.emitTimer = setTimeout(() => {
       this.emitTimer = null
