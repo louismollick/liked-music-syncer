@@ -447,6 +447,12 @@ export class Reconciler {
 
   private async loop(): Promise<void> {
     while (this.running) {
+      if (!this.deps.settings().libraryFolder) {
+        // Nothing can be written until a folder is chosen; wait instead of failing tracks.
+        this.current = null
+        await this.idle(60_000)
+        continue
+      }
       if (this.planDirty) this.plan()
       const track = this.nextTrack()
       if (!track) {

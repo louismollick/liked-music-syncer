@@ -29,6 +29,8 @@ export function Artwork({
         src={src}
         alt=""
         draggable={false}
+        // Google image hosts reject requests with a localhost/file referrer.
+        referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
         className={cx('rounded-md object-cover bg-white/[.04]', className)}
       />

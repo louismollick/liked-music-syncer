@@ -161,7 +161,11 @@ export function SongTable({
         <StatusIcons song={song} />
       </div>
       <div className="text-right pr-2 text-zinc-500 tabular-nums">
-        {song.likedAt ? formatDate(song.likedAt) : 'Catalog'}
+        {song.likedAt
+          ? formatDate(song.likedAt)
+          : song.catalogOnly
+            ? 'Catalog'
+            : '—'}
       </div>
     </div>
   )

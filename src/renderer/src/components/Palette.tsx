@@ -126,7 +126,7 @@ export function Palette() {
         hint: `${song.artist}${song.album ? ` · ${song.album}` : ''}`,
         image: { src: song.coverUrl, kind: 'album' },
         run: () => {
-          void navigate({ to: '/songs' })
+          void navigate({ to: '/songs', search: { song: song.id } })
           openSong(song.id)
         },
       })

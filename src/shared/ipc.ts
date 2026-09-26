@@ -116,8 +116,10 @@ export interface SongRowView {
   lyricsStatus: LyricsFilter
   remoteState: RemoteState
   state: 'pending' | 'working' | 'done' | 'needs_attention' | 'no_longer_wanted'
-  /** ISO time of the Liked Date, or null for catalog-only tracks. */
+  /** ISO time of the Liked Date, or null when no liked contribution backs the track. */
   likedAt: string | null
+  /** True when only a Favorite Artist catalog backs the track. */
+  catalogOnly: boolean
   coverUrl: string | null
   trackNumber: number | null
   standalone: boolean

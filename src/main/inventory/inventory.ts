@@ -101,7 +101,8 @@ export function matchFromTags(fields: TagFields): Match | null {
     release,
     title: fields.title ?? '',
     artists: credits,
-    album: fields.album ?? '',
+    // Standalone Tracks are filed as their own single (album = title).
+    album: releaseId ? (fields.album ?? '') : (fields.title ?? ''),
     albumArtist: fields.albumArtist ?? joinArtistNames(credits.slice(0, 1)),
     durationSeconds: null,
     coverUrl: null,

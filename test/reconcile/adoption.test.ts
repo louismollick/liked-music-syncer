@@ -135,7 +135,7 @@ describe('adoption of v5 managed files', () => {
     ).toMatchObject({ suggested: true, favorite: false })
   })
 
-  it('claims release files only for a matching release and video, without downloading matching audio', async () => {
+  it('claims a release file for a like of its recorded source video, without downloading', async () => {
     const h = harness()
     h.settings.remoteEnabled = false
     const original = legacyFile(h, 'Test Artist/Test Album/01 Song.m4a', {
@@ -152,13 +152,16 @@ describe('adoption of v5 managed files', () => {
     h.matcher.matches.set('liked', releaseMatch(liked, album, 'catalog'))
     h.catalog.likes = [liked]
     await h.start()
-    expect(h.row('release-1:catalog')?.id).toBe(adoptedId)
+    const claimed = h.rows().find((row) => row.id === adoptedId)!
+    expect(claimed.adopted).toBe(false)
+    expect(claimed.identityKey).toBe('adopted:release-1:catalog')
+    expect(h.rows()).toHaveLength(1)
     expect(h.downloads).toEqual([])
     expect(existsSync(original)).toBe(true)
     expect(h.file(adoptedId)?.audioVideoId).toBe('catalog')
   })
 
-  it('does not claim a release file for a different release or a standalone file for a release match', async () => {
+  it('claims by recorded source video even when the matcher now picks another release; Refresh re-keys and re-downloads', async () => {
     const h = harness()
     h.settings.remoteEnabled = false
     legacyFile(h, 'wrong.m4a', {
@@ -166,26 +169,21 @@ describe('adoption of v5 managed files', () => {
       release: 'other-release',
       title: 'Song',
     })
-    legacyFile(h, 'loose.m4a', { source: 'second', title: 'Second' })
     await adopt(h)
-    const album = release(
-      'right-release',
-      song('catalog', 'Song'),
-      song('second', 'Second')
-    )
+    const adoptedId = h.rows()[0].id
+    const album = release('right-release', song('catalog', 'Song'))
     h.matcher.matches.set(
       'liked',
       releaseMatch(song('liked', 'Song'), album, 'catalog')
     )
-    h.matcher.matches.set(
-      'second',
-      releaseMatch(song('second', 'Second'), album, 'second')
-    )
-    h.catalog.likes = [song('liked', 'Song'), song('second', 'Second')]
+    h.catalog.likes = [song('liked', 'Song')]
     await h.start()
-    expect(h.row('right-release:catalog')?.adopted).toBe(false)
-    expect(h.row('right-release:second')?.adopted).toBe(false)
-    expect(h.downloads).toEqual(expect.arrayContaining(['catalog', 'second']))
+    expect(h.rows()).toHaveLength(1)
+    expect(h.downloads).toEqual([])
+    h.reconciler.refresh({ kind: 'track', id: adoptedId })
+    await h.idle()
+    expect(h.row('right-release:catalog')?.id).toBe(adoptedId)
+    expect(h.downloads).toEqual(['catalog'])
   })
 
   it('claims a standalone file by source video, retags an Unknown Album layout, and moves it', async () => {
@@ -202,7 +200,7 @@ describe('adoption of v5 managed files', () => {
     const adoptedId = h.rows()[0].id
     h.catalog.likes = [song('loose', 'Loose')]
     await h.start()
-    const track = h.row('video:loose')!
+    const track = h.rows().find((row) => row.id === adoptedId)!
     expect(track.id).toBe(adoptedId)
     expect(h.downloads).toEqual([])
     expect(h.file(track.id)?.relativePath).toBe('Test Artist/Loose/Loose.m4a')
@@ -236,12 +234,31 @@ describe('adoption of v5 managed files', () => {
     expect(
       materialDiff(
         parseFields(h.file(adopted.id)!),
-        desiredFieldsFor(h.db, h.row('video:lyrics')!)
+        desiredFieldsFor(h.db, h.rows()[0])
       )
     ).toEqual([])
     expect(readFileSync(absolute).equals(before)).toBe(true)
     expect(statSync(sidecar).mtimeMs).toBe(sidecarBefore)
     expect(readTags(absolute).fields.lms.schemaVersion).toBe(5)
+  })
+
+  it('does not rewrite an adopted Favorite Artist file before any source claims it', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    const absolute = legacyFile(h, 'Test Artist/Album/01 Fav.m4a', {
+      source: 'fav',
+      resolved: 'fav',
+      release: 'fav-release',
+      title: 'Fav',
+      album: 'Album',
+      origin: 'favorite_artist_release',
+    })
+    const before = readFileSync(absolute)
+    await adopt(h)
+    h.catalog.likes = []
+    await h.start()
+    expect(h.downloads).toEqual([])
+    expect(readFileSync(absolute).equals(before)).toBe(true)
   })
 
   it('records an identical remote copy without uploading it', async () => {
@@ -258,7 +275,7 @@ describe('adoption of v5 managed files', () => {
     h.catalog.likes = [song('remote', 'Remote')]
     const upload = vi.spyOn(h.deps.rclone, 'upload')
     await h.start()
-    const track = h.row('video:remote')!
+    const track = h.rows()[0]
     expect(h.downloads).toEqual([])
     expect(upload).not.toHaveBeenCalled()
     expect(

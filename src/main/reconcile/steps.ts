@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, like } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
@@ -109,7 +109,11 @@ export function remoteTarget(settings: Settings): RemoteTarget | null {
   }
 }
 
-export function sourceOriginFor(db: Db, trackId: string): string | null {
+/** Origin tag implied by active contributions; undefined when none back the track. */
+export function sourceOriginFor(
+  db: Db,
+  trackId: string
+): string | null | undefined {
   const rows = db
     .select({ kind: contributions.kind })
     .from(contributions)
@@ -117,18 +121,25 @@ export function sourceOriginFor(db: Db, trackId: string): string | null {
       and(eq(contributions.trackId, trackId), eq(contributions.active, true))
     )
     .all()
-  if (rows.length === 0) return null
+  if (rows.length === 0) return undefined
   return rows.every((row) => row.kind === 'catalog')
     ? 'favorite_artist_release'
     : null
 }
 
 export function desiredFieldsFor(db: Db, track: TrackRow): TagFields {
-  return desiredTagFields(
-    track,
-    coverShaFromPath(track.coverPath),
-    sourceOriginFor(db, track.id)
-  )
+  let origin = sourceOriginFor(db, track.id)
+  if (origin === undefined) {
+    // No source claims the track yet (e.g. just adopted): keep what the file says,
+    // so adoption alone never rewrites a file.
+    const file = db
+      .select()
+      .from(files)
+      .where(eq(files.trackId, track.id))
+      .get()
+    origin = file ? (parseFields(file).lms?.sourceOrigin ?? null) : null
+  }
+  return desiredTagFields(track, coverShaFromPath(track.coverPath), origin)
 }
 
 export function materialDiff(written: TagFields, desired: TagFields): string[] {
@@ -175,7 +186,7 @@ export function nextStep(
     return 'retag'
   }
   if (
-    file.relativePath !== desiredPath(track) &&
+    pathKey(file.relativePath) !== pathKey(desiredPath(track)) &&
     !isSuffixedVariant(file.relativePath, desiredPath(track))
   ) {
     return 'move'
@@ -195,8 +206,9 @@ export function nextStep(
 
 /** A collision-suffixed path counts as being at its layout path. */
 function isSuffixedVariant(actual: string, preferred: string): boolean {
-  const base = preferred.replace(/\.m4a$/i, '')
-  return actual.startsWith(`${base} [`) && actual.toLowerCase().endsWith('.m4a')
+  const base = pathKey(preferred.replace(/\.m4a$/i, ''))
+  const key = pathKey(actual)
+  return key.startsWith(`${base} [`) && key.endsWith('.m4a')
 }
 
 // ---------------------------------------------------------------- match
@@ -313,10 +325,11 @@ async function processCover(
 }
 
 function adoptedClaim(db: Db, match: Match): TrackRow | undefined {
+  // Adopted files keep a provisional key until a Match re-keys them, even after a like claims them.
   const candidates = db
     .select()
     .from(tracks)
-    .where(eq(tracks.adopted, true))
+    .where(like(tracks.identityKey, 'adopted:%'))
     .all()
   return candidates.find((candidate) => {
     const saved = parseMatch(candidate)
@@ -534,7 +547,10 @@ export async function runMatch(
       .where(eq(tracks.identityKey, match.identityKey))
       .get()
     if (target?.id === current.id) target = undefined
-    if (!target && current.adopted === false) target = adoptedClaim(db, match)
+    if (!target) {
+      const claimed = adoptedClaim(db, match)
+      if (claimed && claimed.id !== current.id) target = claimed
+    }
     if (target && target.id !== current.id) {
       mergeTracks(db, current, target, at)
       survivor = target.id
@@ -620,8 +636,17 @@ function takenChecker(db: Db, root: string, trackId: string) {
       .filter((row) => row.trackId !== trackId)
       .map((row) => pathKey(row.path))
   )
+  const own = db
+    .select({ path: files.relativePath })
+    .from(files)
+    .where(eq(files.trackId, trackId))
+    .get()
+  const ownKey = own ? pathKey(own.path) : null
   return async (relative: string) => {
-    if (reserved.has(pathKey(relative))) return true
+    const key = pathKey(relative)
+    if (reserved.has(key)) return true
+    // The track's own file is not a collision (case-only differences on macOS).
+    if (key === ownKey) return false
     return exists(path.join(root, relative))
   }
 }

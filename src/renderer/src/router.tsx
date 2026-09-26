@@ -5,12 +5,15 @@ import {
   createRouter,
   Outlet,
   redirect,
+  useRouterState,
 } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { SearchBox } from './components/layout/SearchBox'
 import { Sidebar } from './components/layout/Sidebar'
 import { NeedsAttentionDrawer } from './components/NeedsAttention'
 import { Palette } from './components/Palette'
 import { SongPanel } from './components/SongPanel'
+import { useAppState } from './lib/app-state'
 import { ActivityPage } from './pages/ActivityPage'
 import { AlbumPage } from './pages/AlbumPage'
 import { AlbumsPage, type AlbumsSearch } from './pages/AlbumsPage'
@@ -19,7 +22,19 @@ import { ArtistsPage, type ArtistsSearch } from './pages/ArtistsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SongsPage, type SongsSearch } from './pages/SongsPage'
 
+/** Closes the Song panel when navigating, unless the new URL names a song. */
+function useCloseSongPanelOnNavigate() {
+  const { closeSong } = useAppState()
+  const location = useRouterState({ select: (state) => state.location })
+  const hasSong = Boolean((location.search as { song?: string }).song)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only react to navigation
+  useEffect(() => {
+    if (!hasSong) closeSong()
+  }, [location.pathname])
+}
+
 function RootLayout() {
+  useCloseSongPanelOnNavigate()
   return (
     <div className="flex h-full">
       <Sidebar />

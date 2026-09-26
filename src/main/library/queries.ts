@@ -54,6 +54,7 @@ interface SongSqlRow {
   remote_state: 'in_sync' | 'stale' | 'missing'
   liked_at: string | null
   liked_pos: number | null
+  has_catalog: number
   artist_id: string | null
   last_error_step: string | null
 }
@@ -75,6 +76,7 @@ const SONG_SELECT = `
     ${REMOTE_STATE_SQL} AS remote_state,
     (SELECT MIN(c.first_seen_at) FROM contributions c WHERE c.track_id = t.id AND c.kind = 'liked' AND c.active = 1) AS liked_at,
     (SELECT MIN(c.liked_position) FROM contributions c WHERE c.track_id = t.id AND c.kind = 'liked' AND c.active = 1) AS liked_pos,
+    EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = t.id AND c.kind = 'catalog' AND c.active = 1) AS has_catalog,
     (SELECT ta.artist_id FROM track_artists ta WHERE ta.track_id = t.id ORDER BY ta.position LIMIT 1) AS artist_id
   FROM tracks t
   LEFT JOIN files f ON f.track_id = t.id
@@ -119,6 +121,7 @@ export class LibraryQueries {
       remoteState,
       state: row.state,
       likedAt: row.liked_at,
+      catalogOnly: !row.liked_at && Boolean(row.has_catalog),
       coverUrl: this.coverUrl(row.cover_path, row.cover_url),
       trackNumber: row.track_number,
       standalone: !row.release_id,

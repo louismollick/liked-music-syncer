@@ -5,7 +5,8 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // eld is ESM-only; bundle it so the CommonJS main process can load it.
+    plugins: [externalizeDepsPlugin({ exclude: ['eld'] })],
     resolve: { alias: { '@shared': resolve('src/shared') } },
   },
   preload: {

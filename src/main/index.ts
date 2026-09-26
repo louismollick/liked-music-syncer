@@ -119,6 +119,13 @@ async function main() {
     onUpdated: () => broadcast('library:changed', { trackIds: null }),
   })
 
+  // New artists appear as tracks are adopted or matched; fetch their photos shortly after.
+  let imagesTimer: NodeJS.Timeout | null = null
+  const scheduleArtistImages = () => {
+    if (imagesTimer) clearTimeout(imagesTimer)
+    imagesTimer = setTimeout(() => void artistImages.run(), 3_000)
+  }
+
   const reconciler = new Reconciler({
     db,
     tools,
@@ -138,7 +145,10 @@ async function main() {
     },
     coverUrl: coverUrlFor,
     onActivity: (view) => broadcast('activity:changed', view),
-    onLibraryChanged: (trackIds) => broadcast('library:changed', { trackIds }),
+    onLibraryChanged: (trackIds) => {
+      broadcast('library:changed', { trackIds })
+      scheduleArtistImages()
+    },
   })
 
   settings.subscribe((next) => broadcast('settings:changed', next))

@@ -109,7 +109,7 @@ export function ActivityPage() {
   }
 
   const openDone = (id: string) => {
-    void navigate({ to: '/songs' })
+    void navigate({ to: '/songs', search: { song: id } })
     openSong(id)
   }
 

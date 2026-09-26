@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, eq, inArray, isNull, like, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import type {
   CatalogRelease,
   CatalogTrack,
@@ -421,6 +421,25 @@ export function linkContributions(
       .from(contributions)
       .where(and(eq(contributions.active, true), isNull(contributions.trackId)))
       .all()
+    // Adopted files record the liked video they were downloaded from; a like of
+    // that same video claims the file right away (no download, no re-key yet).
+    const adoptedBySource = new Map<string, string>()
+    for (const candidate of tx
+      .select({ id: tracks.id, match: tracks.match })
+      .from(tracks)
+      .where(eq(tracks.adopted, true))
+      .all()) {
+      try {
+        const saved = JSON.parse(candidate.match ?? 'null') as {
+          sourceVideoId?: string
+        } | null
+        if (saved?.sourceVideoId && !adoptedBySource.has(saved.sourceVideoId)) {
+          adoptedBySource.set(saved.sourceVideoId, candidate.id)
+        }
+      } catch {
+        // Unreadable saved match: leave the track unclaimed.
+      }
+    }
     for (const row of unlinked) {
       const raw = JSON.parse(row.raw) as LikedRaw | CatalogRaw
       if (raw.kind === 'catalog') {
@@ -436,10 +455,9 @@ export function linkContributions(
               .select({ id: tracks.id })
               .from(tracks)
               .where(
-                and(
-                  eq(tracks.adopted, true),
-                  eq(tracks.releaseId, raw.release.browseId),
-                  like(tracks.identityKey, `adopted:%:${raw.track.videoId}`)
+                eq(
+                  tracks.identityKey,
+                  `adopted:${raw.release.browseId}:${raw.track.videoId}`
                 )
               )
               .get()
@@ -491,6 +509,19 @@ export function linkContributions(
         created.push(id)
       } else {
         const song = raw.song
+        const adoptedId = adoptedBySource.get(song.videoId)
+        if (adoptedId) {
+          adoptedBySource.delete(song.videoId)
+          tx.update(tracks)
+            .set({ adopted: false, updatedAt: at })
+            .where(eq(tracks.id, adoptedId))
+            .run()
+          tx.update(contributions)
+            .set({ trackId: adoptedId })
+            .where(eq(contributions.id, row.id))
+            .run()
+          continue
+        }
         const id = randomUUID()
         tx.insert(tracks)
           .values({
