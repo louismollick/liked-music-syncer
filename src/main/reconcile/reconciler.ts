@@ -98,6 +98,10 @@ export class Reconciler {
   async stop(): Promise<void> {
     this.running = false
     if (this.checkTimer) clearInterval(this.checkTimer)
+    if (this.emitTimer) {
+      clearTimeout(this.emitTimer)
+      this.emitTimer = null
+    }
     this.controller?.abort(new Error('stopping'))
     this.wake?.()
     await this.loopPromise?.catch(() => undefined)
