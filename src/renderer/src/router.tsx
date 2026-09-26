@@ -22,19 +22,20 @@ import { ArtistsPage, type ArtistsSearch } from './pages/ArtistsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SongsPage, type SongsSearch } from './pages/SongsPage'
 
-/** Closes the Song panel when navigating, unless the new URL names a song. */
-function useCloseSongPanelOnNavigate() {
-  const { closeSong } = useAppState()
+/** The Song panel follows the URL's `song` parameter; other navigation closes it. */
+function useSongPanelFollowsUrl() {
+  const { closeSong, openSong } = useAppState()
   const location = useRouterState({ select: (state) => state.location })
-  const hasSong = Boolean((location.search as { song?: string }).song)
+  const song = (location.search as { song?: string }).song ?? null
   // biome-ignore lint/correctness/useExhaustiveDependencies: only react to navigation
   useEffect(() => {
-    if (!hasSong) closeSong()
-  }, [location.pathname])
+    if (song) openSong(song)
+    else closeSong()
+  }, [location.pathname, song])
 }
 
 function RootLayout() {
-  useCloseSongPanelOnNavigate()
+  useSongPanelFollowsUrl()
   return (
     <div className="flex h-full">
       <Sidebar />

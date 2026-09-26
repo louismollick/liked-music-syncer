@@ -164,6 +164,14 @@ async function main() {
       const before = settings.get()
       const next = settings.update(patch)
       if (
+        (patch.rcloneRemote !== undefined &&
+          patch.rcloneRemote.trim() !== before.rcloneRemote.trim()) ||
+        (patch.remoteFolder !== undefined &&
+          patch.remoteFolder.trim() !== before.remoteFolder.trim())
+      ) {
+        reconciler.remoteTargetChanged()
+      }
+      if (
         patch.libraryFolder !== undefined &&
         patch.libraryFolder !== before.libraryFolder
       ) {

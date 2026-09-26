@@ -61,7 +61,7 @@ export function createAudioDownloader(deps: {
         '--extractor-args',
         `youtube:player_client=mweb;youtubepot-bgutilhttp:base_url=${POT_BASE_URL}`,
         '-f',
-        'bestaudio',
+        'bestaudio/best',
         '--progress-template',
         'download:LMSPROGRESS %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s',
         '--print',

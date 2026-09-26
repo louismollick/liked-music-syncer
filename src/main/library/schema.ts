@@ -107,6 +107,8 @@ export const files = sqliteTable(
 
 export const uploads = sqliteTable('uploads', {
   trackId: text('track_id').primaryKey(),
+  /** `remote|folder` the record belongs to; a different target means no upload yet. */
+  remoteTarget: text('remote_target'),
   remotePath: text('remote_path'),
   hashAlgo: text('hash_algo'),
   contentHash: text('content_hash'),

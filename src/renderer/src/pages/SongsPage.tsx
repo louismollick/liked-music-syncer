@@ -44,7 +44,7 @@ export function SongsPage() {
   const search = useSearch({ strict: false }) as SongsSearch
   const navigate = useNavigate()
   const setup = useSetupNeeded()
-  const { counts, openSong, settings } = useAppState()
+  const { counts, settings } = useAppState()
   const scrollRef = useRef<HTMLDivElement>(null)
   const tableRef = useRef<HTMLDivElement>(null)
   const [unmanagedOpen, setUnmanagedOpen] = useState(false)
@@ -77,9 +77,6 @@ export function SongsPage() {
     scrollRef,
     `${data?.total}-${search.state}`
   )
-  useEffect(() => {
-    if (search.song) openSong(search.song)
-  }, [search.song, openSong])
   useEffect(() => {
     if (unmanagedOpen) void invoke('library:unmanaged').then(setUnmanaged)
   }, [unmanagedOpen])

@@ -196,7 +196,7 @@ export function ActivityPage() {
           ) : (
             <div
               ref={currentRef}
-              className="my-2 h-20 rounded-md border border-dashed border-line flex items-center justify-center text-[13px] text-zinc-500"
+              className="my-2 h-14 flex items-center px-4 text-[15px] text-zinc-500"
             >
               {activity?.checking
                 ? 'Checking your liked songs…'

@@ -97,6 +97,7 @@ export class Reconciler {
   private controller: AbortController | null = null
   private current: CurrentWork | null = null
   private checking = false
+  private queuedCheck: CatalogRequest | null = null
   private planDirty = true
   private lastEmit = 0
   private emitTimer: NodeJS.Timeout | null = null
@@ -133,6 +134,16 @@ export class Reconciler {
     this.controller?.abort(new Error('stopping'))
     this.wake?.()
     await this.loopPromise?.catch(() => undefined)
+  }
+
+  /**
+   * Upload records describe one remote; after the target changes they no
+   * longer apply. The next uploads re-check the new remote (identical copies
+   * are recorded without uploading).
+   */
+  remoteTargetChanged(): void {
+    this.db.delete(uploads).run()
+    this.markDirty()
   }
 
   /** Re-run inventory work after the library folder changes. */
@@ -173,7 +184,14 @@ export class Reconciler {
   async check(
     options: { catalogs?: 'due' | 'all' | string[] } = {}
   ): Promise<void> {
-    if (this.checking) return
+    if (this.checking) {
+      // Remember the request (e.g. a new favorite) and run it right after.
+      this.queuedCheck = mergeCatalogRequests(
+        this.queuedCheck,
+        options.catalogs ?? 'due'
+      )
+      return
+    }
     this.checking = true
     this.emitSoon()
     const accountId = this.deps.session.accountId()
@@ -237,6 +255,9 @@ export class Reconciler {
       this.checking = false
       this.deps.onLibraryChanged(null)
       this.markDirty()
+      const queued = this.queuedCheck
+      this.queuedCheck = null
+      if (queued && this.running) void this.check({ catalogs: queued })
     }
   }
 
@@ -788,6 +809,19 @@ export class Reconciler {
       needsAttention: [...sources, ...edited, ...attention],
     }
   }
+}
+
+type CatalogRequest = 'due' | 'all' | string[]
+
+function mergeCatalogRequests(
+  a: CatalogRequest | null,
+  b: CatalogRequest
+): CatalogRequest {
+  if (a === 'all' || b === 'all') return 'all'
+  if (a === null) return b
+  if (a === 'due') return b === 'due' ? 'due' : b
+  if (b === 'due') return a
+  return [...new Set([...a, ...b])]
 }
 
 /** Newest Liked Date first; catalog-only tracks after, newest release first. */

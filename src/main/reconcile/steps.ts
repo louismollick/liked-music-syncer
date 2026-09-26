@@ -96,6 +96,10 @@ export function libraryRoot(settings: Settings): string {
   return settings.libraryFolder
 }
 
+export function targetKey(target: RemoteTarget): string {
+  return `${target.remote.replace(/:$/, '')}|${target.folder.replace(/\/+$/, '')}`
+}
+
 export function remoteTarget(settings: Settings): RemoteTarget | null {
   if (
     !settings.remoteEnabled ||
@@ -191,9 +195,11 @@ export function nextStep(
   ) {
     return 'move'
   }
-  if (remoteTarget(settings)) {
+  const target = remoteTarget(settings)
+  if (target) {
     if (
       !upload ||
+      upload.remoteTarget !== targetKey(target) ||
       upload.localSha256 !== file.contentSha256 ||
       upload.remotePath !== file.relativePath ||
       (upload.lrcHash ?? null) !== (file.lrcSha256 ?? null)
@@ -1057,11 +1063,14 @@ export async function runUpload(
     .where(eq(files.trackId, track.id))
     .get()
   if (!file) throw new Error('No file to upload')
-  const existing = deps.db
+  const recorded = deps.db
     .select()
     .from(uploads)
     .where(eq(uploads.trackId, track.id))
     .get()
+  // A record for another remote target is not an upload to this one.
+  const existing =
+    recorded?.remoteTarget === targetKey(target) ? recorded : undefined
   const local = path.join(root, file.relativePath)
   const caps = await deps.rclone.capabilities(target)
   const at = iso(deps)
@@ -1184,6 +1193,7 @@ export async function runUpload(
 
   const row = {
     trackId: track.id,
+    remoteTarget: targetKey(target),
     remotePath: file.relativePath,
     hashAlgo: audio.hashAlgo,
     contentHash: audio.hash,

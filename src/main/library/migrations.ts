@@ -86,6 +86,7 @@ export const MIGRATIONS: string[] = [
 
   CREATE TABLE uploads (
     track_id TEXT PRIMARY KEY,
+    remote_target TEXT,
     remote_path TEXT,
     hash_algo TEXT,
     content_hash TEXT,

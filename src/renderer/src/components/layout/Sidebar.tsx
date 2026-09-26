@@ -169,10 +169,10 @@ const NAV = [
 export function Sidebar() {
   const router = useRouter()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const { counts, session } = useAppState()
+  const { activity, session } = useAppState()
   const account =
     session?.accounts.find((a) => a.id === session.selectedAccountId) ?? null
-  const attention = counts?.needsAttention ?? 0
+  const attention = activity?.needsAttention.length ?? 0
 
   const item = (
     to: string,

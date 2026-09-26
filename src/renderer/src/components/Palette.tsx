@@ -49,11 +49,19 @@ export function Palette() {
       setResults(null)
       return
     }
+    let current = true
     const timer = setTimeout(
-      () => void invoke('library:search', text).then(setResults),
+      () =>
+        void invoke('library:search', text).then((next) => {
+          // Ignore responses for text the user has already changed.
+          if (current) setResults(next)
+        }),
       120
     )
-    return () => clearTimeout(timer)
+    return () => {
+      current = false
+      clearTimeout(timer)
+    }
   }, [text])
 
   const close = () => setPaletteOpen(false)
