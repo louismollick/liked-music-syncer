@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Liked Music Syncer · wireframes v4</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root { --r: 6px; --line: rgba(255,255,255,.07); }
+  body { font-family: -apple-system, "SF Pro Text", Inter, system-ui, sans-serif; }
+  .r { border-radius: var(--r); }
+  .art { background: linear-gradient(135deg, var(--a), var(--b)); border-radius: var(--r); }
+  .hair { border-color: var(--line); }
+  .btn { border-radius: var(--r); border: 1px solid rgba(255,255,255,.14); padding: 5px 12px; font-size: 13px; }
+  .btn:hover { border-color: rgba(255,255,255,.3); }
+  .btn-primary { background: #fff; color: #000; border-color: #fff; font-weight: 500; }
+  .note { border: 1px dashed #facc15; color: #fde68a; background: rgba(250,204,21,.06); border-radius: var(--r); }
+  .hide-notes .note { display: none; }
+  .lyric { transition: transform .6s cubic-bezier(.2,.8,.2,1); }
+  .scroll-thin::-webkit-scrollbar { width: 8px } .scroll-thin::-webkit-scrollbar-thumb { background:#27272a; border-radius:6px }
+  svg.i { width: 16px; height: 16px; flex-shrink: 0; }
+</style>
+</head>
+<body class="bg-[#0b0b0c] text-zinc-100 h-screen overflow-hidden select-none">
+<div class="flex h-full">
+
+  <!-- Sidebar -->
+  <aside class="w-[232px] shrink-0 border-r hair bg-[#0e0e10] flex flex-col">
+    <div class="pl-5 pr-3 h-12 flex items-center text-[14px] font-semibold tracking-tight">Liked Music
+      <span class="ml-auto flex gap-0.5"><button onclick="history.back()" class="w-7 h-7 r hover:bg-white/10 text-zinc-400 font-normal">‹</button><button onclick="history.forward()" class="w-7 h-7 r hover:bg-white/10 text-zinc-400 font-normal">›</button></span></div>
+
+    <!-- Status section, ruled off with lines -->
+    <div onclick="go('activity')" class="cursor-pointer border-y hair px-5 py-4 hover:bg-white/[.03]">
+      <div id="mini-busy">
+        <div class="flex items-center gap-3">
+          <div class="art w-9 h-9 shrink-0" id="mini-art" style="--a:#7c3aed;--b:#0ea5e9"></div>
+          <div class="min-w-0">
+            <div class="text-[13px] font-medium truncate" id="mini-title">Sprout</div>
+            <div class="text-[11px] text-zinc-400 truncate" id="mini-step">Downloading · 40%</div>
+          </div>
+        </div>
+        <div class="mt-3 h-[2px] bg-white/10"><div id="mini-bar" class="h-full bg-white" style="width:40%"></div></div>
+        <div class="mt-2 text-[11px] text-zinc-500"><span id="mini-next">14 up next</span></div>
+      </div>
+      <div id="mini-idle" class="hidden flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 text-[13px]"><span id="idle-dot" class="w-1.5 h-1.5 bg-emerald-400" style="border-radius:1px"></span><span id="idle-title">Up to date</span></div>
+          <div class="text-[11px] text-zinc-500 mt-1">Liked songs checked 2 min ago</div>
+        </div>
+        <button id="refresh-btn" onclick="event.stopPropagation();checkNow()" title="Check liked songs now" class="w-10 h-10 r border hair flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/10">
+          <svg id="refresh-ico" class="w-5 h-5 transition-transform duration-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+      </div>
+    </div>
+    <div class="note mx-3 mt-3 p-2 text-[11px] leading-snug">Busy: current track + progress. On the Activity page (or when nothing runs) it switches to the compact status with "checked 2 min ago" and a refresh button, so the page and sidebar never show the same thing twice. <a href="#" onclick="simIdle=!simIdle;tick(0);return false" class="underline">Toggle no-run</a></div>
+
+    <nav class="px-3 pt-4 space-y-0.5 text-[13px]" id="nav"></nav>
+
+    <div class="mt-auto px-5 py-3 border-t hair flex items-center gap-2">
+      <div class="art w-7 h-7" style="--a:#52525b;--b:#27272a"></div>
+      <div class="text-[12px] leading-tight"><div>Ruiisuuu</div><div class="text-zinc-500">1,347 liked songs</div></div><label class="ml-auto text-[10px] text-zinc-600 flex items-center gap-1"><input type="checkbox" checked onchange="document.body.classList.toggle('hide-notes', !this.checked)">notes</label>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0 flex flex-col relative">
+    <button onclick="openPalette()" title="Search (⌘K)" class="absolute top-4 right-5 z-40 h-7 w-44 r border hair bg-[#0e0e10]/80 backdrop-blur flex items-center gap-2 px-2 text-[12px] text-zinc-500 hover:text-zinc-300 hover:border-white/20">
+      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search<span class="ml-auto text-[10px] text-zinc-600">⌘K</span></button>
+    <div id="view" class="flex-1 overflow-y-auto scroll-thin relative"></div>
+    <aside id="panel" class="hidden absolute top-0 right-0 z-40 bottom-0 w-[380px] bg-[#111113] border-l hair shadow-2xl overflow-y-auto scroll-thin"></aside>
+  </main>
+</div>
+
+
+<div id="attn-shade" class="hidden fixed inset-0 z-40 bg-black/40" onclick="closeAttn()"></div>
+<aside id="attn" class="fixed top-0 right-0 bottom-0 z-50 w-[440px] bg-[#111113] border-l hair shadow-2xl translate-x-full transition-transform duration-300 text-[13px]">
+  <div class="h-14 flex items-center px-4 border-b hair"><div class="font-semibold">Needs attention</div><span class="ml-2 text-zinc-500">3</span><button onclick="closeAttn()" class="ml-auto text-zinc-400 hover:text-white">✕</button></div>
+  <div id="attn-list"></div>
+  <div class="note m-4 p-2 text-[11px]">Slides in from the right over any page. Retry re-runs only the failed step.</div>
+</aside>
+<script>
+function openAttn(){ document.querySelector('#attn-list').innerHTML = ATTN(); document.querySelector('#attn').classList.remove('translate-x-full'); document.querySelector('#attn-shade').classList.remove('hidden') }
+function closeAttn(){ document.querySelector('#attn').classList.add('translate-x-full'); document.querySelector('#attn-shade').classList.add('hidden') }
+</script>
+
+<!-- Command palette -->
+<div id="palette" class="hidden fixed inset-0 bg-black/60 flex items-start justify-center pt-24" onclick="if(event.target===this)closePalette()">
+  <div class="w-[620px] r bg-[#141416] border hair shadow-2xl overflow-hidden">
+    <div class="flex items-center gap-3 px-4 h-12 border-b hair">
+      <svg class="i text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="pal-input" class="flex-1 bg-transparent outline-none text-[15px] placeholder:text-zinc-500" placeholder="Search or run a command" value="tri">
+      <span class="text-[11px] text-zinc-500">esc</span>
+    </div>
+    <div class="max-h-[420px] overflow-y-auto scroll-thin py-1 text-[13px]">
+      <div class="px-4 pt-3 pb-1 text-[11px] uppercase tracking-wider text-zinc-500">Commands</div>
+      <div class="px-4 py-2 bg-white/[.06] flex justify-between"><span>Check liked songs now</span><span class="text-zinc-500">↵</span></div>
+      <div class="px-4 py-2 text-zinc-300">Refresh Favorite Artist catalogs</div>
+      <div class="px-4 pt-3 pb-1 text-[11px] uppercase tracking-wider text-zinc-500 border-t hair mt-1">Artists</div>
+      <div class="px-4 py-2 flex items-center gap-3 hover:bg-white/[.04]" onclick="closePalette();go('artist')"><div class="art w-7 h-7" style="--a:#f97316;--b:#be123c"></div>tricot <span class="text-zinc-500">260 songs · Favorite</span></div>
+      <div class="px-4 py-2 flex items-center gap-3 hover:bg-white/[.04]"><div class="art w-7 h-7" style="--a:#14b8a6;--b:#1e3a8a"></div>TRiDENT <span class="text-zinc-500">8 songs</span></div>
+      <div class="px-4 pt-3 pb-1 text-[11px] uppercase tracking-wider text-zinc-500 border-t hair mt-1">Albums</div>
+      <div class="px-4 py-2 flex items-center gap-3 hover:bg-white/[.04]" onclick="closePalette();go('album')"><div class="art w-7 h-7" style="--a:#e4e4e7;--b:#71717a"></div>10 <span class="text-zinc-500">tricot · 2020</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s)
+const ico = {
+  artists:'<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  albums:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
+  songs:'<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+  activity:'<path d="M3 12h4l3 8 4-16 3 8h4"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>'}
+const svg = k => `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ico[k]}</svg>`
+const navItems = [['artists','Artists'],['albums','Albums'],['songs','Songs'],null,['activity','Activity','3'],['settings','Settings']]
+function renderNav(active){ $('#nav').innerHTML = navItems.map(n => !n ? '<div class="h-4"></div>' :
+  `<a onclick="go('${n[0]}')" class="flex items-center gap-2.5 px-2 py-1.5 r cursor-pointer ${active===n[0]?'bg-white/10 text-white':'text-zinc-400 hover:text-white hover:bg-white/5'}">${svg(n[0])}${n[1]}${n[2]?`<span class="ml-auto text-[11px] text-amber-300/90">${n[2]}</span>`:''}</a>`).join('') }
+
+const artists = [['tricot',260,'#f97316','#be123c',1],['Sokoninaru',101,'#e11d48','#1f2937',1],['Kishida Kyoudan & The Akeboshi Rockets',29,'#78716c','#1c1917',1],['harenuki',26,'#a1a1aa','#18181b',0],['showmore',23,'#fb7185','#7f1d1d',0],['rubens',20,'#38bdf8','#9a3412',0],['Trooper Salute',20,'#f4f4f5','#a1a1aa',0],['kurayamisaka',18,'#fafafa','#52525b',0],['Cö shu Nie',16,'#57534e','#0c0a09',0],['East Of Eden',16,'#ca8a04','#292524',0],['Ave Mujica',14,'#b45309','#fef3c7',0],['TRiDENT',8,'#14b8a6','#1e3a8a',0]]
+const albums = [['10','tricot',2020,'#e4e4e7','#71717a'],['3','tricot',2017,'#d6d3d1','#44403c'],['99.974','tricot',2013,'#a3e635','#166534'],['A N D','tricot',2015,'#c084fc','#312e81'],['Aquarium','tricot',2022,'#67e8f9','#155e75'],['T H E','tricot',2011,'#fca5a5','#7f1d1d'],['上出来','tricot',2021,'#fde047','#854d0e'],['真っ黒','tricot',2019,'#27272a','#09090b']]
+const songs = [
+  ['Sprout','Ichika Nito','Sprout',2021,'en','3:41','syn','ok','Sep 24, 2026','#7c3aed','#0ea5e9'],
+  ['(I\'m) Waiting For The Sun','宇宙ネコ子','君のように生きれたら',2019,'en','4:02','syn','ok','Sep 22, 2026','#f472b6','#1e293b'],
+  ['‘S/’ The Way','Ave Mujica','‘S/’ The Way / Sophie',2025,'ja','3:58','syn','stale','Sep 20, 2026','#b45309','#fef3c7'],
+  ['Distance Sessions 2020','toe','Distance Sessions 2020',null,'','12:40','none','ok','Sep 18, 2026','#a8a29e','#1c1917'],
+  ['Samurai Champloo - Shiki No Uta','BRDNST','Aruarian Dance',2013,'ja','3:11','plain','ok','Sep 11, 2026','#22d3ee','#164e63'],
+  ['Promise','-SKS- ZIGZAG','Promise',null,'ja','4:30','none','missing','Aug 30, 2026','#ef4444','#18181b'],
+  ['おやすみ','Aiobahn','all connected EP',2023,'ja','2:58','syn','ok','Aug 29, 2026','#fcd34d','#7c2d12'],
+  ['Lullaby for a Dead Man','Elena Siegman','Lullaby for a Dead Man',null,'en','4:12','plain','attn','Aug 28, 2026','#64748b','#0f172a']]
+const tracks10 = ['餌にもならない愛を','いない','WARP','おまじない','夜の魔物','ダイバー','なか','サマーのリセット','右脳左脳','何もない']
+
+// Breadcrumb shows only ancestors; the page itself carries the title.
+function crumbs(parents){ return parents.length ? `<div class="text-[12px] text-zinc-400 mb-2">${parents.map(p=>`<a class="hover:text-white cursor-pointer" onclick="go('${p[1]}')">${p[0]}</a><span class="text-zinc-600 px-1">/</span>`).join('')}</div>` : '' }
+
+function filterBar(chips, right=''){ return `<div class="flex items-center gap-2 flex-wrap">
+  ${chips.map(c=>`<span class="inline-flex items-center gap-1.5 r border hair bg-white/[.04] px-2 py-1 text-[12px]">${c}<span class="text-zinc-500 cursor-pointer">×</span></span>`).join('')}
+  <button class="r border border-dashed border-white/15 px-2 py-1 text-[12px] text-zinc-400 hover:text-white">+ Filter</button>${right}</div>` }
+
+const lyrIcon = l => l==='syn' ? '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>' : l==='plain' ? '<path d="M4 6h16M4 12h16M4 18h10"/>' : '<path d="M4 6h16M4 12h16M4 18h10"/><path d="M3 3l18 18"/>'
+const status = (l, rem) => `<span class="inline-flex items-center gap-2 justify-center">
+  <svg title="lyrics" class="i ${l==='syn'?'text-zinc-400':l==='plain'?'text-zinc-600':'text-zinc-700'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${lyrIcon(l)}</svg>
+  <svg class="i ${rem==='ok'?'text-zinc-700':rem==='stale'?'text-sky-300':rem==='missing'?'text-orange-300':'text-amber-300'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${rem==='attn'?'<path d="M12 8v5M12 17h.01"/><circle cx="12" cy="12" r="9"/>':'<path d="M17.5 19H7a5 5 0 1 1 1.6-9.7A6 6 0 0 1 20 11a4 4 0 0 1-2.5 8Z"/>'}</svg></span>`
+
+function songTable(rows, showAlbum=true){ return `<table class="w-full text-[13px]">
+  <thead><tr class="text-[11px] uppercase tracking-wider text-zinc-500 border-b hair">
+    <th class="text-left font-normal py-2 pl-2 w-[40%]">Title</th>${showAlbum?'<th class="text-left font-normal">Album</th>':''}
+    <th class="text-left font-normal w-14">Year</th><th class="text-left font-normal w-10">Lang</th><th class="text-right font-normal w-14">Time</th>
+    <th class="text-center font-normal w-20">Status</th><th class="text-right font-normal pr-2 w-28">Liked ↓</th></tr></thead>
+  <tbody>${rows.map((s,i)=>`<tr class="border-b hair hover:bg-white/[.03] cursor-pointer" onclick="openPanel(${i})">
+    <td class="py-2 pl-2"><div class="flex items-center gap-3"><div class="art w-9 h-9 shrink-0" style="--a:${s[9]};--b:${s[10]}"></div>
+      <div class="min-w-0"><div class="truncate">${s[0]}</div><a class="text-zinc-500 hover:text-white hover:underline text-[12px]" onclick="event.stopPropagation();go('artist')">${s[1]}</a></div></div></td>
+    ${showAlbum?`<td><a class="text-zinc-400 hover:text-white hover:underline" onclick="event.stopPropagation();go('album')">${s[2]}</a></td>`:''}
+    <td class="text-zinc-500">${s[3]??''}</td><td class="text-zinc-500 uppercase text-[11px]">${s[4]}</td><td class="text-right text-zinc-500 tabular-nums">${s[5]}</td>
+    <td class="text-center">${status(s[6], s[7])}</td><td class="text-right pr-2 text-zinc-500">${s[8]}</td></tr>`).join('')}</tbody></table>` }
+
+const pageHead = (title, meta='', extra='') => `<div class="flex items-baseline gap-3 pr-56 h-8"><h1 class="text-2xl font-semibold tracking-tight">${title}</h1><span class="text-[12px] text-zinc-500">${meta}</span>${extra}</div>`
+
+const ATTN = () => `${[['Lullaby for a Dead Man','Elena Siegman','Video unavailable on YouTube.','#64748b','#0f172a'],['Promise','-SKS- ZIGZAG','Upload failed 4 times: connection refused (vps).','#ef4444','#18181b'],['夜の魔物','tricot','No match on YouTube Music for this release track.','#fca5a5','#7f1d1d']].map(a=>`
+        <div class="flex items-center gap-3 px-4 py-3 border-b hair last:border-0"><div class="art w-8 h-8 shrink-0" style="--a:${a[3]};--b:${a[4]}"></div><div class="flex-1 min-w-0"><div class="truncate">${a[0]} <span class="text-zinc-500">· ${a[1]}</span></div><div class="text-[12px] text-zinc-400">${a[2]}</div></div><button class="btn text-[12px] py-1">Retry</button></div>`).join('')}`
+const views = {
+  artists(){ return `<div class="p-6 space-y-5">${pageHead('Artists','833 artists · Most songs ▾')}
+    ${filterBar(['Favorites'])}
+    <div class="note p-2 text-[11px]">Hover an artist to favorite it right from the grid; favorites keep a visible star. Root lists (Artists, Albums, Songs) have filters. Clicking an artist opens the Artist page, which is a plain page with no filter chips. Its breadcrumb sits above the title and only shows where you came from.</div>
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-5">
+      ${artists.map(a=>`<div class="group cursor-pointer relative" onclick="go('artist')"><div class="art aspect-square" style="--a:${a[2]};--b:${a[3]}"></div>
+      <button onclick="event.stopPropagation();this.classList.toggle('fav')" title="Favorite: sync the full catalog" class="${a[4]?'fav ':''}absolute top-2 right-2 w-8 h-8 r bg-black/50 backdrop-blur text-[15px] [&:not(.fav)]:opacity-0 group-hover:opacity-100 [&.fav]:text-white text-zinc-300">★</button>
+      <div class="mt-2 text-[13px] truncate">${a[0]}</div><div class="text-[11px] text-zinc-500">${a[1]} songs${a[4]?' · Favorite':''}</div></div>`).join('')}
+    </div></div>` },
+
+  artist(){ const c=crumbs([['Artists','artists']]); return `
+    <div class="relative" style="background:linear-gradient(180deg, rgba(249,115,22,.30), rgba(11,11,12,0))">
+      <div class="p-6 pt-10 flex items-end gap-6">
+        <div class="art w-40 h-40 shadow-2xl" style="--a:#f97316;--b:#be123c"></div>
+        <div class="pb-1">${c}<div class="text-[12px] text-zinc-300">Artist</div><h1 class="text-5xl font-bold tracking-tight">tricot</h1>
+          <div class="mt-4 flex items-center gap-2 text-[13px]"><span class="text-zinc-300 mr-2">260 songs · 11 albums · 4 standalone</span>
+          <button class="btn btn-primary">★ Favorite</button><button class="btn">Refresh</button></div></div></div></div>
+    <div class="p-6 space-y-8">
+      <section><h2 class="text-[15px] font-semibold mb-4">Albums</h2>
+      <div class="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-5">${albums.map(a=>`<div class="cursor-pointer" onclick="go('album')"><div class="art aspect-square" style="--a:${a[3]};--b:${a[4]}"></div><div class="mt-2 text-[13px] truncate">${a[0]}</div><div class="text-[11px] text-zinc-500">${a[2]}</div></div>`).join('')}</div></section>
+      <section><h2 class="text-[15px] font-semibold mb-2">Standalone tracks</h2>
+      ${songTable(songs.slice(3,5).map(s=>['tricot 『99.974°C』弾いてみた','tricot','',null,'ja','4:31','none','ok','Jul 02, 2026',s[9],s[10]]), false)}</section>
+      <div class="note p-2 text-[11px]">Artist → Album → Song, like Spotify or YouTube Music. No filters here. Standalone tracks (videos, covers) sit under the albums.</div>
+    </div>` },
+
+  album(){ const c=crumbs([['Artists','artists'],['tricot','artist']]); return `
+    <div style="background:linear-gradient(180deg, rgba(212,212,216,.18), rgba(11,11,12,0))">
+      <div class="p-6 pt-10 flex items-end gap-6"><div class="art w-48 h-48 shadow-2xl" style="--a:#e4e4e7;--b:#71717a"></div>
+        <div class="pb-1">${c}<div class="text-[12px] text-zinc-300">Album · 2020</div><h1 class="text-5xl font-bold tracking-tight">10</h1>
+        <div class="mt-4 flex items-center gap-2 text-[13px] text-zinc-300"><a class="hover:underline cursor-pointer font-medium" onclick="go('artist')">tricot</a><span class="mr-2">· 10 songs · 41 min</span><button class="btn">Refresh</button></div></div></div></div>
+    <div class="px-6 pb-6">
+      <table class="w-full text-[13px]"><tbody>${tracks10.map((t,i)=>`<tr class="border-b hair hover:bg-white/[.03] cursor-pointer" onclick="openPanel(0)"><td class="py-2.5 pl-2 w-10 text-zinc-500 tabular-nums">${i+1}</td><td>${t}</td><td class="w-10 text-zinc-500 text-[11px]">JA</td><td class="w-16 text-right text-zinc-500 tabular-nums">3:${String(10+i*3).padStart(2,'0')}</td><td class="w-20 text-center">${status(i%4?'syn':'plain', i===6?'stale':'ok')}</td><td class="w-28 text-right pr-2 text-zinc-500">${i<3?'Sep 2, 2026':'Catalog'}</td></tr>`).join('')}</tbody></table>
+      <div class="note p-2 text-[11px] mt-4">No top bar. The crumb "Artists / tricot /" sits above the album title, so it never repeats it. From the Albums list the crumb would read "Albums /".</div>
+    </div>` },
+
+  albums(){ return `<div class="p-6 space-y-5">${pageHead('Albums','874 albums · Recently liked ▾')}
+    ${filterBar([])}
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-5">${[...albums,...albums].map(a=>`<div class="cursor-pointer" onclick="go('album')"><div class="art aspect-square" style="--a:${a[3]};--b:${a[4]}"></div><div class="mt-2 text-[13px] truncate">${a[0]}</div><a class="text-[11px] text-zinc-500 hover:underline" onclick="event.stopPropagation();go('artist')">${a[1]}</a></div>`).join('')}</div></div>` },
+
+  songs(){ return `<div class="p-6 space-y-5">${pageHead('Songs','2,521 songs')}
+    ${filterBar(['Lyrics: none','Remote: stale'], '<span class="ml-auto text-[12px] text-zinc-500">Needs attention 3 · No longer wanted 12 · Unmanaged 5</span>')}
+    <div class="note p-2 text-[11px]">Status column: note = synced lyrics, lines = plain, struck lines = none. Cloud stays dark when in sync, blue when stale, orange when missing. Circle-! = needs attention.</div>
+    ${songTable(songs)}</div>` },
+
+  activity(){ return `<div class="h-full flex flex-col">
+    <div class="px-6 pt-6 pb-2">${pageHead('Activity', '', '<button onclick="openAttn()" class="btn text-[12px] py-1 text-amber-200 border-amber-300/30 self-center">3 need attention</button>')}</div>
+    <div id="lyric-scroll" onscroll="onLyricScroll()" class="relative flex-1 overflow-y-auto scroll-thin" style="-webkit-mask-image:linear-gradient(transparent, #000 14%, #000 86%, transparent)">
+      <div id="lyric" class="max-w-2xl mx-auto px-6" style="padding:40vh 24px"></div>
+    </div>
+    <div class="note mx-6 mb-4 p-2 text-[11px]">Scroll freely: your position holds when the track changes. If the current track is on screen and you are not scrolling, the view re-centers on the next one. Click a done track to open it in Songs. Same title style as other pages, no rule under the header.</div>
+  </div>` },
+
+  settings(){
+    const row=(label, control, help='')=>`<div class="grid grid-cols-[200px_1fr] gap-6 py-4 border-b hair"><div><div class="text-[13px]">${label}</div>${help?`<div class="text-[11px] text-zinc-500 mt-0.5">${help}</div>`:''}</div><div class="flex items-center gap-2">${control}</div></div>`
+    const input=v=>`<input class="flex-1 r bg-white/[.04] border hair px-3 h-8 text-[13px] outline-none focus:border-white/30" value="${v}">`
+    const toggle=on=>`<div class="w-9 h-5 r ${on?'bg-white':'bg-white/15'} relative"><div class="absolute top-0.5 ${on?'right-0.5 bg-black':'left-0.5 bg-zinc-400'} w-4 h-4" style="border-radius:4px"></div></div>`
+    const head=t=>`<h2 class="pt-8 pb-1 text-[11px] uppercase tracking-wider text-zinc-500 border-b hair">${t}</h2>`
+    return `<div class="p-6 max-w-3xl"><h1 class="text-2xl font-semibold tracking-tight">Settings</h1>
+    ${head('YouTube Music')}
+    ${row('Account', `<div class="art w-7 h-7" style="--a:#52525b;--b:#27272a"></div><span class="text-[13px] mr-auto">Ruiisuuu</span><button class="btn">Switch account ▾</button><button class="btn">Sign out</button>`, 'Signed in inside the app')}
+    ${head('Library')}
+    ${row('Folder', input('/Users/louismollick/Music/liked-music-syncer')+'<button class="btn">Choose…</button>', 'Album Artist / Album / 01 Title.m4a')}
+    ${head('Remote')}
+    ${row('Upload to remote', toggle(1), 'New and changed songs upload automatically')}
+    ${row('rclone remote', input('vps'))}
+    ${row('Remote folder', input('/home/ubuntu/louismollick-server/music'))}
+    ${head('Lyrics')}
+    ${row('Find lyrics', toggle(1), 'Off skips all lyrics lookups')}
+    ${row('Spotify lyrics server', input('https://lyrics.example.com'), 'Optional. Tried first, then YouTube Music, then LRCLIB')}
+    <div class="note p-2 text-[11px] mt-6">No boxes, just rows separated by lines. Removed: .lrc toggle (always written for synced lyrics), embed-plain toggle (always on), folder and file templates (fixed layout).</div>
+    </div>` },
+}
+
+function panelHtml(s){ const sec=(t,b)=>`<div class="py-4 border-b hair"><div class="text-[11px] uppercase tracking-wider text-zinc-500 mb-1.5">${t}</div>${b}</div>`
+  return `<div class="px-5 pb-6 text-[13px]">
+  <div class="flex justify-end h-10 items-center"><button onclick="$('#panel').classList.add('hidden')" class="text-zinc-400 hover:text-white">✕</button></div>
+  <div class="art w-full aspect-square" style="--a:${s[9]};--b:${s[10]}"></div>
+  <div class="py-4 border-b hair"><div class="text-xl font-semibold">${s[0]}</div><a class="text-zinc-300 hover:underline cursor-pointer" onclick="go('artist')">${s[1]}</a> <span class="text-zinc-600">·</span> <a class="text-zinc-400 hover:underline cursor-pointer" onclick="go('album')">${s[2]}</a></div>
+  ${sec("Why it's here", `<div>Liked on YouTube Music · ${s[8]}</div><div class="text-zinc-400">In tricot's catalog (Favorite Artist)</div>`)}
+  ${sec('Match', `<div class="text-zinc-300">YouTube Music · <span class="font-mono text-[12px] text-zinc-400">IsNup-bXLE8</span></div><div class="text-zinc-300">${s[2]} (${s[3]??'standalone'})</div><div class="text-zinc-400">Genre: J-Rock (MusicBrainz)</div>`)}
+  ${sec('Lyrics', `Synced · Spotify · ${s[4]||'unknown'}`)}
+  ${sec('Files', `<div class="font-mono text-[11px] text-zinc-400 break-all">~/Music/liked-music-syncer/${s[1]}/${s[2]}/01 ${s[0]}.m4a</div><div class="mt-1">Remote: ${s[7]==='stale'?'<span class="text-sky-300">stale · album, genre differ</span>':s[7]==='missing'?'<span class="text-orange-300">missing</span>':'in sync'}</div>`)}
+  <div class="flex gap-2 pt-4"><button class="btn btn-primary">Refresh</button><button class="btn">Show in Finder</button></div></div>` }
+function openPanel(i){ $('#panel').innerHTML = panelHtml(songs[i]); $('#panel').classList.remove('hidden') }
+
+// Activity simulation: 3 stages, weighted bar, native scrolling
+const queue = [['Sprout','Ichika Nito','#7c3aed','#0ea5e9'],['逃げられぬ脱獄','harenuki','#a1a1aa','#18181b'],['夜に駆ける','YOASOBI','#fb7185','#312e81'],['Aquarium','tricot','#67e8f9','#155e75'],['最低','そこに鳴る','#fca5a5','#450a0a'],['透明','そこに鳴る','#e0f2fe','#0c4a6e'],['白息','イクラノドン','#f5f5f4','#57534e'],['聖者たち','People In The Box','#a7f3d0','#064e3b'],['Blue','tricot','#93c5fd','#1e3a8a'],['雨','harenuki','#94a3b8','#0f172a']]
+const history_ = [['Sep 24, 2026',[['冬に抱きしめて','harenuki'],['占いたいっ！','sun soo girl'],['白昼夢','harenuki']]],['Yesterday',[['生活のニュース','Cody・Lee(李)'],['透明','そこに鳴る']]],['Today',[['負け犬にアンコールはいらない','ヨルシカ'],['天才ヴァガボンド','COIL'],['前線','ヒグチアイ']]]]
+const stages = [['Matching',15],['Downloading',70],['Uploading',15]]
+let cur=0, prog=0, finished=[], simIdle=false, lastUserScroll=0, programmatic=false
+function stageAt(p){ let acc=0; for(const [n,w] of stages){ if(p<acc+w) return [n, Math.round((p-acc)/w*100)]; acc+=w } return ['Uploading',100] }
+const doneRow=(t,a)=>`<div onclick="openSong('${t.replace(/'/g,"\\'")}','${a.replace(/'/g,"\\'")}')" class="h-14 flex flex-col justify-center px-4 r cursor-pointer text-zinc-400 hover:text-white hover:bg-white/[.04]"><div class="truncate text-[15px]">${t}</div><div class="text-[12px] text-zinc-600">${a}</div></div>`
+const nextRow=(t,a,n)=>`<div class="h-14 flex flex-col justify-center px-4" style="opacity:${Math.max(.3,.85-n*.1)}"><div class="truncate text-[15px] text-zinc-300">${t}</div><div class="text-[12px] text-zinc-600">${a}</div></div>`
+function curRow(q){ const [n,pct]=stageAt(prog); return `<div data-cur class="my-2 r bg-white/[.06] relative overflow-hidden">
+  <div class="flex items-center gap-4 p-4"><div class="art w-14 h-14" style="--a:${q[2]};--b:${q[3]}"></div><div class="min-w-0"><div class="text-xl font-semibold truncate">${q[0]}</div><div class="text-[13px] text-zinc-400">${q[1]}</div></div>
+  <div data-step class="ml-auto text-[13px] text-zinc-300 tabular-nums">${n}${n!=='Matching'?` · ${pct}%`:''}</div></div>
+  <div data-bar class="absolute left-0 bottom-0 h-[2px] bg-white" style="width:${prog}%"></div></div>` }
+function buildLyric(){ const el=$('#lyric'); if(!el) return; const rows=[]
+  history_.forEach(([d,items])=>{ rows.push(`<div class="h-9 flex items-end pb-1 px-4 text-[11px] uppercase tracking-wider text-zinc-600">${d}</div>`); items.forEach(([t,a])=>rows.push(doneRow(t,a))) })
+  finished.forEach(([t,a])=>rows.push(doneRow(t,a)))
+  queue.forEach((q,i)=>{ if(i<cur) return; rows.push(i===cur?curRow(q):nextRow(q[0],q[1],i-cur)) })
+  el.innerHTML=rows.join('') }
+function onLyricScroll(){ if(!programmatic) lastUserScroll=Date.now() }
+function centerCurrent(smooth){ const sc=$('#lyric-scroll'), c=sc&&sc.querySelector('[data-cur]'); if(!c) return
+  programmatic=true; sc.scrollTo({top:c.offsetTop-sc.clientHeight/2+c.offsetHeight/2, behavior:smooth?'smooth':'auto'}); setTimeout(()=>programmatic=false,800) }
+function advance(){ const sc=$('#lyric-scroll'); if(!sc) return
+  const c=sc.querySelector('[data-cur]'); let visible=false
+  if(c){ const r=c.getBoundingClientRect(), v=sc.getBoundingClientRect(); visible=r.bottom>v.top && r.top<v.bottom }
+  const top=sc.scrollTop; buildLyric(); sc.scrollTop=top
+  if(visible && Date.now()-lastUserScroll>1500) centerCurrent(true) }
+function updateCurrent(){ const c=document.querySelector('[data-cur]'); if(!c) return; const [n,pct]=stageAt(prog)
+  c.querySelector('[data-step]').textContent=n+(n!=='Matching'?` · ${pct}%`:''); c.querySelector('[data-bar]').style.width=prog+'%' }
+function openSong(t,a){ go('songs'); setTimeout(()=>{ $('#panel').innerHTML=panelHtml([t,a,t,2024,'ja','3:30','syn','ok','Sep 26, 2026','#71717a','#18181b']); $('#panel').classList.remove('hidden') },60) }
+function checkNow(){ const i=$('#refresh-ico'); i.style.transform='rotate(360deg)'; setTimeout(()=>{ i.style.transition='none'; i.style.transform=''; setTimeout(()=>i.style.transition='',20) },700) }
+function tick(step=1.1){ const onAct=location.hash==='#activity'
+  if(!simIdle){ prog+=step; if(prog>=100){ finished.push([queue[cur][0],queue[cur][1]]); cur=(cur+1)%queue.length; if(cur===0) finished=[]; prog=0; if(onAct) advance() } else if(onAct) updateCurrent() }
+  const busy=!simIdle, showBusy=busy && !onAct
+  $('#mini-busy').classList.toggle('hidden', !showBusy); $('#mini-idle').classList.toggle('hidden', showBusy)
+  $('#idle-title').textContent = busy ? `Working · ${queue.length-cur-1} up next` : 'Up to date'
+  $('#idle-dot').className = 'w-1.5 h-1.5 ' + (busy ? 'bg-sky-400' : 'bg-emerald-400')
+  if(showBusy){ const q=queue[cur], [n,pct]=stageAt(prog)
+    $('#mini-title').textContent=q[0]; $('#mini-step').textContent=n+(n!=='Matching'?` · ${pct}%`:'')
+    $('#mini-art').style.setProperty('--a',q[2]); $('#mini-art').style.setProperty('--b',q[3]); $('#mini-bar').style.width=prog+'%'
+    $('#mini-next').textContent=`${queue.length-cur-1} up next` } }
+
+function go(v){ if(location.hash!=='#'+v) location.hash=v; else render() }
+function render(){ const v=(location.hash||'#artists').slice(1); $('#view').innerHTML=(views[v]||views.artists)(); $('#panel').classList.add('hidden')
+  renderNav(v==='artist'?'artists':v==='album'?'albums':v); if(v==='activity') setTimeout(()=>{ buildLyric(); centerCurrent(false) },0); tick(0) }
+function openPalette(){ $('#palette').classList.remove('hidden'); setTimeout(()=>$('#pal-input').focus(),0) }
+function closePalette(){ $('#palette').classList.add('hidden') }
+addEventListener('keydown',e=>{ if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openPalette()} if(e.key==='Escape'){ closePalette(); closeAttn() } })
+addEventListener('hashchange',render); 
+render(); setInterval(()=>tick(),120)
+</script>
+</body>
+</html>

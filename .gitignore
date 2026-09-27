@@ -37,3 +37,6 @@ yarn-error.log*
 .env
 .env.*
 .DS_Store
+test/fixtures/private/
+.pnpm-store/
+resources/bin/rclone

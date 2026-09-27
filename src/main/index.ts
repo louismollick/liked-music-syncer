@@ -1,268 +1,300 @@
-import path, { join } from 'node:path'
-import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+import { mkdirSync } from 'node:fs'
+import path from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
-import icon from '../../resources/icon.png?asset'
-import { AuthCoordinator } from './auth/auth-coordinator'
-import { createDatabase } from './db/database'
-import { registerIpcHandlers } from './ipc'
-import { ArtistPhotoCache } from './services/artist-photo-cache'
+import ffmpegStatic from 'ffmpeg-static'
+import { createAudioDownloader } from './acquire/audio'
+import { createPotProvider } from './acquire/pot-provider'
+import { createYtDlpBinary } from './acquire/ytdlp-binary'
+import { createArtistImages } from './artist-images'
+import { createYouTubeMusicCatalog } from './catalog/catalog'
+import { broadcast, chooseFolder, registerIpc, showInFinder } from './ipc'
+import { openDatabase } from './library/db'
+import { LibraryQueries } from './library/queries'
+import { createLyricsFinder } from './lyrics/finder'
+import { createMatcher } from './match/matcher'
 import {
-  buildAccountImageMediaUrl,
-  registerArtworkProtocol,
-  registerArtworkSchemePrivileges,
-} from './services/artwork-protocol'
-import { ArtworkService } from './services/artwork-service'
-import { AuthService } from './services/auth-service'
-import { resolveFfmpegPath } from './services/ffmpeg-path'
-import { LibraryService } from './services/library-service'
-import { LikedArtistsService } from './services/liked-artists-service'
-import { logMain, setTempLogMirror } from './services/logger'
-import { PoTokenService } from './services/po-token-service'
-import { PythonWorkerService } from './services/python-worker'
-import { SettingsService } from './services/settings-service'
-import { SyncService } from './services/sync-service'
-import {
-  createTempLogMirror,
-  type TempLogMirror,
-} from './services/temp-log-file'
+  artistImageUrlFor,
+  coverUrlFor,
+  handleMediaProtocol,
+  registerMediaScheme,
+} from './media-protocol'
+import { createHttpClient } from './net/http'
+import { killAllChildren } from './platform/process'
+import { resolveToolPaths } from './platform/tools'
+import { Reconciler } from './reconcile/reconciler'
+import { createRclone } from './remote/rclone'
+import { GoogleSession } from './session/google-session'
+import { SettingsStore } from './settings'
+import { runSmokeTest } from './smoke'
 
-let mainWindow: BrowserWindow | null = null
-let tempLogMirror: TempLogMirror | null = null
-
-registerArtworkSchemePrivileges()
-
-function getBundledFfmpegPath() {
-  return resolveFfmpegPath({
-    isDev: is.dev,
-    cwd: process.cwd(),
-    resourcesPath: process.resourcesPath,
-  })
+// Dev and verification runs can point the app at a separate data directory.
+if (process.env.LMS_USER_DATA_DIR) {
+  mkdirSync(process.env.LMS_USER_DATA_DIR, { recursive: true })
+  app.setPath('userData', process.env.LMS_USER_DATA_DIR)
 }
 
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
+registerMediaScheme()
+
+const isSmokeTest = process.argv.includes('--smoke-test')
+
+const isPrimaryInstance = isSmokeTest || app.requestSingleInstanceLock()
+if (!isPrimaryInstance) app.quit()
+
+function createWindow(): BrowserWindow {
+  const window = new BrowserWindow({
     width: 1440,
-    height: 920,
-    minWidth: 1100,
-    minHeight: 760,
+    height: 900,
+    minWidth: 1024,
+    minHeight: 640,
     show: false,
-    autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    backgroundColor: '#0b0b0c',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: false,
+      preload: path.join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
     },
   })
-
-  mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+  window.on('ready-to-show', () => window.show())
+  // Dropped files or stray links must never navigate the app window away.
+  window.webContents.on('will-navigate', (event, url) => {
+    const allowed = process.env.ELECTRON_RENDERER_URL
+    if (!allowed || !url.startsWith(allowed)) event.preventDefault()
   })
-
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
-
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
+    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void window.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+  return window
 }
 
-app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.electron')
-  const mirror = createTempLogMirror(app.getPath('temp'))
-  tempLogMirror = mirror
-  setTempLogMirror(mirror)
-  logMain({
-    level: 'info',
-    source: 'startup',
-    message: 'Main process logging ready',
-    context: {
-      tempLogFile: mirror?.getLogFilePath() ?? null,
-      artworkCacheDir: path.join(app.getPath('userData'), 'artwork-cache'),
+async function main() {
+  await app.whenReady()
+  const userData = app.getPath('userData')
+  const tools = resolveToolPaths({
+    userData,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    execPath: process.execPath,
+    ffmpegStaticPath: (ffmpegStatic as unknown as string | null) ?? null,
+  })
+
+  if (isSmokeTest) {
+    const code = await runSmokeTest(tools, async () => {
+      // The packaged renderer must load with its preload bridge.
+      const probe = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          preload: path.join(__dirname, '../preload/index.js'),
+          sandbox: true,
+          contextIsolation: true,
+        },
+      })
+      await probe.loadFile(path.join(__dirname, '../renderer/index.html'))
+      const bridge =
+        await probe.webContents.executeJavaScript('typeof window.lms')
+      probe.destroy()
+      if (bridge !== 'object')
+        throw new Error(`preload bridge missing (${bridge})`)
+    })
+    app.exit(code)
+    return
+  }
+
+  handleMediaProtocol(userData)
+  const db = openDatabase(path.join(userData, 'library.db'))
+  const settings = new SettingsStore(db)
+  const http = createHttpClient()
+  let reconcilerRef: Reconciler | null = null
+  const session = new GoogleSession({
+    http,
+    settings,
+    isPackaged: app.isPackaged,
+    onChange: (view) => broadcast('session:changed', view),
+    onRecovered: () => void reconcilerRef?.check(),
+  })
+  const catalog = createYouTubeMusicCatalog(session.transport)
+  const matcher = createMatcher({ catalog, http })
+  const lyrics = createLyricsFinder({ http, catalog })
+  const pot = createPotProvider(tools)
+  const downloader = createAudioDownloader({
+    tools,
+    ytdlp: createYtDlpBinary({ userData, http }),
+    pot,
+  })
+  const rclone = createRclone(tools.rclone)
+  const queries = new LibraryQueries(db, coverUrlFor, artistImageUrlFor, () =>
+    settings.get()
+  )
+  const artistImages = createArtistImages({
+    db,
+    catalog,
+    http,
+    dir: path.join(userData, 'artists'),
+    onUpdated: () => broadcast('library:changed', { trackIds: null }),
+  })
+
+  // New artists appear as tracks are adopted or matched; fetch their photos shortly after.
+  let imagesTimer: NodeJS.Timeout | null = null
+  const scheduleArtistImages = () => {
+    if (imagesTimer) clearTimeout(imagesTimer)
+    imagesTimer = setTimeout(() => void artistImages.run(), 3_000)
+  }
+
+  const reconciler: Reconciler = new Reconciler({
+    db,
+    tools,
+    catalog,
+    matcher,
+    lyrics,
+    downloader,
+    rclone,
+    http,
+    settings: () => settings.get(),
+    now: () => new Date(),
+    session: {
+      accountId: () => session.accountId(),
+      generation: () => session.generation(),
+      likedCountChanged: (accountId, count) =>
+        session.setLikedCount(accountId, count),
+    },
+    coverUrl: coverUrlFor,
+    onActivity: (view) => broadcast('activity:changed', view),
+    onLibraryChanged: (trackIds) => {
+      broadcast('library:changed', { trackIds })
+      scheduleArtistImages()
     },
   })
 
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+  reconcilerRef = reconciler
+  settings.subscribe((next) => broadcast('settings:changed', next))
 
-  const databaseFile = path.join(
-    app.getPath('userData'),
-    'liked-music-syncer.db'
-  )
-  const settingsFile = path.join(app.getPath('userData'), 'settings.json')
-  const { db } = createDatabase(databaseFile)
-  const settingsService = new SettingsService(db, settingsFile)
-  const pythonWorkerService = new PythonWorkerService()
-  const artworkCacheDirectory = path.join(
-    app.getPath('userData'),
-    'artwork-cache'
-  )
-  const artistPhotoCacheDirectory = path.join(
-    app.getPath('userData'),
-    'artist-photo-cache'
-  )
-  const accountImageCacheDirectory = path.join(
-    app.getPath('userData'),
-    'account-image-cache'
-  )
-  const artworkService = new ArtworkService(
-    db,
-    pythonWorkerService,
-    artworkCacheDirectory
-  )
-  const artistPhotoCache = new ArtistPhotoCache(artistPhotoCacheDirectory)
-  const accountImageCache = new ArtistPhotoCache(
-    accountImageCacheDirectory,
-    undefined,
-    buildAccountImageMediaUrl
-  )
-  registerArtworkProtocol(
-    artworkCacheDirectory,
-    artistPhotoCacheDirectory,
-    accountImageCacheDirectory
-  )
-  const libraryService = new LibraryService(
-    db,
-    settingsService,
-    pythonWorkerService,
-    artworkService
-  )
-  const likedArtistsService = new LikedArtistsService(
-    db,
-    settingsService,
-    pythonWorkerService,
-    artistPhotoCache
-  )
-  const poTokenService = new PoTokenService()
-  const authService = new AuthService(settingsService, pythonWorkerService)
-  const syncService = new SyncService(
-    db,
-    settingsService,
-    pythonWorkerService,
-    libraryService,
-    likedArtistsService,
-    poTokenService,
-    getBundledFfmpegPath
-  )
-  const authCoordinator = new AuthCoordinator(
-    settingsService,
-    pythonWorkerService,
-    () => syncService.hasQueuedOrRunningJobs(),
-    async () => {
-      if (process.platform !== 'darwin') return null
-      try {
-        return (
-          await app.getApplicationInfoForProtocol('https://music.youtube.com')
-        ).path
-      } catch {
-        return null
+  const busy = () => {
+    const view = reconciler.activity()
+    return view.checking || view.current !== null
+  }
+
+  registerIpc({
+    'settings:get': () => settings.get(),
+    'settings:update': async (patch) => {
+      const before = settings.get()
+      const next = settings.update(patch)
+      const targetOf = (value: typeof before) =>
+        `${value.rcloneRemote.trim().replace(/:$/, '')}|${value.remoteFolder.trim().replace(/\/+$/, '')}`
+      if (targetOf(before) !== targetOf(next)) reconciler.remoteTargetChanged()
+      // Which songs count as in the library depends on whether the remote is on.
+      const remoteOn = (value: typeof before) =>
+        Boolean(
+          value.remoteEnabled &&
+            value.rcloneRemote.trim() &&
+            value.remoteFolder.trim()
+        )
+      if (remoteOn(before) !== remoteOn(next))
+        broadcast('library:changed', { trackIds: null })
+      if (
+        patch.libraryFolder !== undefined &&
+        patch.libraryFolder !== before.libraryFolder
+      ) {
+        await reconciler.libraryFolderChanged()
+      } else {
+        reconciler.markDirty()
       }
+      return next
     },
-    accountImageCache
-  )
-  syncService.setAuthCoordinator(authCoordinator)
-  likedArtistsService.setAuthCoordinator(authCoordinator)
-  await syncService.recoverInterruptedJobs()
-  authCoordinator.setSwitchingDisabled(
-    await syncService.hasQueuedOrRunningJobs()
-  )
-  syncService.subscribe((snapshot) => {
-    authCoordinator.setSwitchingDisabled(
-      snapshot.jobs.some(
-        (job) => job.status === 'queued' || job.status === 'running'
-      )
-    )
+    'settings:chooseFolder': () => chooseFolder(),
+    'session:get': () => session.view(),
+    'session:signIn': async () => {
+      const view = await session.openSignIn()
+      void reconciler.check()
+      return view
+    },
+    'session:signOut': () => session.signOut(),
+    'session:selectAccount': async (id) => {
+      if (busy())
+        throw new Error(
+          'Wait for the current work to finish before switching accounts.'
+        )
+      const view = await session.selectAccount(id)
+      void reconciler.check()
+      return view
+    },
+    'activity:get': () => reconciler.activity(),
+    'activity:check': () => {
+      void reconciler.check()
+    },
+    'activity:refreshCatalogs': () => {
+      void reconciler.check({ catalogs: 'all' })
+    },
+    'activity:retry': (id) => reconciler.retry(id),
+    'activity:rewrite': (id) => reconciler.rewrite(id),
+    'activity:stopManaging': (id) => reconciler.stopManaging(id),
+    'library:counts': () => queries.counts(),
+    'library:songs': (query) => queries.songs(query),
+    'library:artists': (query) => queries.artists(query),
+    'library:albums': (query) => queries.albums(query),
+    'library:artist': (id) => queries.artist(id),
+    'library:album': (key) => queries.album(key),
+    'library:track': (id) => queries.track(id),
+    'library:search': (text) => queries.search(text),
+    'library:setFavorite': ({ artistId, favorite }) => {
+      reconciler.setFavorite(artistId, favorite)
+      broadcast('library:changed', { trackIds: null })
+    },
+    'library:refresh': (scope) => reconciler.refresh(scope),
+    'library:delete': ({ trackIds, where }) =>
+      reconciler.delete(trackIds, where),
+    'library:unmanaged': () => queries.unmanaged(),
+    'app:showInFinder': (absolutePath) => showInFinder(absolutePath),
   })
 
   createWindow()
-  registerIpcHandlers(
-    mainWindow!,
-    settingsService,
-    authService,
-    authCoordinator,
-    syncService,
-    libraryService,
-    likedArtistsService,
-    artworkService,
-    getBundledFfmpegPath
-  )
-  authCoordinator.subscribe((snapshot) => {
-    if (mainWindow && !mainWindow.isDestroyed())
-      mainWindow.webContents.send('auth:snapshot', snapshot)
-  })
-  const authBootstrap = authCoordinator.bootstrap().catch((error) => {
-    logMain({
-      level: 'error',
-      source: 'startup',
-      message: 'Authentication bootstrap failed',
-      context: {
-        error: error instanceof Error ? error.message : String(error),
-      },
-    })
-  })
-  void authBootstrap
-    .then(() => libraryService.reconcileLocalLibrary())
-    .then(async (result) => {
-      if (!result.ok) {
-        logMain({
-          level: 'error',
-          source: 'startup',
-          message: 'Startup library reconcile failed',
-          context: { error: result.message },
-        })
-        return
-      }
-      await likedArtistsService.refreshArtists()
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('library:artistsUpdated')
-      }
-      void likedArtistsService
-        .refreshArtistImages()
-        .then((result) => {
-          logMain({
-            level: result.ok ? 'info' : 'warn',
-            source: 'startup',
-            message: 'Startup artist image refresh complete',
-            context: {
-              ok: result.ok,
-              message: result.message,
-              details: result.details ?? null,
-            },
-          })
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('library:artistsUpdated')
-          }
-        })
-        .catch((error) => {
-          logMain({
-            level: 'error',
-            source: 'startup',
-            message: 'Startup artist image refresh failed',
-            context: {
-              error: error instanceof Error ? error.message : String(error),
-            },
-          })
-        })
-    })
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
-
-  app.on('before-quit', () => {
-    tempLogMirror?.dispose()
-    tempLogMirror = null
-    setTempLogMirror(null)
-    poTokenService.dispose()
+  app.on('second-instance', () => {
+    const [window] = BrowserWindow.getAllWindows()
+    if (window) {
+      if (window.isMinimized()) window.restore()
+      window.focus()
+    } else {
+      createWindow()
+    }
   })
-})
+
+  let quitting = false
+  app.on('before-quit', (event) => {
+    if (quitting) return
+    quitting = true
+    event.preventDefault()
+    void (async () => {
+      await reconciler.stop().catch(() => undefined)
+      pot.dispose()
+      killAllChildren()
+      db.$client.close()
+      app.exit(0)
+    })()
+  })
+
+  await session.init()
+  await reconciler.start()
+  void artistImages.run()
+}
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })
+
+// A second instance must not touch the database or the staging folder.
+if (isPrimaryInstance) {
+  void main().catch((error) => {
+    console.error('[main] fatal', error)
+    app.exit(1)
+  })
+}

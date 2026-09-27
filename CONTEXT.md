@@ -4,54 +4,90 @@ Liked Music Syncer builds and maintains a local music inventory from liked songs
 
 ## Language
 
+### Library
+
 **Library**:
-The local inventory of music files and metadata that the app has built or discovered. It is not a playable music collection inside this app; playback belongs to external apps such as Navidrome or Plex.
+The inventory of Managed Files and their metadata in the user's output folder. It is not a playable music collection inside this app; playback belongs to external apps such as Navidrome or Plex.
 _Avoid_: Player library, playback library
 
+**Managed File**:
+An audio file the app created and tagged as its own. Only Managed Files belong to the Library, and the app can rebuild its inventory from their tags.
+_Avoid_: Library file, owned file
+
+**Unmanaged File**:
+An audio file in the output folder that the app did not create. The app reports it but never merges it into the Library.
+_Avoid_: Foreign file, imported file
+
+**Outside Edit**:
+A change to a Managed File that the app did not make. The app reports it and can rewrite the file to its intended state.
+_Avoid_: Drift, corruption
+
 **Remote Library**:
-A copy or serving location for local library files on a remote music server.
+A mirror of the Library on a remote music server. Only the app writes to it.
 _Avoid_: Cloud library, streaming library
 
 **Remote State**:
-Whether a library item is present, missing, pending copy, or failed to copy in the remote library.
+Whether a Library track's remote copy is in sync, stale, missing, uploading, or failed to upload.
 _Avoid_: Remote tab, remote section
 
 **Inventory Filter**:
 A concrete filter that shows library items by an observable local, remote, metadata, matching, or processing state.
 _Avoid_: Needs review, low confidence, attention state
 
+### Sources and desire
+
 **Liked Music Library**:
-The set of songs a user has liked on a source platform such as YouTube Music, Spotify, or SoundCloud.
+The set of songs a user has liked on a source platform such as YouTube Music or Spotify.
 _Avoid_: Playlist, remote library
 
-### Authentication
-
-**Auth Source**:
-The installed browser and resolved browser profile from which the app reads a source-platform session. An Auth Source can be signed in, signed out, or unreadable.
-_Avoid_: Credential, account, browser
-
-**Auth Source Status**:
-Whether an Auth Source has a valid session, has no valid session, or cannot be checked. `Signed Out` means the source was readable but had no valid session; `Issue` means the app could not determine whether a valid session exists.
-_Avoid_: Account status, authentication error
-
-**Google Session**:
-A signed-in Google identity available through an Auth Source. One Google Session can expose several YouTube Music Accounts.
-_Avoid_: YouTube account, browser account
-
-**YouTube Music Account**:
-A selectable personal or Brand Account identity used to access YouTube Music. This is the account the app shows and switches.
-_Avoid_: Google Session, email account, channel
-
-**Selected YouTube Music Account**:
-The YouTube Music Account currently used through one Auth Source.
-_Avoid_: Active Google Session, current channel
-
 **Source Contribution**:
-A relationship showing that a liked music library contributed to a library item. A library item can have many source contributions.
+A relationship showing that a Liked Music Library or Favorite Artist catalog contributed a Desired Track. A Desired Track can have many Source Contributions.
 _Avoid_: Original source, single source
 
+**Liked Date**:
+When a song entered a Liked Music Library. The app uses the platform's timestamp when one exists, and otherwise the first time it saw the like, ordered by the platform's liked-songs order.
+_Avoid_: Download date, added date
+
+**Desired Library**:
+Every track the user's Liked Music Libraries and Favorite Artist catalogs say belongs in the Library.
+_Avoid_: Wishlist, target set, queue
+
+**Desired Track**:
+One member of the Desired Library, backed by at least one Source Contribution.
+_Avoid_: Wanted song, pending song
+
+**No Longer Wanted**:
+A Library track that no Source Contribution backs anymore, for example after an unlike. The app keeps it until the user deletes it.
+_Avoid_: Orphan, stale track, cleanup candidate
+
+**Favorite Artist**:
+An artist the user explicitly marks for full-catalog syncing. The app treats that artist's songs as Desired Tracks even when individual songs were not liked.
+_Avoid_: Liked artist
+
+**Official Main Catalog**:
+The default set of songs considered for a Favorite Artist, focused on official albums, singles, and EPs.
+_Avoid_: All uploads, every appearance
+
+### Music identity
+
+**Recording**:
+The underlying performance or audio shared by one or more Release Tracks. A source video ID may identify a Recording, but it does not identify one appearance on an album or single.
+_Avoid_: Library Track, release
+
+**Release Track**:
+A Recording's appearance on one Release. The Library keeps separate Release Tracks when an album, single, EP, or reissue uses the same Recording.
+_Avoid_: Recording, duplicate song
+
+**Standalone Track**:
+A Recording the Library keeps without a known Release, such as a music video or a cover. The Library files each one as its own single.
+_Avoid_: Unknown Album, loose video
+
+**Release**:
+A published album, single, or EP identified by a trusted catalog release ID when one is available.
+_Avoid_: Recording, liked-song group
+
 **Album**:
-A library grouping based on the final downloaded or tagged album metadata.
+A library grouping for Release Tracks based on the final downloaded or tagged release metadata.
 _Avoid_: Liked-song group, source album
 
 **Artist**:
@@ -62,65 +98,45 @@ _Avoid_: Album artist
 An artist credit that has a name but no trusted source artist ID. It can group local library tracks, but it cannot supply a remote artist image or an Official Main Catalog.
 _Avoid_: Matched artist, inferred artist
 
-**Favorite Artist**:
-An artist the user explicitly marks for full-catalog syncing. The app treats that artist's songs as desired library items even when individual songs were not liked.
-_Avoid_: Liked artist
-
-**Official Main Catalog**:
-The default set of songs considered for a Favorite Artist, focused on official albums, singles, and EPs.
-_Avoid_: All uploads, every appearance
-
 **Album Artist**:
 The artist credited for grouping an album in final library metadata.
 _Avoid_: Artist
 
-**Sync State**:
-The current observable status of library discovery, matching, downloading, tagging, lyrics, and remote copy work. Users should see song and library state, not internal run history.
-_Avoid_: Run, sync run, run history
-
-**Sync Filter**:
-The user-visible filter applied inside the single Sync view, such as All, In Progress, Completed, or Failed.
-_Avoid_: Tab, subview, bucket
-
-**Job Phase**:
-The current parent-level progress of a Sync Job, such as fetching liked songs, expanding a Favorite Artist catalog, or copying to remote.
-_Avoid_: State, step
+### Work
 
 **Track Step**:
-The current child-level progress of a track work item, such as matching, downloading, tagging, writing lyrics, or copying to remote.
-_Avoid_: State, phase
+One unit of work that moves a Desired Track toward its intended state, such as matching, downloading, tagging, writing lyrics, or uploading to the Remote Library. A failed Track Step is retried on its own.
+_Avoid_: Job, phase, task
 
-**Sync Job**:
-A user-visible unit of async sync work such as a Liked Songs Sync, Favorite Artist catalog refresh, or Copy Missing to Remote operation. A Sync Job can expand into many track work items.
-_Avoid_: Run, background task
+**Activity**:
+What the app is doing now and did recently, shown per track with the reason the work exists, such as a new liked song or a Favorite Artist catalog refresh. Users see track state, not run history.
+_Avoid_: Sync Job, run, queue, run history
 
-**Retry Failed**:
-Another attempt at the failed track work inside a finished Sync Job. Successful tracks and the Sync Job's original total remain part of that same job.
-_Avoid_: Retry job, new job
+**Match**:
+The saved decision behind a Desired Track: which source track, Release, MusicBrainz recording, and lyrics the app chose. The app writes tags from the Match and only looks it up again on Refresh.
+_Avoid_: Resolution, candidate, lookup result
 
-**Sync View**:
-The single user-visible Sync screen for pending, running, completed, and failed Sync Jobs and track work items. It stays job-first with expandable track rows and uses in-page filters rather than separate subviews.
-_Avoid_: Queue, run history, worker queue
+**Refresh**:
+A user request to look up the Match again for one song, album, artist, or the whole Library. Nothing refreshes a Match automatically.
+_Avoid_: Reprocess, resync, rerun
 
-**Job Status**:
-The lifecycle state of a Sync Job itself. In the Sync UI, the parent job pill should use only `In Progress` or `Completed`.
-_Avoid_: Failed job, queue bucket
+**Needs Attention**:
+The state of a Desired Track whose Track Step failed permanently or used up its automatic retries. It waits for the user to retry.
+_Avoid_: Failed job, error queue
 
-**Track Status**:
-The lifecycle or outcome state of an individual track work item. In the Sync UI, child track pills should use `Queued`, `In Progress`, `Succeeded`, or `Failed`.
-_Avoid_: Job status, queue bucket
+### Authentication
 
-**Reprocess**:
-User-requested work that revisits an existing library item with a source-song identity to refresh matching, metadata, lyrics, artwork, or files. Reprocess can target one artist, one album, one song, or a wider library scope.
-_Avoid_: Resync, rerun
+**Google Session**:
+The Google identity the user signed into through the app's own sign-in window. One Google Session can expose several YouTube Music Accounts.
+_Avoid_: Browser session, auth source, YouTube account
 
-**Proposed Change**:
-A planned modification to an existing library item discovered during sync or reprocess. It is informational by default and does not imply a separate approval step.
-_Avoid_: Low confidence, review item
+**YouTube Music Account**:
+A selectable personal or Brand Account identity used to access YouTube Music. This is the account the app shows and switches.
+_Avoid_: Google Session, email account, channel
 
-**Proposed Cleanup**:
-A planned deletion or removal action for library content that may no longer belong, such as a song no longer found in liked music libraries.
-_Avoid_: Auto-delete, pruning
+**Selected YouTube Music Account**:
+The YouTube Music Account the app currently uses.
+_Avoid_: Active Google Session, current channel
 
 ## Example Dialogue
 
@@ -130,59 +146,43 @@ Domain expert: "No. The Library shows inventory and metadata. Playback happens i
 
 Developer: "How do we show where a song came from?"
 
-Domain expert: "Show which Liked Music Library contributed it, what source was selected, and whether the resulting file exists in the Local Library and Remote Library."
+Domain expert: "Show which Liked Music Library or Favorite Artist contributed it, what source was selected, and whether the file exists in the Library and the Remote Library."
 
 Developer: "Should the user browse old sync runs?"
 
-Domain expert: "No. They should see what is discovered, pending, complete, or failed now. Internal runs are only useful for debug."
+Domain expert: "No. They should see what is discovered, working, done, or failed now. Internal runs are only useful for debug."
 
-Developer: "What shows up in Sync when a Favorite Artist refresh starts before the songs are known?"
+Developer: "I dropped some MP3s from another tool into the output folder. Do they show up as Artists and Albums?"
 
-Domain expert: "Show a Sync Job first. Once tracks are discovered, expand that job into track work items in the Sync Queue."
+Domain expert: "No. They are Unmanaged Files. The app lists them so you know they are there, but it never folds them into the Library."
 
-Developer: "How should Favorite Artist refresh rows be labeled?"
+Developer: "What does the user see when a new liked song appears?"
 
-Domain expert: "Put the artist name in the main Sync Job label. Otherwise multiple queued artist refreshes are too generic to scan."
+Domain expert: "A new Desired Track appears in Activity with its reason, then each Track Step shows progress until the file is in the Library and, if configured, the Remote Library."
 
-Developer: "What should the liked-song job be called if manual and scheduled are the same thing?"
+Developer: "One track's upload failed. Does the whole catalog refresh fail?"
 
-Domain expert: "Call it Liked Songs Sync. The trigger source matters less than the user goal."
+Domain expert: "No. Only that Track Step failed. The app retries it a few times, then marks the track Needs Attention. Retrying re-runs the upload without downloading again."
 
-Developer: "Why does the Queue say track-first if the UI is grouped by job?"
+Developer: "We changed how the app writes genre tags. Does every song go back to YouTube Music?"
 
-Domain expert: "Track-first describes the underlying work model. The UI for both Sync Queue and Completed Work stays job-first, with expandable track rows."
-
-Developer: "Should Failures flatten everything into one list?"
-
-Domain expert: "No. Failed Work should keep the same job-first grouped shape so users can see which Sync Job produced the failed tracks."
-
-Developer: "What if one Sync Job has both completed and failed tracks?"
-
-Domain expert: "Move the whole Sync Job out of the Sync Queue and place it in Failed Work. Keep the completed and failed tracks visible together inside that job."
-
-Developer: "Should approval-needed items stay inside the main Queue?"
-
-Domain expert: "No. Needs Approval is its own Sync view because it needs richer diff-style detail. After approval, those tracks return to the Sync Queue for remaining work."
-
-Developer: "Should Needs Approval be grouped by job like the Queue?"
-
-Domain expert: "Not primarily. Needs Approval is track-first because approval decisions are made per track, even if small job context may still be shown."
-
-Developer: "When should the app ask for confirmation?"
-
-Domain expert: "Only when it would modify or delete existing library content, or when the app cannot choose a concrete match safely."
+Domain expert: "No. The app rewrites tags from each track's saved Match. Only a Refresh looks the Match up again."
 
 Developer: "Can the app delete songs automatically when they are no longer liked?"
 
-Domain expert: "No. It may propose cleanup, but deletion requires confirmation."
+Domain expert: "No. They become No Longer Wanted and stay until the user deletes them."
 
-Developer: "If YouTube Music no longer likes a song, should it be cleaned up?"
+Developer: "If YouTube Music no longer likes a song, is it No Longer Wanted?"
 
-Domain expert: "Only if no connected liked music library still includes it. Multiple platforms can contribute to the same library item."
+Domain expert: "Only if no other Source Contribution backs it. A Favorite Artist catalog or another Liked Music Library can still want it."
+
+Developer: "Someone retagged a file in the Remote Library by hand. Does the app adopt the new tags?"
+
+Domain expert: "No. Only the app writes to the Remote Library. The app sees the remote copy as stale and replaces it."
 
 Developer: "Does an Album come from the liked source?"
 
-Domain expert: "No. Album identity comes from final library metadata. Liked source contributions explain why tracks are present."
+Domain expert: "No. Album identity comes from final library metadata. Source Contributions explain why tracks are present."
 
 Developer: "Should artist pages use album artist or track artist?"
 
@@ -194,4 +194,4 @@ Domain expert: "No. A Favorite Artist is explicitly selected by the user and exp
 
 Developer: "If a user liked some songs by a Favorite Artist, should those download twice?"
 
-Domain expert: "No. Liked songs and Favorite Artist discovery should merge into one library item when they refer to the same song."
+Domain expert: "No. Liked songs and Favorite Artist discovery merge into one Desired Track when they refer to the same Release Track."
