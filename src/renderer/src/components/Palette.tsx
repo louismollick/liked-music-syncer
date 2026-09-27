@@ -151,7 +151,7 @@ export function Palette() {
   let lastGroup = ''
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black/60 flex items-start justify-center pt-24"
+      className="fixed inset-0 z-[60] bg-black/60 flex items-start justify-center pt-24 no-drag"
       onMouseDown={(e) => e.target === e.currentTarget && close()}
     >
       <div className="w-[620px] rounded-md bg-raised border border-line shadow-2xl overflow-hidden fade-in">

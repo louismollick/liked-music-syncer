@@ -1,5 +1,5 @@
 import { useRouterState } from '@tanstack/react-router'
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { cx } from '../../lib/format'
 import { type TabPath, TabProvider, type TabSearches } from '../../lib/tabs'
 import { AlbumsPage } from '../../pages/AlbumsPage'
@@ -36,17 +36,30 @@ const TabSlot = memo(function TabSlot({
   )
 })
 
-/** The Artists, Albums and Songs tabs, always mounted; only the current one shows. */
+/**
+ * The Artists, Albums and Songs tabs, kept mounted; only the current one shows.
+ * The first tab visited mounts at once and the rest once the app is idle, so
+ * their queries don't compete with startup.
+ */
 export function TabPages({ searches }: { searches: TabSearches }) {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   })
-  return TABS.map(({ path, Page }) => (
-    <TabSlot
-      key={path}
-      active={pathname === path}
-      search={searches[path]}
-      Page={Page}
-    />
-  ))
+  const [idle, setIdle] = useState(false)
+  const visited = useRef(new Set<string>())
+  visited.current.add(pathname)
+  useEffect(() => {
+    const handle = requestIdleCallback(() => setIdle(true), { timeout: 3000 })
+    return () => cancelIdleCallback(handle)
+  }, [])
+  return TABS.filter(({ path }) => idle || visited.current.has(path)).map(
+    ({ path, Page }) => (
+      <TabSlot
+        key={path}
+        active={pathname === path}
+        search={searches[path]}
+        Page={Page}
+      />
+    )
+  )
 }

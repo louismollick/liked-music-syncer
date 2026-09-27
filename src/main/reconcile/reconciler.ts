@@ -344,6 +344,7 @@ export class Reconciler {
       })
       .where(eq(artists.id, artistId))
       .run()
+    this.deps.onLibraryChanged(null)
     if (enabled) void this.check({ catalogs: [artistId] })
     else {
       deactivateArtistCatalog(this.db, artistId)

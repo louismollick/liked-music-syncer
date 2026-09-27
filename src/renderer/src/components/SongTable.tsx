@@ -92,7 +92,7 @@ export function SongTable({
       key={song.id}
       onClick={() => openSong(song.id)}
       className={cx(
-        'grid items-center gap-3 px-2 border-b border-line hover:bg-white/[.03] cursor-pointer text-[13px]',
+        'grid items-center gap-3 px-2 border-b border-line hover:bg-white/[.03] cursor-pointer text-[13px] no-drag',
         grid
       )}
       style={{ height: ROW_HEIGHT }}

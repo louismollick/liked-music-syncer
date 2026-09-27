@@ -22,6 +22,11 @@ export function Tooltip({
   const [at, setAt] = useState<{ x: number; y: number } | null>(null)
   // A tab hidden mid-hover never sees the mouse leave.
   const tabActive = useTabActive()
+  useEffect(() => {
+    if (tabActive) return
+    if (timer.current) clearTimeout(timer.current)
+    setAt(null)
+  }, [tabActive])
 
   const show = () => {
     timer.current = setTimeout(() => {
@@ -50,7 +55,6 @@ export function Tooltip({
     >
       {children}
       {at &&
-        tabActive &&
         createPortal(
           <span
             role="tooltip"

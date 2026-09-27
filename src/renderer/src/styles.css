@@ -46,7 +46,8 @@ textarea {
 }
 
 .no-drag,
-/* Controls stay clickable where they cross a window drag area. */
+/* Controls stay clickable where they cross a window drag area; clickable
+   non-controls (like song rows) add `no-drag` themselves. */
 button,
 a,
 input,
