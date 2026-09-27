@@ -179,4 +179,9 @@ export const MIGRATIONS: string[] = [
     encrypted INTEGER NOT NULL DEFAULT 0
   );
   `,
+  // 2: Favorite Artist becomes Full Discography
+  `
+  ALTER TABLE artists RENAME COLUMN favorite TO full_discography;
+  ALTER TABLE artists RENAME COLUMN favorited_at TO full_discography_at;
+  `,
 ]

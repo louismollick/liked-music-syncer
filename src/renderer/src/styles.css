@@ -45,7 +45,14 @@ textarea {
   -webkit-app-region: drag;
 }
 
-.no-drag {
+.no-drag,
+/* Controls stay clickable where they cross a window drag area. */
+button,
+a,
+input,
+select,
+textarea,
+[role='button'] {
   -webkit-app-region: no-drag;
 }
 

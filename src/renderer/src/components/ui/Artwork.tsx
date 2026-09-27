@@ -15,16 +15,27 @@ export function Artwork({
   label,
   className,
   kind = 'album',
+  hover,
 }: {
   src: string | null
   label: string
   className?: string
   kind?: 'album' | 'artist'
+  /** Grow slightly on hover: of itself, or of the enclosing `group`. */
+  hover?: 'self' | 'group'
 }) {
   const [failed, setFailed] = useState(false)
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset when the image changes
   useEffect(() => setFailed(false), [src])
   const hue = hueFor(label || '?')
+  const hoverClass =
+    hover &&
+    cx(
+      'transition-[scale,filter] duration-300 ease-out',
+      hover === 'self'
+        ? 'motion-safe:hover:scale-[1.03] hover:brightness-110'
+        : 'motion-safe:group-hover:scale-[1.03] group-hover:brightness-110'
+    )
   if (src && !failed) {
     return (
       <img
@@ -34,7 +45,11 @@ export function Artwork({
         // Google image hosts reject requests with a localhost/file referrer.
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
-        className={cx('rounded-md object-cover bg-white/[.04]', className)}
+        className={cx(
+          'rounded-md object-cover bg-white/[.04]',
+          hoverClass,
+          className
+        )}
       />
     )
   }
@@ -43,6 +58,7 @@ export function Artwork({
     <div
       className={cx(
         'rounded-md flex items-center justify-center text-white/25',
+        hoverClass,
         className
       )}
       style={{

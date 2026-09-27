@@ -244,8 +244,8 @@ async function main() {
     'library:album': (key) => queries.album(key),
     'library:track': (id) => queries.track(id),
     'library:search': (text) => queries.search(text),
-    'library:setFavorite': ({ artistId, favorite }) => {
-      reconciler.setFavorite(artistId, favorite)
+    'library:setFullDiscography': ({ artistId, fullDiscography }) => {
+      reconciler.setFullDiscography(artistId, fullDiscography)
       broadcast('library:changed', { trackIds: null })
     },
     'library:refresh': (scope) => reconciler.refresh(scope),

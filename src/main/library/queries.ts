@@ -173,9 +173,9 @@ export class LibraryQueries {
       )
       params.push(f.remote)
     }
-    if (f.favorite) {
+    if (f.fullDiscography) {
       where.push(
-        `EXISTS (SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = t.id AND a.favorite = 1)`
+        `EXISTS (SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = t.id AND a.full_discography = 1)`
       )
     }
     if (query.artistId) {
@@ -225,7 +225,7 @@ export class LibraryQueries {
   ): ArtistView[] {
     const rows = this.sqlite
       .prepare(
-        `SELECT a.id, a.name, a.image_path, a.favorite, a.suggested, a.channel_id,
+        `SELECT a.id, a.name, a.image_path, a.full_discography, a.suggested, a.channel_id,
            COUNT(DISTINCT t.id) AS song_count
          FROM artists a
          JOIN track_artists ta ON ta.artist_id = a.id
@@ -240,7 +240,7 @@ export class LibraryQueries {
       id: string
       name: string
       image_path: string | null
-      favorite: number
+      full_discography: number
       suggested: number
       channel_id: string | null
       song_count: number
@@ -250,7 +250,7 @@ export class LibraryQueries {
       name: row.name,
       imageUrl: this.artistImageUrl(row.image_path),
       songCount: row.song_count,
-      favorite: Boolean(row.favorite),
+      fullDiscography: Boolean(row.full_discography),
       suggested: Boolean(row.suggested),
       identified: Boolean(row.channel_id),
     }))
@@ -259,7 +259,7 @@ export class LibraryQueries {
   artists(input: ArtistQuery): ArtistView[] {
     const query = artistQuerySchema.parse(input)
     const where = [
-      query.favorites ? 'AND a.favorite = 1' : '',
+      query.fullDiscography ? 'AND a.full_discography = 1' : '',
       query.suggested ? 'AND a.suggested = 1' : '',
     ].join(' ')
     const order =
@@ -319,8 +319,8 @@ export class LibraryQueries {
         : query.sort === 'year'
           ? 'year IS NULL, year DESC, t.album COLLATE NOCASE'
           : 'liked_at IS NULL, liked_at DESC, t.album COLLATE NOCASE'
-    const where = query.favorites
-      ? 'AND EXISTS (SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = t.id AND a.favorite = 1)'
+    const where = query.fullDiscography
+      ? 'AND EXISTS (SELECT 1 FROM track_artists ta JOIN artists a ON a.id = ta.artist_id WHERE ta.track_id = t.id AND a.full_discography = 1)'
       : ''
     return this.albumRows(where, [], order)
   }
@@ -420,7 +420,7 @@ export class LibraryQueries {
         label:
           c.kind === 'liked'
             ? 'Liked on YouTube Music'
-            : `In ${c.artist_name ?? 'a Favorite Artist'}'s catalog (Favorite Artist)`,
+            : `In ${c.artist_name ?? 'an artist'}'s Full Discography`,
         at: c.kind === 'liked' ? c.first_seen_at : null,
       })),
       match: {

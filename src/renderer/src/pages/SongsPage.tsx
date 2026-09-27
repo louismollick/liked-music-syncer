@@ -1,4 +1,4 @@
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { SongFilters, SongSort } from '../../../shared/ipc'
@@ -11,6 +11,7 @@ import { Drawer } from '../components/ui/Drawer'
 import { invoke, useLibraryData } from '../lib/api'
 import { useAppState } from '../lib/app-state'
 import { plural } from '../lib/format'
+import { useTabActive, useTabSearch } from '../lib/tabs'
 import { useScrollMargin } from '../lib/use-scroll-margin'
 
 export interface SongsSearch {
@@ -18,7 +19,7 @@ export interface SongsSearch {
   remote?: 'in_sync' | 'stale' | 'missing'
   state?: 'needs_attention' | 'no_longer_wanted'
   lang?: string
-  favorite?: boolean
+  fullDiscography?: boolean
   sort?: SongSort
   desc?: boolean
   song?: string
@@ -41,7 +42,7 @@ const STATE_LABEL = {
 const LANG_NAMES = new Intl.DisplayNames(['en'], { type: 'language' })
 
 export function SongsPage() {
-  const search = useSearch({ strict: false }) as SongsSearch
+  const search = useTabSearch<SongsSearch>()
   const navigate = useNavigate()
   const setup = useSetupNeeded()
   const { counts, settings } = useAppState()
@@ -58,7 +59,7 @@ export function SongsPage() {
     remote: search.remote,
     state: search.state,
     language: search.lang,
-    favorite: search.favorite,
+    fullDiscography: search.fullDiscography,
   }
   const { data } = useLibraryData(
     () => invoke('library:songs', { filters, sort, descending, limit: 20000 }),
@@ -67,7 +68,7 @@ export function SongsPage() {
       search.remote,
       search.state,
       search.lang,
-      search.favorite,
+      search.fullDiscography,
       sort,
       descending,
     ]
@@ -80,6 +81,10 @@ export function SongsPage() {
   useEffect(() => {
     if (unmanagedOpen) void invoke('library:unmanaged').then(setUnmanaged)
   }, [unmanagedOpen])
+  const active = useTabActive()
+  useEffect(() => {
+    if (!active) setUnmanagedOpen(false)
+  }, [active])
 
   if (setup) return <SetupEmptyState />
   const confirmDelete = (where: 'local' | 'remote' | 'both') => {
@@ -152,10 +157,10 @@ export function SongsPage() {
               onRemove={() => set({ lang: undefined })}
             />
           )}
-          {search.favorite && (
+          {search.fullDiscography && (
             <Chip
-              label="Favorite Artists"
-              onRemove={() => set({ favorite: undefined })}
+              label="By Full Discography artists"
+              onRemove={() => set({ fullDiscography: undefined })}
             />
           )}
           <AddFilterButton
@@ -196,9 +201,9 @@ export function SongsPage() {
                 title: 'Artists',
                 options: [
                   {
-                    label: 'By Favorite Artists',
-                    onSelect: () => set({ favorite: true }),
-                    active: search.favorite,
+                    label: 'By Full Discography artists',
+                    onSelect: () => set({ fullDiscography: true }),
+                    active: search.fullDiscography,
                   },
                 ],
               },

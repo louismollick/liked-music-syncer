@@ -17,7 +17,7 @@ export type MatchInput =
   | { kind: 'liked'; song: LikedSong }
   | {
       kind: 'catalog'
-      /** Favorite Artist whose Official Main Catalog produced this track. */
+      /** Full Discography artist whose Official Main Catalog produced this track. */
       artistId: string
       release: CatalogRelease
       track: CatalogTrack
@@ -39,6 +39,7 @@ export interface MatchedRelease {
 }
 
 export type ResolutionMethod =
+  /** Full Discography catalog track; the value predates the rename and is stored in files. */
   | 'favorite_artist_release_exact'
   | 'liked_album_exact'
   | 'search_song_exact'

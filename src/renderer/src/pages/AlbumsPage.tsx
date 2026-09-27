@@ -1,4 +1,4 @@
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { useRef } from 'react'
 import { SetupEmptyState, useSetupNeeded } from '../components/EmptyState'
 import { AlbumGrid } from '../components/Grids'
@@ -6,11 +6,12 @@ import { Page, PageTitle } from '../components/layout/Page'
 import { AddFilterButton, Chip, SortMenu } from '../components/ui/Chip'
 import { invoke, useLibraryData } from '../lib/api'
 import { plural } from '../lib/format'
+import { useTabSearch } from '../lib/tabs'
 import { useScrollMargin } from '../lib/use-scroll-margin'
 
 export interface AlbumsSearch {
   sort?: 'liked' | 'title' | 'year'
-  favorites?: boolean
+  fullDiscography?: boolean
 }
 
 const SORT_LABEL = {
@@ -20,15 +21,19 @@ const SORT_LABEL = {
 } as const
 
 export function AlbumsPage() {
-  const search = useSearch({ strict: false }) as AlbumsSearch
+  const search = useTabSearch<AlbumsSearch>()
   const navigate = useNavigate()
   const setup = useSetupNeeded()
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const sort = search.sort ?? 'liked'
   const { data } = useLibraryData(
-    () => invoke('library:albums', { sort, favorites: search.favorites }),
-    [sort, search.favorites]
+    () =>
+      invoke('library:albums', {
+        sort,
+        fullDiscography: search.fullDiscography,
+      }),
+    [sort, search.fullDiscography]
   )
   const margin = useScrollMargin(gridRef, scrollRef, data?.length)
   if (setup) return <SetupEmptyState />
@@ -44,10 +49,10 @@ export function AlbumsPage() {
           meta={data ? plural(albums.length, 'album') : undefined}
         />
         <div className="flex items-center gap-2">
-          {search.favorites && (
+          {search.fullDiscography && (
             <Chip
-              label="By Favorite Artists"
-              onRemove={() => update({ favorites: undefined })}
+              label="By Full Discography artists"
+              onRemove={() => update({ fullDiscography: undefined })}
             />
           )}
           <AddFilterButton
@@ -56,9 +61,9 @@ export function AlbumsPage() {
                 title: 'Artists',
                 options: [
                   {
-                    label: 'By Favorite Artists',
-                    onSelect: () => update({ favorites: true }),
-                    active: search.favorites,
+                    label: 'By Full Discography artists',
+                    onSelect: () => update({ fullDiscography: true }),
+                    active: search.fullDiscography,
                   },
                 ],
               },

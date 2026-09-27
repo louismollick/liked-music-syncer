@@ -137,7 +137,7 @@ describe('adoption of v5 managed files', () => {
         .from(artists)
         .where(eq(artists.id, 'channel:artist-1'))
         .get()
-    ).toMatchObject({ suggested: true, favorite: false })
+    ).toMatchObject({ suggested: true, fullDiscography: false })
   })
 
   it('claims a release file for a like of its recorded source video, without downloading', async () => {
@@ -247,7 +247,7 @@ describe('adoption of v5 managed files', () => {
     expect(readTags(absolute).fields.lms.schemaVersion).toBe(5)
   })
 
-  it('does not rewrite an adopted Favorite Artist file before any source claims it', async () => {
+  it('does not rewrite an adopted Full Discography artist file before any source claims it', async () => {
     const h = harness()
     h.settings.remoteEnabled = false
     const absolute = legacyFile(h, 'Test Artist/Album/01 Fav.m4a', {

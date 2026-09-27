@@ -76,7 +76,7 @@ export function Palette() {
       {
         key: 'cmd-catalogs',
         group: 'Commands',
-        label: 'Refresh Favorite Artist catalogs',
+        label: 'Refresh Full Discography catalogs',
         run: () => void invoke('activity:refreshCatalogs'),
       },
       {
@@ -102,7 +102,7 @@ export function Palette() {
         key: `artist-${artist.id}`,
         group: 'Artists',
         label: artist.name,
-        hint: `${plural(artist.songCount, 'song')}${artist.favorite ? ' · Favorite' : ''}`,
+        hint: `${plural(artist.songCount, 'song')}${artist.fullDiscography ? ' · Full Discography' : ''}`,
         image: { src: artist.imageUrl, kind: 'artist' },
         run: () =>
           void navigate({

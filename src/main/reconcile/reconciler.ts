@@ -235,7 +235,7 @@ export class Reconciler {
     this.emitSoon()
   }
 
-  /** Checks liked songs (and due Favorite Artist catalogs), then plans work. */
+  /** Checks liked songs (and due full-discography catalogs), then plans work. */
   check(options: { catalogs?: 'due' | 'all' | string[] } = {}): Promise<void> {
     return this.track(this.runCheck(options))
   }
@@ -244,7 +244,7 @@ export class Reconciler {
     catalogs?: 'due' | 'all' | string[]
   }): Promise<void> {
     if (this.checking) {
-      // Remember the request (e.g. a new favorite) and run it right after.
+      // Remember the request (e.g. a new Full Discography artist) and run it right after.
       this.queuedCheck = mergeCatalogRequests(
         this.queuedCheck,
         options.catalogs ?? 'due'
@@ -274,13 +274,13 @@ export class Reconciler {
           )
         }
       }
-      const favorites = this.db
+      const fullDiscography = this.db
         .select()
         .from(artists)
-        .where(eq(artists.favorite, true))
+        .where(eq(artists.fullDiscography, true))
         .all()
       const cutoff = this.deps.now().getTime() - CATALOG_INTERVAL_MS
-      const due = favorites.filter((artist) => {
+      const due = fullDiscography.filter((artist) => {
         if (!artist.channelId) return false
         if (options.catalogs === 'all') return true
         if (Array.isArray(options.catalogs))
@@ -322,29 +322,29 @@ export class Reconciler {
   }
 
   private refreshWantedStates(): void {
-    const favorites = this.db
+    const fullDiscography = this.db
       .select()
       .from(artists)
-      .where(eq(artists.favorite, true))
+      .where(eq(artists.fullDiscography, true))
       .all()
       .filter((artist) => artist.channelId)
     updateWantedStates(this.db, {
       accountId: this.deps.session.accountId(),
-      favoriteArtistIds: favorites.map((artist) => artist.id),
+      fullDiscographyArtistIds: fullDiscography.map((artist) => artist.id),
     })
   }
 
-  setFavorite(artistId: string, favorite: boolean): void {
+  setFullDiscography(artistId: string, enabled: boolean): void {
     this.db
       .update(artists)
       .set({
-        favorite,
+        fullDiscography: enabled,
         suggested: false,
-        favoritedAt: favorite ? this.deps.now().toISOString() : null,
+        fullDiscographyAt: enabled ? this.deps.now().toISOString() : null,
       })
       .where(eq(artists.id, artistId))
       .run()
-    if (favorite) void this.check({ catalogs: [artistId] })
+    if (enabled) void this.check({ catalogs: [artistId] })
     else {
       deactivateArtistCatalog(this.db, artistId)
       void this.check({ catalogs: [] })
@@ -957,7 +957,7 @@ export class Reconciler {
         kind: 'source' as const,
         title: source.startsWith('liked:')
           ? 'Liked songs check'
-          : 'Favorite Artist catalog',
+          : 'Full Discography catalog',
         subtitle: null,
         reason: message,
         coverUrl: null,

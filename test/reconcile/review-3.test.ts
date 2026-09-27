@@ -134,7 +134,7 @@ describe('third review fixes', () => {
     ).toBe('no_longer_wanted')
   })
 
-  it('discards a catalog that finishes after the artist was un-favorited', async () => {
+  it('discards a catalog that finishes after the artist was taken off Full Discography', async () => {
     const h = harness()
     const album = release('release-x', song('cat-1'), song('cat-2'))
     h.catalog.releases.set(album.browseId, album)
@@ -153,15 +153,15 @@ describe('third review fixes', () => {
         id: 'channel:artist-1',
         name: credit.name,
         channelId: credit.channelId,
-        favorite: true,
+        fullDiscography: true,
       })
       .run()
     const releaseOf = h.catalog.release.bind(h.catalog)
     h.catalog.release = async (id: string) => {
-      // The user un-favorites while the releases are still loading.
+      // The user turns off Full Discography while the releases are still loading.
       h.db
         .update(artists)
-        .set({ favorite: false })
+        .set({ fullDiscography: false })
         .where(eq(artists.id, 'channel:artist-1'))
         .run()
       return releaseOf(id)
