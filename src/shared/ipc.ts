@@ -81,7 +81,7 @@ export const songFiltersSchema = z.object({
   remote: z.enum(['in_sync', 'stale', 'missing']).optional(),
   language: z.string().optional(),
   state: z.enum(['needs_attention', 'no_longer_wanted']).optional(),
-  favorite: z.boolean().optional(),
+  fullDiscography: z.boolean().optional(),
 })
 export type SongFilters = z.infer<typeof songFiltersSchema>
 
@@ -121,7 +121,7 @@ export interface SongRowView {
   state: 'pending' | 'working' | 'done' | 'needs_attention' | 'no_longer_wanted'
   /** ISO time of the Liked Date, or null when no liked contribution backs the track. */
   likedAt: string | null
-  /** True when only a Favorite Artist catalog backs the track. */
+  /** True when only a full-discography catalog backs the track. */
   catalogOnly: boolean
   coverUrl: string | null
   trackNumber: number | null
@@ -138,7 +138,7 @@ export interface ArtistView {
   name: string
   imageUrl: string | null
   songCount: number
-  favorite: boolean
+  fullDiscography: boolean
   suggested: boolean
   identified: boolean
 }
@@ -202,7 +202,7 @@ export interface SearchResultsView {
 }
 
 export const artistQuerySchema = z.object({
-  favorites: z.boolean().optional(),
+  fullDiscography: z.boolean().optional(),
   suggested: z.boolean().optional(),
   sort: z.enum(['songs', 'name']).default('songs'),
 })
@@ -210,8 +210,8 @@ export type ArtistQuery = z.input<typeof artistQuerySchema>
 
 export const albumQuerySchema = z.object({
   sort: z.enum(['liked', 'title', 'year']).default('liked'),
-  /** Only albums with a track by a Favorite Artist. */
-  favorites: z.boolean().optional(),
+  /** Only albums with a track by a Full Discography artist. */
+  fullDiscography: z.boolean().optional(),
 })
 export type AlbumQuery = z.input<typeof albumQuerySchema>
 
@@ -261,7 +261,10 @@ export interface InvokeMap {
   'library:album': [string, AlbumDetailView | null]
   'library:track': [string, TrackDetailView | null]
   'library:search': [string, SearchResultsView]
-  'library:setFavorite': [{ artistId: string; favorite: boolean }, void]
+  'library:setFullDiscography': [
+    { artistId: string; fullDiscography: boolean },
+    void,
+  ]
   'library:refresh': [RefreshScope, void]
   'library:delete': [z.infer<typeof deleteRequestSchema>, string[]]
   'library:unmanaged': [void, Array<{ path: string; size: number }>]
@@ -293,9 +296,9 @@ export const invokeArgSchemas: Partial<Record<InvokeChannel, z.ZodType>> = {
   'library:album': z.string(),
   'library:track': z.string(),
   'library:search': z.string().max(200),
-  'library:setFavorite': z.object({
+  'library:setFullDiscography': z.object({
     artistId: z.string(),
-    favorite: z.boolean(),
+    fullDiscography: z.boolean(),
   }),
   'library:refresh': refreshScopeSchema,
   'library:delete': deleteRequestSchema,

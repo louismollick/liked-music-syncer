@@ -1,10 +1,11 @@
 import { useParams } from '@tanstack/react-router'
-import { RefreshCw, Star } from 'lucide-react'
+import { Download, RefreshCw } from 'lucide-react'
 import { AlbumTile } from '../components/Grids'
 import { Crumbs, Section } from '../components/layout/Page'
 import { SongTable } from '../components/SongTable'
 import { Artwork } from '../components/ui/Artwork'
 import { Button } from '../components/ui/Button'
+import { Tooltip } from '../components/ui/Tooltip'
 import { invoke, useLibraryData } from '../lib/api'
 import { useDominantColor } from '../lib/dominant-color'
 import { plural } from '../lib/format'
@@ -38,6 +39,7 @@ export function ArtistPage() {
             label={artist.name}
             kind="artist"
             className="w-40 h-40 shadow-2xl shrink-0"
+            hover="self"
           />
           <div className="pb-1 min-w-0 pr-48">
             <Crumbs items={[{ label: 'Artists', to: '/artists' }]} />
@@ -51,26 +53,27 @@ export function ArtistPage() {
                 {standalone.length ? ` · ${standalone.length} standalone` : ''}
               </span>
               {artist.identified && (
-                <Button
-                  variant={artist.favorite ? 'primary' : 'default'}
-                  title={
-                    artist.favorite
-                      ? 'Syncing the Official Main Catalog (albums, singles, EPs). Click to stop.'
-                      : 'Download the Official Main Catalog: every album, single and EP.'
-                  }
-                  onClick={() =>
-                    void invoke('library:setFavorite', {
-                      artistId: artist.id,
-                      favorite: !artist.favorite,
-                    }).then(reload)
+                <Tooltip
+                  interactive
+                  label={
+                    artist.fullDiscography
+                      ? 'Downloading every album, single and EP. Click to stop.'
+                      : 'Download every album, single and EP by this artist.'
                   }
                 >
-                  <Star
-                    className="w-3.5 h-3.5"
-                    fill={artist.favorite ? 'currentColor' : 'none'}
-                  />{' '}
-                  Favorite
-                </Button>
+                  <Button
+                    variant={artist.fullDiscography ? 'primary' : 'default'}
+                    aria-pressed={artist.fullDiscography}
+                    onClick={() =>
+                      void invoke('library:setFullDiscography', {
+                        artistId: artist.id,
+                        fullDiscography: !artist.fullDiscography,
+                      }).then(reload)
+                    }
+                  >
+                    <Download className="w-3.5 h-3.5" /> Full Discography
+                  </Button>
+                </Tooltip>
               )}
               <Button
                 onClick={() =>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useTabActive } from '../../lib/tabs'
 
 /**
  * Hover label for small icons. Native `title` tooltips don't show on rows that
@@ -8,14 +9,24 @@ import { createPortal } from 'react-dom'
  */
 export function Tooltip({
   label,
+  interactive = false,
   children,
 }: {
   label: string
+  /** Wraps a control that names itself, so the wrapper stays out of the accessibility tree. */
+  interactive?: boolean
   children: React.ReactNode
 }) {
   const ref = useRef<HTMLSpanElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+  // A tab hidden mid-hover never sees the mouse leave.
+  const tabActive = useTabActive()
+  useEffect(() => {
+    if (tabActive) return
+    if (timer.current) clearTimeout(timer.current)
+    setAt(null)
+  }, [tabActive])
 
   const show = () => {
     timer.current = setTimeout(() => {
@@ -37,8 +48,7 @@ export function Tooltip({
   return (
     <span
       ref={ref}
-      role="img"
-      aria-label={label}
+      {...(interactive ? {} : { role: 'img', 'aria-label': label })}
       className="inline-flex"
       onMouseEnter={show}
       onMouseLeave={hide}

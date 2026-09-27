@@ -13,7 +13,12 @@ import {
   unmanagedFiles,
 } from '../library/schema'
 import type { Match, MatchedRelease } from '../match/types'
-import { readTags, sha256, type TagFields } from '../tags/schema'
+import {
+  CATALOG_SOURCE_ORIGIN,
+  readTags,
+  sha256,
+  type TagFields,
+} from '../tags/schema'
 import {
   exists,
   onDiskRelative,
@@ -287,7 +292,7 @@ export async function adoptFiles(
         .run()
     })
     linkAdoptedArtists(deps.db, trackId, match.artists)
-    if (read.fields.lms.sourceOrigin === 'favorite_artist_release') {
+    if (read.fields.lms.sourceOrigin === CATALOG_SOURCE_ORIGIN) {
       for (const credit of match.artists)
         if (credit.channelId) suggested.add(`channel:${credit.channelId}`)
     }
@@ -297,7 +302,7 @@ export async function adoptFiles(
     deps.db
       .update(artists)
       .set({ suggested: true })
-      .where(and(eq(artists.id, id), eq(artists.favorite, false)))
+      .where(and(eq(artists.id, id), eq(artists.fullDiscography, false)))
       .run()
   }
   onProgress?.(entries.length, entries.length)

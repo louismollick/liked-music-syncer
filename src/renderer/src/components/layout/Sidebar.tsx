@@ -14,6 +14,7 @@ import type { ActivityTrackView } from '../../../../shared/ipc'
 import { invoke } from '../../lib/api'
 import { useActivity, useAppState } from '../../lib/app-state'
 import { cx, plural, timeAgo } from '../../lib/format'
+import { useTabLinkSearch } from '../../lib/tabs'
 import { Artwork } from '../ui/Artwork'
 import { IconButton } from '../ui/Button'
 
@@ -176,6 +177,7 @@ const NAV = [
 
 export function Sidebar() {
   const router = useRouter()
+  const linkSearch = useTabLinkSearch()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const { session } = useAppState()
   const activity = useActivity()
@@ -193,6 +195,7 @@ export function Sidebar() {
     <Link
       key={to}
       to={to}
+      search={linkSearch(to) as never}
       className={cx(
         'flex items-center gap-2.5 px-2 h-8 rounded-md text-[13px] transition-colors',
         active

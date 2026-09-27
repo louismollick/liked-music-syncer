@@ -28,7 +28,8 @@ export function Drawer({
       <div
         className={cx(
           'fixed inset-0 z-40 bg-black/40 transition-opacity',
-          open ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          // Open, the backdrop takes clicks over the window drag areas too.
+          open ? 'opacity-100 no-drag' : 'opacity-0 pointer-events-none'
         )}
         onClick={onClose}
       />

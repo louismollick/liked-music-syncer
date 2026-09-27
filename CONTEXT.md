@@ -41,7 +41,7 @@ The set of songs a user has liked on a source platform such as YouTube Music or 
 _Avoid_: Playlist, remote library
 
 **Source Contribution**:
-A relationship showing that a Liked Music Library or Favorite Artist catalog contributed a Desired Track. A Desired Track can have many Source Contributions.
+A relationship showing that a Liked Music Library or Full Discography catalog contributed a Desired Track. A Desired Track can have many Source Contributions.
 _Avoid_: Original source, single source
 
 **Liked Date**:
@@ -49,7 +49,7 @@ When a song entered a Liked Music Library. The app uses the platform's timestamp
 _Avoid_: Download date, added date
 
 **Desired Library**:
-Every track the user's Liked Music Libraries and Favorite Artist catalogs say belongs in the Library.
+Every track the user's Liked Music Libraries and Full Discography catalogs say belongs in the Library.
 _Avoid_: Wishlist, target set, queue
 
 **Desired Track**:
@@ -60,12 +60,12 @@ _Avoid_: Wanted song, pending song
 A Library track that no Source Contribution backs anymore, for example after an unlike. The app keeps it until the user deletes it.
 _Avoid_: Orphan, stale track, cleanup candidate
 
-**Favorite Artist**:
-An artist the user explicitly marks for full-catalog syncing. The app treats that artist's songs as Desired Tracks even when individual songs were not liked.
-_Avoid_: Liked artist
+**Full Discography**:
+A per-artist setting the user turns on to download that artist's whole Official Main Catalog. The app treats that artist's songs as Desired Tracks even when individual songs were not liked. It names an intent, not a finished download: new releases keep arriving while it is on.
+_Avoid_: Favorite Artist, liked artist, downloaded artist
 
 **Official Main Catalog**:
-The default set of songs considered for a Favorite Artist, focused on official albums, singles, and EPs.
+The default set of songs considered for a Full Discography artist, focused on official albums, singles, and EPs.
 _Avoid_: All uploads, every appearance
 
 ### Music identity
@@ -109,7 +109,7 @@ One unit of work that moves a Desired Track toward its intended state, such as m
 _Avoid_: Job, phase, task
 
 **Activity**:
-What the app is doing now and did recently, shown per track with the reason the work exists, such as a new liked song or a Favorite Artist catalog refresh. Users see track state, not run history.
+What the app is doing now and did recently, shown per track with the reason the work exists, such as a new liked song or a Full Discography catalog refresh. Users see track state, not run history.
 _Avoid_: Sync Job, run, queue, run history
 
 **Match**:
@@ -146,7 +146,7 @@ Domain expert: "No. The Library shows inventory and metadata. Playback happens i
 
 Developer: "How do we show where a song came from?"
 
-Domain expert: "Show which Liked Music Library or Favorite Artist contributed it, what source was selected, and whether the file exists in the Library and the Remote Library."
+Domain expert: "Show which Liked Music Library or Full Discography catalog contributed it, what source was selected, and whether the file exists in the Library and the Remote Library."
 
 Developer: "Should the user browse old sync runs?"
 
@@ -174,7 +174,7 @@ Domain expert: "No. They become No Longer Wanted and stay until the user deletes
 
 Developer: "If YouTube Music no longer likes a song, is it No Longer Wanted?"
 
-Domain expert: "Only if no other Source Contribution backs it. A Favorite Artist catalog or another Liked Music Library can still want it."
+Domain expert: "Only if no other Source Contribution backs it. A Full Discography catalog or another Liked Music Library can still want it."
 
 Developer: "Someone retagged a file in the Remote Library by hand. Does the app adopt the new tags?"
 
@@ -188,10 +188,10 @@ Developer: "Should artist pages use album artist or track artist?"
 
 Domain expert: "Artist pages use track artist by default. Album artist still matters for album grouping."
 
-Developer: "Is a Favorite Artist the same as an artist found in liked songs?"
+Developer: "Is a Full Discography artist the same as an artist found in liked songs?"
 
-Domain expert: "No. A Favorite Artist is explicitly selected by the user and expands desired music beyond individually liked songs."
+Domain expert: "No. A Full Discography artist is explicitly selected by the user and expands desired music beyond individually liked songs."
 
-Developer: "If a user liked some songs by a Favorite Artist, should those download twice?"
+Developer: "If a user liked some songs by a Full Discography artist, should those download twice?"
 
-Domain expert: "No. Liked songs and Favorite Artist discovery merge into one Desired Track when they refer to the same Release Track."
+Domain expert: "No. Liked songs and Full Discography discovery merge into one Desired Track when they refer to the same Release Track."

@@ -265,7 +265,7 @@ function isMainCatalogRelease(kindLabel: string | null): boolean {
   return /album|single|ep/i.test(kindLabel)
 }
 
-/** Fetches one Favorite Artist's Official Main Catalog and commits it. */
+/** Fetches one full-discography artist's Official Main Catalog and commits it. */
 export async function checkArtistCatalog(options: {
   db: Db
   catalog: YouTubeMusicCatalog
@@ -326,24 +326,24 @@ export async function checkArtistCatalog(options: {
     ).size
     if (previousActive >= 20 && newCount < previousActive * 0.5)
       throw new SuspiciousSnapshotError(
-        `Favorite Artist catalog dropped from ${previousActive} to ${newCount}; keeping the previous list.`
+        `Full Discography catalog dropped from ${previousActive} to ${newCount}; keeping the previous list.`
       )
     const committedAt = nowIso(now)
     db.transaction((tx) => {
-      // The user may have un-favorited the artist while the catalog loaded.
-      const stillFavorite = tx
-        .select({ favorite: artists.favorite })
+      // The user may have turned off Full Discography for the artist while the catalog loaded.
+      const stillWanted = tx
+        .select({ fullDiscography: artists.fullDiscography })
         .from(artists)
         .where(eq(artists.id, artistId))
-        .get()?.favorite
-      if (!stillFavorite) {
+        .get()?.fullDiscography
+      if (!stillWanted) {
         markSnapshot(
           tx as unknown as Db,
           source,
           {
             status: 'failed',
             completedAt: committedAt,
-            error: 'No longer a Favorite Artist',
+            error: 'No longer a Full Discography artist',
           },
           startedAt
         )
@@ -442,7 +442,7 @@ export async function checkArtistCatalog(options: {
   }
 }
 
-/** Deactivates every catalog contribution of an artist (un-favorite). */
+/** Deactivates every catalog contribution of an artist (Full Discography turned off). */
 export function deactivateArtistCatalog(db: Db, artistId: string): void {
   db.update(contributions)
     .set({ active: false })
@@ -673,7 +673,7 @@ export function claimAdoptedFiles(
  */
 export function updateWantedStates(
   db: Db,
-  options: { accountId: string | null; favoriteArtistIds: string[] }
+  options: { accountId: string | null; fullDiscographyArtistIds: string[] }
 ): void {
   const at = new Date().toISOString()
   // A track that regained a source is always wanted again, whatever else failed.
@@ -683,11 +683,11 @@ export function updateWantedStates(
       AND EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = tracks.id AND c.active = 1)
   `)
   // Marking tracks unwanted waits for the liked-songs source to have completed a
-  // full check (or, without an account, every Favorite Artist catalog), so a
+  // full check (or, without an account, every full-discography catalog), so a
   // fresh database or a failing catalog can't flag the library.
   const required = options.accountId
     ? [likedSnapshotSource(options.accountId)]
-    : options.favoriteArtistIds.map(catalogSnapshotSource)
+    : options.fullDiscographyArtistIds.map(catalogSnapshotSource)
   if (required.length === 0) return
   const succeeded = db
     .select()

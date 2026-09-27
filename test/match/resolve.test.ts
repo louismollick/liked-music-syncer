@@ -188,7 +188,7 @@ describe('catalog resolution', () => {
     )
     expect((await matcher.match({ kind: 'liked', song })).release).toBeNull()
   })
-  it('matches favorite artist catalog tracks and reads optional lyrics', async () => {
+  it('matches full-discography catalog tracks and reads optional lyrics', async () => {
     const listed = track('catalog-id', 'Song', 'MPRE1')
     const { matcher } = setup(
       { 'catalog-id': { track: listed, lyricsBrowseId: 'MPLYcatalog' } },

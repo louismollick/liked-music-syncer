@@ -10,17 +10,19 @@ import {
 import { useEffect } from 'react'
 import { SearchBox } from './components/layout/SearchBox'
 import { Sidebar } from './components/layout/Sidebar'
+import { TabPages } from './components/layout/TabPages'
 import { NeedsAttentionDrawer } from './components/NeedsAttention'
 import { Palette } from './components/Palette'
 import { SongPanel } from './components/SongPanel'
 import { useAppState } from './lib/app-state'
+import { TabSearchesProvider, useRememberedSearches } from './lib/tabs'
 import { ActivityPage } from './pages/ActivityPage'
 import { AlbumPage } from './pages/AlbumPage'
-import { AlbumsPage, type AlbumsSearch } from './pages/AlbumsPage'
+import type { AlbumsSearch } from './pages/AlbumsPage'
 import { ArtistPage } from './pages/ArtistPage'
-import { ArtistsPage, type ArtistsSearch } from './pages/ArtistsPage'
+import type { ArtistsSearch } from './pages/ArtistsPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { SongsPage, type SongsSearch } from './pages/SongsPage'
+import type { SongsSearch } from './pages/SongsPage'
 
 /** The Song panel follows the URL's `song` parameter; other navigation closes it. */
 function useSongPanelFollowsUrl() {
@@ -36,21 +38,33 @@ function useSongPanelFollowsUrl() {
 
 function RootLayout() {
   useSongPanelFollowsUrl()
+  const searches = useRememberedSearches()
   return (
-    <div className="flex h-full">
-      <Sidebar />
-      <main className="flex-1 min-w-0 relative">
-        <SearchBox />
-        <div className="h-full">
-          <Outlet />
-        </div>
-        <SongPanel />
-      </main>
-      <NeedsAttentionDrawer />
-      <Palette />
-    </div>
+    <TabSearchesProvider value={searches}>
+      <div className="flex h-full">
+        <Sidebar />
+        <main className="flex-1 min-w-0 relative">
+          {/* The whole top edge moves the window, like the sidebar's title bar. */}
+          <div
+            aria-hidden
+            className="drag absolute inset-x-0 top-0 h-12 z-20 pointer-events-none"
+          />
+          <SearchBox />
+          <div className="h-full relative">
+            <TabPages searches={searches} />
+            <Outlet />
+          </div>
+          <SongPanel />
+        </main>
+        <NeedsAttentionDrawer />
+        <Palette />
+      </div>
+    </TabSearchesProvider>
   )
 }
+
+/** Tab routes render nothing themselves; TabPages keeps their pages mounted. */
+const TabRoute = () => null
 
 const pick = <T extends object>(
   search: Record<string, unknown>,
@@ -79,15 +93,15 @@ const artistsRoute = createRoute({
   path: '/artists',
   validateSearch: (search: Record<string, unknown>): ArtistsSearch =>
     pick<ArtistsSearch>(search, ['filter', 'sort']),
-  component: ArtistsPage,
+  component: TabRoute,
 })
 
 const albumsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/albums',
   validateSearch: (search: Record<string, unknown>): AlbumsSearch =>
-    pick<AlbumsSearch>(search, ['sort', 'favorites']),
-  component: AlbumsPage,
+    pick<AlbumsSearch>(search, ['sort', 'fullDiscography']),
+  component: TabRoute,
 })
 
 const songsRoute = createRoute({
@@ -99,12 +113,12 @@ const songsRoute = createRoute({
       'remote',
       'state',
       'lang',
-      'favorite',
+      'fullDiscography',
       'sort',
       'desc',
       'song',
     ]),
-  component: SongsPage,
+  component: TabRoute,
 })
 
 const artistRoute = createRoute({

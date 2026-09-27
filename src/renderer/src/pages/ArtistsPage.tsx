@@ -1,4 +1,4 @@
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { useRef } from 'react'
 import { SetupEmptyState, useSetupNeeded } from '../components/EmptyState'
 import { ArtistGrid } from '../components/Grids'
@@ -6,15 +6,16 @@ import { Page, PageTitle } from '../components/layout/Page'
 import { AddFilterButton, Chip, SortMenu } from '../components/ui/Chip'
 import { invoke, useLibraryData } from '../lib/api'
 import { plural } from '../lib/format'
+import { useTabSearch } from '../lib/tabs'
 import { useScrollMargin } from '../lib/use-scroll-margin'
 
 export interface ArtistsSearch {
-  filter?: 'favorites' | 'suggested'
+  filter?: 'fullDiscography' | 'suggested'
   sort?: 'songs' | 'name'
 }
 
 export function ArtistsPage() {
-  const search = useSearch({ strict: false }) as ArtistsSearch
+  const search = useTabSearch<ArtistsSearch>()
   const navigate = useNavigate()
   const setup = useSetupNeeded()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -22,7 +23,7 @@ export function ArtistsPage() {
   const { data, reload } = useLibraryData(
     () =>
       invoke('library:artists', {
-        favorites: search.filter === 'favorites',
+        fullDiscography: search.filter === 'fullDiscography',
         suggested: search.filter === 'suggested',
         sort: search.sort ?? 'songs',
       }),
@@ -45,9 +46,9 @@ export function ArtistsPage() {
           meta={data ? plural(artists.length, 'artist') : undefined}
         />
         <div className="flex items-center gap-2 flex-wrap">
-          {search.filter === 'favorites' && (
+          {search.filter === 'fullDiscography' && (
             <Chip
-              label="Favorites"
+              label="Full Discography"
               onRemove={() => set({ filter: undefined })}
             />
           )}
@@ -63,9 +64,9 @@ export function ArtistsPage() {
                 title: 'Show',
                 options: [
                   {
-                    label: 'Favorites',
-                    onSelect: () => set({ filter: 'favorites' }),
-                    active: search.filter === 'favorites',
+                    label: 'Full Discography',
+                    onSelect: () => set({ filter: 'fullDiscography' }),
+                    active: search.filter === 'fullDiscography',
                   },
                   {
                     label: 'Suggested from your old library',
@@ -101,8 +102,8 @@ export function ArtistsPage() {
         </div>
         {data && artists.length === 0 && (
           <div className="py-16 text-center text-[13px] text-zinc-500">
-            {search.filter === 'favorites'
-              ? 'No Favorite Artists yet. Hover an artist and click the star.'
+            {search.filter === 'fullDiscography'
+              ? 'No Full Discography artists yet. Hover an artist and click the download icon.'
               : search.filter === 'suggested'
                 ? 'No suggestions.'
                 : 'No artists yet. New likes appear here as they download.'}

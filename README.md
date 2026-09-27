@@ -1,7 +1,7 @@
 # Liked Music
 
 A macOS app that keeps a folder of tagged `.m4a` files in sync with your YouTube
-Music likes and your Favorite Artists' catalogs, and can mirror that folder to a
+Music likes and the artists whose Full Discography you download, and can mirror that folder to a
 server with rclone. Playback belongs to other apps (Navidrome, Plex, Apple
 Music); this app builds the library.
 

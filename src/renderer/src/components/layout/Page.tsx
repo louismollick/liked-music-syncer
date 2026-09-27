@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { cx } from '../../lib/format'
+import { useTabLinkSearch } from '../../lib/tabs'
 
 export interface Crumb {
   label: string
@@ -10,6 +11,7 @@ export interface Crumb {
 
 /** Ancestors only; the page itself carries its title. */
 export function Crumbs({ items }: { items: Crumb[] }) {
+  const linkSearch = useTabLinkSearch()
   if (items.length === 0) return null
   return (
     <div className="text-[12px] text-zinc-400 mb-2">
@@ -18,7 +20,7 @@ export function Crumbs({ items }: { items: Crumb[] }) {
           <Link
             to={item.to}
             params={item.params as never}
-            search={item.search as never}
+            search={(item.search ?? linkSearch(item.to)) as never}
             className="hover:text-white"
           >
             {item.label}

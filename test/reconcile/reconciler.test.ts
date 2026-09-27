@@ -102,7 +102,7 @@ describe('reconciler', () => {
         id: 'channel:artist-1',
         name: credit.name,
         channelId: credit.channelId,
-        favorite: true,
+        fullDiscography: true,
       })
       .run()
     await liked(h, likedSong)
@@ -162,7 +162,7 @@ describe('reconciler', () => {
     expect(h.contributions().filter((row) => row.active)).toHaveLength(24)
   })
 
-  it('keeps the previous Favorite Artist catalog after a suspicious partial response', async () => {
+  it('keeps the previous full-discography catalog after a suspicious partial response', async () => {
     const h = harness()
     const artistId = 'channel:artist-1'
     const full = release(
@@ -185,7 +185,7 @@ describe('reconciler', () => {
         id: artistId,
         name: credit.name,
         channelId: credit.channelId,
-        favorite: true,
+        fullDiscography: true,
       })
       .run()
     const check = () =>
@@ -274,9 +274,7 @@ describe('reconciler', () => {
     })
     await liked(h, song('broken'))
     const id = h.rows()[0].id
-    expect(h.reconciler.activity().recent).toMatchObject([
-      { id, failed: true },
-    ])
+    expect(h.reconciler.activity().recent).toMatchObject([{ id, failed: true }])
     h.reconciler.retry(id)
     expect(h.reconciler.activity().recent).toEqual([])
     h.matcher.error = null
@@ -512,10 +510,10 @@ describe('reconciler', () => {
         id: 'channel:favorite',
         name: 'Favorite',
         channelId: 'favorite',
-        favorite: true,
+        fullDiscography: true,
       })
       .run()
-    // A failing Favorite Artist catalog must not freeze wanted states: once the
+    // A failing full-discography catalog must not freeze wanted states: once the
     // liked-songs source has completed a check, unclaimed tracks are unwanted.
     h.catalog.likes = []
     h.catalog.refs = []
@@ -540,7 +538,7 @@ describe('reconciler', () => {
       .run()
     updateWantedStates(h.db, {
       accountId: h.account,
-      favoriteArtistIds: ['channel:favorite'],
+      fullDiscographyArtistIds: ['channel:favorite'],
     })
     expect(
       h.db.select().from(tracks).where(eq(tracks.id, 'adopted')).get()?.state

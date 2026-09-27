@@ -66,6 +66,7 @@ export function AlbumPage() {
             src={album.coverUrl}
             label={album.title}
             className="w-48 h-48 shadow-2xl shrink-0"
+            hover="self"
           />
           <div className="pb-1 min-w-0 pr-48">
             <Crumbs items={crumbs} />

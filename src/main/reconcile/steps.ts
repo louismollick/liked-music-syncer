@@ -41,6 +41,7 @@ import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
 import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
 import {
+  CATALOG_SOURCE_ORIGIN,
   fieldDiff,
   readTags,
   sha256,
@@ -134,7 +135,7 @@ export function sourceOriginFor(
     .all()
   if (rows.length === 0) return undefined
   return rows.every((row) => row.kind === 'catalog')
-    ? 'favorite_artist_release'
+    ? CATALOG_SOURCE_ORIGIN
     : null
 }
 

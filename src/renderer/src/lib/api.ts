@@ -5,6 +5,7 @@ import type {
   InvokeChannel,
   InvokeMap,
 } from '../../../shared/ipc'
+import { useTabActive } from './tabs'
 
 export function invoke<C extends InvokeChannel>(
   channel: C,
@@ -27,7 +28,8 @@ export function useEvent<C extends EventChannel>(
 
 /**
  * Loads data with `load`, re-running when deps change or when the library
- * changes (debounced), keeping the previous data while reloading.
+ * changes (debounced), keeping the previous data while reloading. A hidden tab
+ * skips library-change reloads and reloads when shown again.
  */
 export function useLibraryData<T>(
   load: () => Promise<T>,
@@ -45,10 +47,25 @@ export function useLibraryData<T>(
   }, [])
   // biome-ignore lint/correctness/useExhaustiveDependencies: deps are provided by the caller
   useEffect(reload, deps)
+  const active = useTabActive()
+  const wasActive = useRef(active)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEvent('library:changed', () => {
+    if (!active) return
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(reload, 400)
   })
+  // Refresh a tab each time it is shown, as a fresh mount would, while it keeps
+  // showing what it had.
+  useEffect(() => {
+    if (active && !wasActive.current) reload()
+    wasActive.current = active
+  }, [active, reload])
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current)
+    },
+    []
+  )
   return { data, reload }
 }

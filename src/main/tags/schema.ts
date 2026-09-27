@@ -62,6 +62,13 @@ export interface ReadResult {
   bitrateKbps: number | null
 }
 
+/**
+ * LMS_SOURCE_ORIGIN value for a track that only a Full Discography catalog
+ * wants. Files written before the rename from Favorite Artist carry this value,
+ * so it stays as it is.
+ */
+export const CATALOG_SOURCE_ORIGIN = 'favorite_artist_release'
+
 const LMS_KEYS: Record<Exclude<keyof LmsFields, 'artistCredits'>, string> = {
   schemaVersion: 'LMS_TAG_SCHEMA_VERSION',
   sourceVideoId: 'LMS_YOUTUBE_MUSIC_TRACK_ID',

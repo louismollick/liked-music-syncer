@@ -138,9 +138,11 @@ export const artists = sqliteTable('artists', {
   channelId: text('channel_id'),
   imagePath: text('image_path'),
   imageCheckedAt: text('image_checked_at'),
-  favorite: integer('favorite', { mode: 'boolean' }).notNull().default(false),
+  fullDiscography: integer('full_discography', { mode: 'boolean' })
+    .notNull()
+    .default(false),
   suggested: integer('suggested', { mode: 'boolean' }).notNull().default(false),
-  favoritedAt: text('favorited_at'),
+  fullDiscographyAt: text('full_discography_at'),
   catalogCheckedAt: text('catalog_checked_at'),
 })
 
