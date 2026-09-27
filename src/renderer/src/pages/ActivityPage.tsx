@@ -1,12 +1,14 @@
 import { useNavigate } from '@tanstack/react-router'
+import { Check, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import type { ActivityTrackView } from '../../../shared/ipc'
 import { PageTitle } from '../components/layout/Page'
 import { Artwork } from '../components/ui/Artwork'
 import { Button } from '../components/ui/Button'
+import { Tooltip } from '../components/ui/Tooltip'
 import { isRowVisible, shouldRecenter } from '../lib/activity-scroll'
 import { useActivity, useAppState } from '../lib/app-state'
-import { dayLabel, plural } from '../lib/format'
+import { dayLabel, formatTime, plural } from '../lib/format'
 
 const STAGE_LABEL = {
   matching: 'Matching',
@@ -152,12 +154,30 @@ export function ActivityPage() {
                   type="button"
                   key={track.id}
                   onClick={() => openDone(track.id)}
-                  className="w-full h-14 flex flex-col justify-center px-4 rounded-md text-left text-zinc-400 hover:text-white hover:bg-white/[.04]"
+                  className="w-full h-14 flex items-center gap-3 px-4 rounded-md text-left text-zinc-400 hover:text-white hover:bg-white/[.04]"
                 >
-                  <div className="truncate text-[15px]">{track.title}</div>
-                  <div className="truncate text-[12px] text-zinc-600">
-                    {track.artist}
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate text-[15px]">{track.title}</div>
+                    <div className="truncate text-[12px] text-zinc-600">
+                      {track.artist}
+                    </div>
                   </div>
+                  <span className="shrink-0 text-[12px] text-zinc-600 tabular-nums">
+                    {formatTime(track.completedAt)}
+                  </span>
+                  <Tooltip label={track.failed ? 'Needs attention' : 'Done'}>
+                    {track.failed ? (
+                      <TriangleAlert
+                        className="w-4 h-4 shrink-0 text-amber-400"
+                        strokeWidth={2}
+                      />
+                    ) : (
+                      <Check
+                        className="w-4 h-4 shrink-0 text-emerald-400"
+                        strokeWidth={2.2}
+                      />
+                    )}
+                  </Tooltip>
                 </button>
               ))}
             </div>

@@ -249,6 +249,43 @@ describe('reconciler', () => {
     })
   })
 
+  it('retries every Needs Attention track at once', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    h.matcher.error = Object.assign(new Error('unavailable'), {
+      kind: 'permanent',
+    })
+    await liked(h, song('first'), song('second'))
+    expect(h.rows().map((row) => row.state)).toEqual([
+      'needs_attention',
+      'needs_attention',
+    ])
+    h.matcher.error = null
+    h.reconciler.retryAll()
+    await h.idle()
+    expect(h.rows().map((row) => row.state)).toEqual(['done', 'done'])
+  })
+
+  it('lists failed tracks among recent activity until they are retried', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    h.matcher.error = Object.assign(new Error('unavailable'), {
+      kind: 'permanent',
+    })
+    await liked(h, song('broken'))
+    const id = h.rows()[0].id
+    expect(h.reconciler.activity().recent).toMatchObject([
+      { id, failed: true },
+    ])
+    h.reconciler.retry(id)
+    expect(h.reconciler.activity().recent).toEqual([])
+    h.matcher.error = null
+    await h.idle()
+    expect(h.reconciler.activity().recent).toMatchObject([
+      { id, failed: false },
+    ])
+  })
+
   it('sends permanent errors straight to Needs Attention', async () => {
     const h = harness()
     h.settings.remoteEnabled = false

@@ -45,6 +45,23 @@ function StatusSection() {
   const upNext = activity?.upNextCount ?? 0
   const signedIn = session?.state === 'signed_in'
 
+  const remaining = upNext + (current ? 1 : 0)
+  const checked = activity?.lastCheckedAt ?? null
+  const title = !signedIn
+    ? 'Not signed in'
+    : activity?.checking
+      ? 'Checking likes…'
+      : working
+        ? remaining > 0
+          ? `Syncing ${plural(remaining, 'song')}`
+          : 'Syncing'
+        : 'Up to date'
+  const detail = !signedIn
+    ? 'Sign in from Settings'
+    : !checked
+      ? 'Not checked yet'
+      : `${activity?.checking ? 'Last checked' : 'Checked'} ${timeAgo(checked, now)}`
+
   const check = () => {
     setSpinning(true)
     void invoke('activity:check')
@@ -100,24 +117,10 @@ function StatusSection() {
                       : 'bg-emerald-400'
                 )}
               />
-              <span className="truncate">
-                {!signedIn
-                  ? 'Not signed in'
-                  : activity?.checking
-                    ? 'Checking liked songs'
-                    : working
-                      ? 'Working'
-                      : 'Up to date'}
-              </span>
+              <span className="truncate tabular-nums">{title}</span>
             </div>
-            {signedIn && working && !activity?.checking && upNext > 0 && (
-              <div className="text-[11px] text-zinc-400 mt-1 tabular-nums">
-                {plural(upNext, 'song')} up next
-              </div>
-            )}
-            <div className="text-[11px] text-zinc-500 mt-1">
-              Liked songs checked{' '}
-              {timeAgo(activity?.lastCheckedAt ?? null, now)}
+            <div className="text-[11px] text-zinc-500 mt-1 truncate">
+              {detail}
             </div>
           </div>
           <button

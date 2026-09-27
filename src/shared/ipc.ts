@@ -41,7 +41,10 @@ export interface ActivityTrackView {
   stage: ActivityStage | null
   /** Weighted progress across the whole pipeline, 0..1. */
   progress: number
+  /** When the track last finished work, successfully or not. */
   completedAt: string | null
+  /** The last run gave up; the track is in Needs Attention. */
+  failed: boolean
 }
 
 export interface AttentionItemView {
@@ -247,6 +250,7 @@ export interface InvokeMap {
   'activity:check': [void, void]
   'activity:refreshCatalogs': [void, void]
   'activity:retry': [string, void]
+  'activity:retryAll': [void, void]
   'activity:rewrite': [string, void]
   'activity:stopManaging': [string, void]
   'library:counts': [void, LibraryCounts]

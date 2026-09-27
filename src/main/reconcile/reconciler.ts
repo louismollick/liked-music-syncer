@@ -425,6 +425,26 @@ export class Reconciler {
     this.markDirty()
   }
 
+  /** Retry every track that needs attention, and re-check failed sources. */
+  retryAll(): void {
+    const ids = this.db
+      .update(tracks)
+      .set({
+        state: 'pending',
+        attempts: 0,
+        nextAttemptAt: null,
+        lastError: null,
+        lastErrorKind: null,
+      })
+      .where(eq(tracks.state, 'needs_attention'))
+      .returning({ id: tracks.id })
+      .all()
+      .map((row) => row.id)
+    if (ids.length) this.deps.onLibraryChanged(ids.length > 500 ? null : ids)
+    this.markDirty()
+    if (this.sourceErrors.size) void this.check()
+  }
+
   /** Outside Edit: restore the app's version of the file. */
   async rewrite(trackId: string): Promise<void> {
     const file = this.db
@@ -672,7 +692,7 @@ export class Reconciler {
       .set({ state: 'working' })
       .where(eq(tracks.id, trackId))
       .run()
-    let acquired = false
+    let worked = false
     for (let guard = 0; guard < 8 && this.running; guard += 1) {
       const track = this.db
         .select()
@@ -703,7 +723,7 @@ export class Reconciler {
             attempts: 0,
             nextAttemptAt: null,
             lastError: null,
-            ...(acquired ? { completedAt: this.deps.now().toISOString() } : {}),
+            ...(worked ? { completedAt: this.deps.now().toISOString() } : {}),
           })
           .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
           .run()
@@ -739,10 +759,10 @@ export class Reconciler {
           }
         } else if (step === 'acquire') {
           await runAcquire(this.deps, track, run)
-          acquired = true
         } else if (step === 'retag') await runRetag(this.deps, track, run)
         else if (step === 'move') await runMove(this.deps, track, run)
         else if (step === 'upload') await runUpload(this.deps, track, run)
+        worked = true
       } catch (error) {
         if (!this.running || signal.aborted) {
           this.db
@@ -807,6 +827,8 @@ export class Reconciler {
         lastError: message,
         lastErrorKind: kind,
         lastErrorStep: step,
+        // Giving up ends this run too; it shows among recent activity.
+        ...(giveUp ? { completedAt: this.deps.now().toISOString() } : {}),
       })
       .where(eq(tracks.id, trackId))
       .run()
@@ -840,6 +862,7 @@ export class Reconciler {
       stage: null,
       progress: 0,
       completedAt: row.completedAt,
+      failed: row.state === 'needs_attention',
       ...extra,
     })
     let current: ActivityTrackView | null = null
@@ -885,6 +908,8 @@ export class Reconciler {
       .where(
         and(
           isNotNull(tracks.completedAt),
+          // Tracks queued again belong to up-next, not to the finished list.
+          inArray(tracks.state, ['done', 'needs_attention']),
           gte(
             tracks.completedAt,
             new Date(now.getTime() - RECENT_WINDOW_MS).toISOString()

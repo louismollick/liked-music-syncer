@@ -9,6 +9,16 @@ export function formatDate(iso: string | null): string {
   return dateFormat.format(new Date(iso))
 }
 
+const timeFormat = new Intl.DateTimeFormat('en-US', {
+  hour: 'numeric',
+  minute: '2-digit',
+})
+
+export function formatTime(iso: string | null): string {
+  if (!iso) return ''
+  return timeFormat.format(new Date(iso))
+}
+
 export function formatDuration(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds)) return ''
   const total = Math.round(seconds)

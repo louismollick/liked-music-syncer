@@ -233,6 +233,7 @@ async function main() {
       void reconciler.check({ catalogs: 'all' })
     },
     'activity:retry': (id) => reconciler.retry(id),
+    'activity:retryAll': () => reconciler.retryAll(),
     'activity:rewrite': (id) => reconciler.rewrite(id),
     'activity:stopManaging': (id) => reconciler.stopManaging(id),
     'library:counts': () => queries.counts(),

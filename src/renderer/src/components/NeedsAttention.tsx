@@ -9,14 +9,30 @@ export function NeedsAttentionDrawer() {
   const { attentionOpen, setAttentionOpen, openSong } = useAppState()
   const activity = useActivity()
   const items = activity?.needsAttention ?? []
+  const retryable = items.some(
+    (item) => item.kind === 'track' || item.kind === 'source'
+  )
   return (
     <Drawer
       open={attentionOpen}
       onClose={() => setAttentionOpen(false)}
       title={
-        <span>
-          Needs attention{' '}
-          <span className="ml-1 text-zinc-500 font-normal">{items.length}</span>
+        <span className="flex items-center gap-2">
+          <span className="flex-1 min-w-0 truncate">
+            Needs attention{' '}
+            <span className="ml-1 text-zinc-500 font-normal">
+              {items.length}
+            </span>
+          </span>
+          {retryable && (
+            <Button
+              size="sm"
+              className="no-drag mr-1"
+              onClick={() => void invoke('activity:retryAll')}
+            >
+              Retry all
+            </Button>
+          )}
         </span>
       }
     >

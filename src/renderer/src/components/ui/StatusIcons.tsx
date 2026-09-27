@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import type { SongRowView } from '../../../../shared/ipc'
 import { cx } from '../../lib/format'
+import { Tooltip } from './Tooltip'
 
 const LYRICS_LABEL = {
   synced: 'Synced lyrics',
@@ -38,7 +39,7 @@ export function StatusIcons({
   const remote = song.remoteState
   return (
     <span className="inline-flex items-center gap-2">
-      <span title={LYRICS_LABEL[song.lyricsStatus]}>
+      <Tooltip label={LYRICS_LABEL[song.lyricsStatus]}>
         <LyricsIcon
           className={cx(
             'w-[15px] h-[15px]',
@@ -50,11 +51,11 @@ export function StatusIcons({
           )}
           strokeWidth={1.8}
         />
-      </span>
+      </Tooltip>
       {/* Keep the slot so icons line up across rows with and without a remote state. */}
       {remote === 'off' && <span className="w-[15px]" aria-hidden />}
       {remote !== 'off' && (
-        <span title={REMOTE_LABEL[remote]}>
+        <Tooltip label={REMOTE_LABEL[remote]}>
           {remote === 'failed' ? (
             <CloudOff
               className="w-[15px] h-[15px] text-orange-300"
@@ -72,15 +73,15 @@ export function StatusIcons({
               strokeWidth={1.8}
             />
           )}
-        </span>
+        </Tooltip>
       )}
       {song.state === 'needs_attention' && (
-        <span title="Needs attention">
+        <Tooltip label="Needs attention">
           <CircleAlert
             className="w-[15px] h-[15px] text-amber-300"
             strokeWidth={1.8}
           />
-        </span>
+        </Tooltip>
       )}
     </span>
   )
