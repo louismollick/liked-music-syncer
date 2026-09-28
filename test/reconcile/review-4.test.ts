@@ -1,9 +1,18 @@
-import { cpSync, existsSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
-import { adoptFiles } from '../../src/main/inventory/inventory'
-import { artists, tracks, unmanagedFiles } from '../../src/main/library/schema'
+import {
+  adoptFiles,
+  recoverOperations,
+} from '../../src/main/inventory/inventory'
+import {
+  artists,
+  files,
+  operations,
+  tracks,
+  unmanagedFiles,
+} from '../../src/main/library/schema'
 import {
   checkLikedSongs,
   claimAdoptedFiles,
@@ -53,7 +62,7 @@ function released(h: Harness, relative: string) {
 }
 
 describe('fourth review fixes', () => {
-  it('waits for a pending delete without using up the track’s retries', async () => {
+  it('waits for a pending delete without going to Needs Attention', async () => {
     const h = harness()
     const first = song('lv', 'Song')
     h.matcher.matches.set('lv', releaseMatch(first, album, 'cv'))
@@ -72,7 +81,7 @@ describe('fourth review fixes', () => {
     await h.start()
     const waiting = h.rows().find((row) => row.id !== old.id)!
     expect(waiting.state).toBe('pending')
-    expect(waiting.attempts).toBe(0)
+    expect(waiting.lastError).toMatch(/earlier delete/)
     expect(waiting.nextAttemptAt).not.toBeNull()
   })
 
@@ -189,5 +198,93 @@ describe('fourth review fixes', () => {
       h.library
     )
     expect(claimAdoptedFiles(h.db, () => h.time)).toBe(0)
+  })
+
+  it('keeps a file placed for a stopped-managing track Unmanaged after a crash', async () => {
+    const h = harness()
+    h.catalog.likes = [song('crash', 'Crash')]
+    await h.start()
+    await h.stop()
+    const track = h.rows()[0]
+    const file = h.file(track.id)!
+    // As if the app quit after placing the file but before recording it.
+    h.db.delete(files).where(eq(files.trackId, track.id)).run()
+    h.db
+      .insert(operations)
+      .values({
+        id: 'op',
+        trackId: track.id,
+        step: 'acquire',
+        artifact: 'audio',
+        kind: 'place',
+        toPath: file.relativePath,
+        expectedSha256: file.contentSha256,
+        phase: 'started',
+        startedAt: h.time.toISOString(),
+      })
+      .run()
+    h.db
+      .update(tracks)
+      .set({ state: 'released' })
+      .where(eq(tracks.id, track.id))
+      .run()
+    await recoverOperations(
+      {
+        db: h.db,
+        coversDir: path.join(h.userData, 'covers'),
+        now: () => h.time,
+      },
+      h.library
+    )
+    expect(h.file(track.id)).toBeUndefined()
+    expect(released(h, file.relativePath)).toBe(true)
+  })
+
+  it('never lets a like claim a restored file the user stopped managing', async () => {
+    const source = harness()
+    source.catalog.likes = [song('loose', 'Loose')]
+    await source.start()
+    await source.stop()
+    const h = harness()
+    cpSync(source.library, h.library, { recursive: true })
+    const deps = {
+      db: h.db,
+      coversDir: path.join(h.userData, 'covers'),
+      now: () => h.time,
+    }
+    await adoptFiles(deps, h.library)
+    const restored = h.rows()[0]
+    h.reconciler.stopManaging(restored.id)
+    h.catalog.likes = [song('loose', 'Loose')]
+    await likeChecked(h, 'loose')
+    expect(claimAdoptedFiles(h.db, () => h.time)).toBe(0)
+    expect(
+      h.contributions().find((row) => row.sourceVideoId === 'loose')?.trackId
+    ).not.toBe(restored.id)
+    expect(h.rows().find((row) => row.id === restored.id)?.state).toBe(
+      'released'
+    )
+  })
+
+  it('takes a moved managed file back instead of downloading it again', async () => {
+    const h = harness()
+    h.catalog.likes = [song('moved', 'Moved')]
+    await h.start()
+    await h.stop()
+    const track = h.rows()[0]
+    const from = h.file(track.id)!.relativePath
+    const to = 'Elsewhere/Moved.m4a'
+    mkdirSync(path.join(h.library, 'Elsewhere'), { recursive: true })
+    renameSync(path.join(h.library, from), path.join(h.library, to))
+    await adoptFiles(
+      {
+        db: h.db,
+        coversDir: path.join(h.userData, 'covers'),
+        now: () => h.time,
+      },
+      h.library
+    )
+    expect(h.file(track.id)?.relativePath).toBe(to)
+    expect(released(h, to)).toBeUndefined()
   })
 })

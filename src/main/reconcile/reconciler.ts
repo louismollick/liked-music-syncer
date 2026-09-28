@@ -72,6 +72,7 @@ const CHECK_INTERVAL_MS = 30 * 60_000
 const CATALOG_INTERVAL_MS = 24 * 60 * 60_000
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60_000
 const STOP_WAIT_MS = 5_000
+const MAX_WAIT_MS = 6 * 60 * 60_000
 const STAGE_WEIGHTS: Record<
   'matching' | 'downloading' | 'uploading',
   [number, number]
@@ -812,14 +813,23 @@ export class Reconciler {
   private fail(trackId: string, step: StepKind, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error)
     if (error instanceof RetryLaterError) {
-      // Not a failure: wait, without using up the track's retries.
+      // Not a failure, so never Needs Attention; but each wait doubles, up to
+      // a few hours, so a delete that never finishes can't cause a lookup a minute.
+      const waited =
+        this.db
+          .select({ attempts: tracks.attempts })
+          .from(tracks)
+          .where(eq(tracks.id, trackId))
+          .get()?.attempts ?? 0
       this.db
         .update(tracks)
         .set({
           state: 'pending',
           currentStep: null,
+          attempts: waited + 1,
           nextAttemptAt: new Date(
-            this.deps.now().getTime() + error.delayMs
+            this.deps.now().getTime() +
+              Math.min(error.delayMs * 2 ** waited, MAX_WAIT_MS)
           ).toISOString(),
           lastError: message,
           lastErrorStep: step,

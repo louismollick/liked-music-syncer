@@ -511,7 +511,14 @@ function unclaimedRestoredBySource(db: Db): Map<string, string> {
   for (const row of db
     .select({ id: tracks.id, match: tracks.match })
     .from(tracks)
-    .where(eq(tracks.adopted, true))
+    .where(
+      and(
+        eq(tracks.adopted, true),
+        // Not a track the user stopped managing, or is still deleting.
+        sql`${tracks.state} != 'released'`,
+        sql`NOT EXISTS (SELECT 1 FROM tombstones tb WHERE tb.track_id = ${tracks.id} AND tb.done_at IS NULL)`
+      )
+    )
     .all()) {
     try {
       const saved = JSON.parse(row.match ?? 'null') as {

@@ -269,6 +269,17 @@ export async function adoptFiles(
       match: JSON.stringify(match),
       updatedAt: at,
     }
+    // A tracked file that is gone from disk (moved by the user, say) does not
+    // hold the Release Track: this readable copy replaces its record.
+    const prior = deps.db
+      .select({ path: files.relativePath })
+      .from(files)
+      .innerJoin(tracks, eq(tracks.id, files.trackId))
+      .where(eq(tracks.identityKey, match.identityKey))
+      .get()
+    const priorGone = prior
+      ? !(await exists(path.join(root, prior.path)))
+      : false
     // Decided inside the transaction: a source check running meanwhile may
     // have created this Release Track since the file was read.
     const outcome = deps.db.transaction((tx): 'extra' | string => {
@@ -278,13 +289,23 @@ export async function adoptFiles(
         .from(tracks)
         .where(eq(tracks.identityKey, match.identityKey))
         .get()
-      const hasFile =
+      const recorded = existing
+        ? db
+            .select({ path: files.relativePath })
+            .from(files)
+            .where(eq(files.trackId, existing.id))
+            .get()
+        : undefined
+      const replacesGone =
         existing &&
-        db
-          .select({ id: files.trackId })
-          .from(files)
-          .where(eq(files.trackId, existing.id))
-          .get()
+        recorded &&
+        priorGone &&
+        recorded.path === prior?.path &&
+        existing.state !== 'released' &&
+        existing.state !== 'no_longer_wanted'
+      if (existing && replacesGone)
+        db.delete(files).where(eq(files.trackId, existing.id)).run()
+      const hasFile = recorded && !replacesGone
       if (
         existing &&
         (hasFile ||
@@ -503,7 +524,30 @@ export async function recoverOperations(
   for (const op of ops) {
     const target = path.join(root, op.toPath)
     const digest = (await exists(target)) ? await sha256File(target) : null
-    if (digest && digest === op.expectedSha256) {
+    const state = deps.db
+      .select({ state: tracks.state })
+      .from(tracks)
+      .where(eq(tracks.id, op.trackId))
+      .get()?.state
+    if (digest && digest === op.expectedSha256 && state === 'released') {
+      // Written after the user stopped managing the track: keep it, as Unmanaged.
+      const info = await stat(target)
+      deps.db
+        .insert(unmanagedFiles)
+        .values({
+          relativePath: await onDiskRelative(root, op.toPath),
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+          seenAt: deps.now().toISOString(),
+          released: true,
+        })
+        .onConflictDoUpdate({
+          target: unmanagedFiles.relativePath,
+          set: { released: true },
+        })
+        .run()
+      recovered += 1
+    } else if (digest && digest === op.expectedSha256) {
       if (op.artifact === 'audio') {
         const toPath = await onDiskRelative(root, op.toPath)
         const info = await stat(target)
