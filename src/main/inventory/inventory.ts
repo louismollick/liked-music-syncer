@@ -318,6 +318,8 @@ export async function adoptFiles(
         db.update(tracks)
           .set({
             ...values,
+            // A catalog created it; the like the file records may still claim it.
+            adopted: true,
             state: 'pending',
             attempts: 0,
             nextAttemptAt: null,

@@ -1796,7 +1796,8 @@ async function replacementState(
   const uploaded =
     upload &&
     upload.localSha256 === file.contentSha256 &&
-    upload.remotePath === file.relativePath
+    upload.remotePath === file.relativePath &&
+    (upload.lrcHash ?? null) === (file.lrcSha256 ?? null)
   return { local: true, uploadedTo: uploaded ? upload.remoteTarget : null }
 }
 

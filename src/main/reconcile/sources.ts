@@ -397,11 +397,24 @@ export async function checkArtistCatalog(options: {
           .where(eq(contributions.sourceKey, key))
           .get()
         if (existing) {
+          // While inactive, its track may have been re-keyed to another
+          // Release Track (e.g. by a like's Refresh): link it afresh.
+          const linked = existing.trackId
+            ? tx
+                .select({ identityKey: tracks.identityKey })
+                .from(tracks)
+                .where(eq(tracks.id, existing.trackId))
+                .get()
+            : undefined
+          const stillItsTrack =
+            linked?.identityKey ===
+            releaseIdentityKey(raw.release.browseId, raw.track.videoId)
           tx.update(contributions)
             .set({
               lastSeenAt: committedAt,
               active: true,
               raw: JSON.stringify(raw),
+              ...(stillItsTrack ? {} : { trackId: null }),
             })
             .where(eq(contributions.id, existing.id))
             .run()
@@ -489,7 +502,7 @@ export function deactivateArtistCatalog(db: Db, artistId: string): void {
 }
 
 /**
- * Restored files not yet claimed by any source, by the liked video each
+ * Restored files not yet claimed by a like, by the liked video each
  * records. A video recorded by several files maps to none of them: the like is
  * matched normally and merges by Release Track identity instead.
  */
@@ -547,16 +560,12 @@ export function linkContributions(
       if (raw.kind === 'catalog') {
         const key = releaseIdentityKey(raw.release.browseId, raw.track.videoId)
         const existing = tx
-          .select({ id: tracks.id, adopted: tracks.adopted })
+          .select({ id: tracks.id })
           .from(tracks)
           .where(eq(tracks.identityKey, key))
           .get()
         if (existing) {
-          if (existing.adopted)
-            tx.update(tracks)
-              .set({ adopted: false, updatedAt: at })
-              .where(eq(tracks.id, existing.id))
-              .run()
+          // A restored file stays claimable by the like it records.
           tx.update(contributions)
             .set({ trackId: existing.id })
             .where(eq(contributions.id, row.id))

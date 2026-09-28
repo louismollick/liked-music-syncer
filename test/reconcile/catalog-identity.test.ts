@@ -155,6 +155,30 @@ describe('a catalog keeps its exact Release Track', () => {
     expect(h.downloads).toEqual(['cv', 'sv'])
   })
 
+  it('links a reactivated catalog contribution to its own Release Track again', async () => {
+    const h = harness()
+    const { album, single } = catalogs(h)
+    fullDiscography(h, album)
+    const like = song('lv', 'Song')
+    h.matcher.matches.set('lv', releaseMatch(like, album, 'cv'))
+    h.catalog.likes = [like]
+    await h.start()
+    const shared = h.row('album:cv')!
+    h.reconciler.setFullDiscography(ARTIST, false)
+    await h.idle()
+    h.matcher.matches.set('lv', releaseMatch(like, single, 'sv'))
+    h.reconciler.refresh({ kind: 'track', id: shared.id })
+    await h.idle()
+    expect(h.rows().find((row) => row.id === shared.id)?.identityKey).toBe(
+      'single:sv'
+    )
+    h.reconciler.setFullDiscography(ARTIST, true)
+    await h.idle()
+    expectCatalogInvariant(h)
+    expect(h.row('album:cv')).toBeDefined()
+    expect(h.downloads).toEqual(['cv', 'sv', 'cv'])
+  })
+
   it('merges a new like into the catalog track it resolves to', async () => {
     const h = harness()
     const { album } = catalogs(h)

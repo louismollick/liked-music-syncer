@@ -182,9 +182,7 @@ describe('restoring the Library from files this app wrote', () => {
     expect(h.matcher.calls).toBe(0)
     expect(hashes(h)).toEqual(before)
     expect(h.rows()).toHaveLength(3)
-    expect(h.rows().every((row) => !row.adopted && row.state === 'done')).toBe(
-      true
-    )
+    expect(h.rows().every((row) => row.state === 'done')).toBe(true)
   })
 
   it('gives restored files to catalog tracks created before adoption', async () => {
@@ -208,8 +206,8 @@ describe('restoring the Library from files this app wrote', () => {
     sources(h)
     await h.start()
     expect(h.downloads).toEqual([])
-    // Only the like is looked up; it merges into the restored album track.
-    expect(h.matcher.calls).toBe(1)
+    // The like claims the file it recorded, even though the catalog came first.
+    expect(h.matcher.calls).toBe(0)
     expect(h.rows()).toHaveLength(3)
   })
 
