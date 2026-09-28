@@ -50,12 +50,14 @@ import {
 } from './sources'
 import {
   auditRemote,
+  cancelMergeCleanup,
   coversDir,
   deleteTracks,
   nextStep,
   OutsideEditError,
   processTombstones,
   REWRITE_AUDIO,
+  RetryLaterError,
   runAcquire,
   runMatch,
   runMove,
@@ -70,6 +72,7 @@ const CHECK_INTERVAL_MS = 30 * 60_000
 const CATALOG_INTERVAL_MS = 24 * 60 * 60_000
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60_000
 const STOP_WAIT_MS = 5_000
+const MAX_WAIT_MS = 6 * 60 * 60_000
 const STAGE_WEIGHTS: Record<
   'matching' | 'downloading' | 'uploading',
   [number, number]
@@ -501,6 +504,9 @@ export class Reconciler {
    */
   stopManaging(trackId: string): void {
     const at = this.deps.now().toISOString()
+    // Abort its running step; a file it still manages to place is kept as Unmanaged.
+    if (this.current?.trackId === trackId)
+      this.controller?.abort(new Error('stopped managing'))
     this.db.transaction((tx) => {
       const db = tx as unknown as Db
       const file = db
@@ -530,6 +536,8 @@ export class Reconciler {
       }
       db.delete(files).where(eq(files.trackId, trackId)).run()
       db.delete(uploads).where(eq(uploads.trackId, trackId)).run()
+      // Copies a merge meant to delete after this track's replacement stay too.
+      cancelMergeCleanup(db, trackId, 'both')
       db.update(tracks)
         .set({ state: 'released', currentStep: null, updatedAt: at })
         .where(eq(tracks.id, trackId))
@@ -700,7 +708,12 @@ export class Reconciler {
         .from(tracks)
         .where(eq(tracks.id, trackId))
         .get()
-      if (!track || track.state === 'no_longer_wanted' || signal.aborted) {
+      if (
+        !track ||
+        track.state === 'no_longer_wanted' ||
+        track.state === 'released' ||
+        signal.aborted
+      ) {
         this.current = null
         return
       }
@@ -764,6 +777,13 @@ export class Reconciler {
         else if (step === 'move') await runMove(this.deps, track, run)
         else if (step === 'upload') await runUpload(this.deps, track, run)
         worked = true
+        // Retries count consecutive failures; a step that worked (after a
+        // wait, say) starts the count again.
+        this.db
+          .update(tracks)
+          .set({ attempts: 0 })
+          .where(and(eq(tracks.id, trackId), sql`${tracks.attempts} > 0`))
+          .run()
       } catch (error) {
         if (!this.running || signal.aborted) {
           this.db
@@ -799,6 +819,34 @@ export class Reconciler {
 
   private fail(trackId: string, step: StepKind, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof RetryLaterError) {
+      // Not a failure, so never Needs Attention; but each wait doubles, up to
+      // a few hours, so a delete that never finishes can't cause a lookup a minute.
+      const waited =
+        this.db
+          .select({ attempts: tracks.attempts })
+          .from(tracks)
+          .where(eq(tracks.id, trackId))
+          .get()?.attempts ?? 0
+      this.db
+        .update(tracks)
+        .set({
+          state: 'pending',
+          currentStep: null,
+          attempts: waited + 1,
+          nextAttemptAt: new Date(
+            this.deps.now().getTime() +
+              Math.min(error.delayMs * 2 ** waited, MAX_WAIT_MS)
+          ).toISOString(),
+          lastError: message,
+          lastErrorStep: step,
+        })
+        .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
+        .run()
+      this.current = null
+      this.emitSoon()
+      return
+    }
     const kind = errorKindOf(error)
     const track = this.db
       .select()

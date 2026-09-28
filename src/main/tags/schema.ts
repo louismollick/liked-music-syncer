@@ -30,6 +30,12 @@ export interface LmsFields {
   releaseTitle: string | null
   releaseKind: string | null
   artistCredits: ArtistCredit[]
+  /**
+   * True when this app wrote the file from a Match it looked up itself. Only
+   * such files are restored when the database is rebuilt; a schema version
+   * alone proves nothing, since retagging stamps the current one.
+   */
+  matchConfirmed: boolean
 }
 
 export interface TagFields {
@@ -69,7 +75,10 @@ export interface ReadResult {
  */
 export const CATALOG_SOURCE_ORIGIN = 'favorite_artist_release'
 
-const LMS_KEYS: Record<Exclude<keyof LmsFields, 'artistCredits'>, string> = {
+const LMS_KEYS: Record<
+  Exclude<keyof LmsFields, 'artistCredits' | 'matchConfirmed'>,
+  string
+> = {
   schemaVersion: 'LMS_TAG_SCHEMA_VERSION',
   sourceVideoId: 'LMS_YOUTUBE_MUSIC_TRACK_ID',
   resolvedVideoId: 'LMS_RESOLVED_YOUTUBE_MUSIC_TRACK_ID',
@@ -81,6 +90,7 @@ const LMS_KEYS: Record<Exclude<keyof LmsFields, 'artistCredits'>, string> = {
   releaseKind: 'LMS_CATALOG_RELEASE_KIND',
 }
 const LMS_CREDITS_KEY = 'LMS_ARTIST_CREDITS'
+const LMS_MATCH_CONFIRMED_KEY = 'LMS_MATCH_CONFIRMED'
 /** Freeform atoms v5 wrote that the app no longer writes; removed on rewrite. */
 const RETIRED_KEYS = [
   'LMS_SOUNDCLOUD_TRACK_ID',
@@ -129,6 +139,7 @@ export function emptyLmsFields(): LmsFields {
     releaseTitle: null,
     releaseKind: null,
     artistCredits: [],
+    matchConfirmed: false,
   }
 }
 
@@ -165,6 +176,7 @@ export function readTags(path: string): ReadResult {
       lms.releaseTitle = freeform(apple, LMS_KEYS.releaseTitle)
       lms.releaseKind = freeform(apple, LMS_KEYS.releaseKind)
       lms.artistCredits = parseCredits(freeform(apple, LMS_CREDITS_KEY))
+      lms.matchConfirmed = freeform(apple, LMS_MATCH_CONFIRMED_KEY) === '1'
       date = blank(apple.getFirstQuickTimeString(Mpeg4BoxType.DAY))
       language = freeform(apple, 'LANGUAGE')
       isrc = freeform(apple, 'ISRC')
@@ -262,6 +274,7 @@ export function writeTags(
           )
         : null
     )
+    setFreeform(apple, LMS_MATCH_CONFIRMED_KEY, lms.matchConfirmed ? '1' : null)
 
     if (cover) {
       const picture = Picture.fromData(ByteVector.fromByteArray(cover))
@@ -276,22 +289,39 @@ export function writeTags(
   }
 }
 
+/**
+ * Fills fields a stored record may predate (it was saved before the field
+ * existed), so an old record and a fresh read compare by meaning.
+ */
+function normalized(fields: TagFields): TagFields {
+  return { ...fields, lms: { ...emptyLmsFields(), ...(fields.lms ?? {}) } }
+}
+
 /** Names of fields whose values differ. Used for Remote State and Outside Edit detail. */
 export function fieldDiff(a: TagFields, b: TagFields): string[] {
+  const left = normalized(a) as unknown as Record<string, unknown>
+  const right = normalized(b) as unknown as Record<string, unknown>
   const diffs: string[] = []
   const keys = new Set(
-    [...Object.keys(a), ...Object.keys(b)].filter((key) => key !== 'lms')
+    [...Object.keys(left), ...Object.keys(right)].filter((key) => key !== 'lms')
   )
   for (const key of keys) {
-    const left = (a as unknown as Record<string, unknown>)[key] ?? null
-    const right = (b as unknown as Record<string, unknown>)[key] ?? null
-    if (left !== right) diffs.push(key)
+    if ((left[key] ?? null) !== (right[key] ?? null)) diffs.push(key)
   }
-  const lmsA = (a.lms ?? {}) as unknown as Record<string, unknown>
-  const lmsB = (b.lms ?? {}) as unknown as Record<string, unknown>
+  const lmsA = left.lms as Record<string, unknown>
+  const lmsB = right.lms as Record<string, unknown>
   for (const key of new Set([...Object.keys(lmsA), ...Object.keys(lmsB)])) {
     if (JSON.stringify(lmsA[key] ?? null) !== JSON.stringify(lmsB[key] ?? null))
       diffs.push(`lms.${key}`)
   }
   return diffs
+}
+
+/** Which parts of a Managed File's tags changed: `tags`, `artwork`, both, or neither. */
+export function changedTagParts(read: TagFields, written: TagFields): string[] {
+  const diff = fieldDiff(read, written)
+  const parts: string[] = []
+  if (diff.some((field) => field !== 'coverSha256')) parts.push('tags')
+  if (diff.includes('coverSha256')) parts.push('artwork')
+  return parts
 }

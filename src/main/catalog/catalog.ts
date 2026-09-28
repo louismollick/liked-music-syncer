@@ -78,12 +78,12 @@ export function createYouTubeMusicCatalog(
       const artist = await readArtist(channelId, signal)
       const all: CatalogReleaseRef[] = []
       for (const category of ['albums', 'singles'] as const) {
+        // Inline refs stay even when a "more" list exists, so a truncated
+        // list can never drop a release the artist page itself shows.
+        all.push(...artist[category])
         const more =
           category === 'albums' ? artist.albumsMore : artist.singlesMore
-        if (!more) {
-          all.push(...artist[category])
-          continue
-        }
+        if (!more) continue
         let response = await transport.call({
           endpoint: 'browse',
           body: {
@@ -96,7 +96,7 @@ export function createYouTubeMusicCatalog(
         let continuation = false
         const seen = new Set<string>()
         while (true) {
-          const page = parseArtistReleasesPage(response, continuation)
+          const page = parseArtistReleasesPage(response, continuation, category)
           all.push(...page.releases)
           if (!page.token) break
           if (seen.has(page.token))
@@ -111,9 +111,11 @@ export function createYouTubeMusicCatalog(
           continuation = true
         }
       }
-      return [
-        ...new Map(all.map((release) => [release.browseId, release])).values(),
-      ]
+      // A release listed on both shelves keeps its first (Albums) entry.
+      const unique = new Map<string, CatalogReleaseRef>()
+      for (const release of all)
+        if (!unique.has(release.browseId)) unique.set(release.browseId, release)
+      return [...unique.values()]
     },
     async searchSongs(query, options, signal) {
       const limit = Math.max(0, options?.limit ?? 20)

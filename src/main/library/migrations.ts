@@ -184,4 +184,9 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE artists RENAME COLUMN favorite TO full_discography;
   ALTER TABLE artists RENAME COLUMN favorited_at TO full_discography_at;
   `,
+  // 3: a merge's redundant copies wait for the surviving track's replacement
+  `
+  ALTER TABLE tombstones ADD COLUMN replacement_track_id TEXT;
+  ALTER TABLE tombstones ADD COLUMN expected_sha256 TEXT;
+  `,
 ]

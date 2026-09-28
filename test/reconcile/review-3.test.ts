@@ -142,7 +142,7 @@ describe('third review fixes', () => {
       {
         browseId: album.browseId,
         title: album.title,
-        kindLabel: 'Album',
+        shelf: 'albums',
         year: 2024,
         thumbnailUrl: null,
       },

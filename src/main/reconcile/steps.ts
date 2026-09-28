@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { and, eq, inArray, like, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
@@ -23,6 +23,7 @@ import { pathKey, resolveCollision, sidecarPath } from '../inventory/layout'
 import type { Db } from '../library/db'
 import {
   artists,
+  type ContributionRow,
   contributions,
   type FileRow,
   files,
@@ -33,15 +34,22 @@ import {
   trackHistory,
   tracks,
   type UploadRow,
+  unmanagedFiles,
   uploads,
 } from '../library/schema'
 import type { LyricsFinder } from '../lyrics/types'
-import type { Match, Matcher, MatchInput } from '../match/types'
+import {
+  type Match,
+  type Matcher,
+  type MatchInput,
+  releaseIdentityKey,
+} from '../match/types'
 import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
 import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
 import {
   CATALOG_SOURCE_ORIGIN,
+  changedTagParts,
   fieldDiff,
   readTags,
   sha256,
@@ -173,14 +181,7 @@ export function nextStep(
   settings: Settings
 ): StepKind | null {
   const match = parseMatch(track)
-  if (
-    !match ||
-    track.refreshRequested ||
-    !track.identityKey ||
-    track.identityKey.startsWith('adopted:')
-  ) {
-    if (!match || track.refreshRequested) return 'match'
-  }
+  if (!match || track.refreshRequested) return 'match'
   if (file?.outsideEdit) return null
   if (
     !file ||
@@ -247,17 +248,67 @@ function releaseWithTracks(
   return release
 }
 
-function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
+/**
+ * The contribution a Match is looked up from. An active catalog contribution
+ * names its exact Release Track, so it wins over a like; otherwise an active
+ * like, and only then inactive ones.
+ */
+function matchSource(db: Db, trackId: string): ContributionRow | undefined {
   const rows = db
     .select()
     .from(contributions)
-    .where(eq(contributions.trackId, track.id))
+    .where(eq(contributions.trackId, trackId))
     .all()
   const active = rows.filter((row) => row.active)
-  const candidates = active.length ? active : rows
-  const chosen =
-    candidates.find((row) => row.kind === 'liked') ??
-    candidates.find((row) => row.kind === 'catalog')
+  if (active.length)
+    return (
+      active.find((row) => row.kind === 'catalog') ??
+      active.find((row) => row.kind === 'liked')
+    )
+  return (
+    rows.find((row) => row.kind === 'liked') ??
+    rows.find((row) => row.kind === 'catalog')
+  )
+}
+
+/** What the match of a track depends on; a change while matching makes the result stale. */
+function matchSources(db: Db, trackId: string): string {
+  const active = db
+    .select({ id: contributions.id, key: contributions.sourceKey })
+    .from(contributions)
+    .where(
+      and(eq(contributions.trackId, trackId), eq(contributions.active, true))
+    )
+    .all()
+    .map((row) => `${row.id}:${row.key}`)
+    .sort()
+  return JSON.stringify({
+    source: matchSource(db, trackId)?.id ?? null,
+    active,
+  })
+}
+
+/** Release Track identities that the track's active catalog contributions require. */
+function catalogIdentities(db: Db, trackId: string): string[] {
+  return db
+    .select({
+      releaseId: contributions.releaseId,
+      videoId: contributions.sourceVideoId,
+    })
+    .from(contributions)
+    .where(
+      and(
+        eq(contributions.trackId, trackId),
+        eq(contributions.kind, 'catalog'),
+        eq(contributions.active, true)
+      )
+    )
+    .all()
+    .map((row) => releaseIdentityKey(row.releaseId ?? '', row.videoId))
+}
+
+function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
+  const chosen = matchSource(db, track.id)
   if (chosen) {
     const raw = JSON.parse(chosen.raw) as LikedRaw | CatalogRaw
     if (raw.kind === 'liked') return { kind: 'liked', song: raw.song }
@@ -340,123 +391,148 @@ async function processCover(
   return target
 }
 
-function adoptedClaim(db: Db, match: Match): TrackRow | undefined {
-  // Adopted files keep a provisional key until a Match re-keys them, even after a like claims them.
-  const candidates = db
-    .select()
-    .from(tracks)
-    .where(like(tracks.identityKey, 'adopted:%'))
-    .all()
-  return candidates.find((candidate) => {
-    const saved = parseMatch(candidate)
-    if (!saved) return false
-    if (match.release) {
-      if (candidate.releaseId !== match.release.browseId) return false
-      const ids = new Set([saved.sourceVideoId, saved.catalogVideoId])
-      return ids.has(match.sourceVideoId) || ids.has(match.catalogVideoId)
-    }
-    return !candidate.releaseId && saved.sourceVideoId === match.sourceVideoId
-  })
+/**
+ * The user deleted a merge survivor: its pending merge cleanup becomes part of
+ * that delete for the chosen scope, and is cancelled for the other.
+ */
+function mergeCleanupIntoDelete(
+  db: Db,
+  trackId: string,
+  where: 'local' | 'remote' | 'both'
+): void {
+  for (const kind of ['local', 'remote'] as const) {
+    const chosen = where === 'both' || where === kind
+    if (!chosen) continue
+    db.update(tombstones)
+      .set({ trackId, replacementTrackId: null, reason: 'deleted' })
+      .where(
+        and(
+          eq(tombstones.replacementTrackId, trackId),
+          eq(tombstones.kind, kind),
+          isNull(tombstones.doneAt)
+        )
+      )
+      .run()
+  }
+  if (where !== 'both')
+    cancelMergeCleanup(db, trackId, where === 'local' ? 'remote' : 'local')
 }
 
-/** Moves `from`'s contributions (and file, when `into` has none) into `into`, then deletes `from`. */
+/** What a merge knows about one track's file, checked before its transaction. */
+interface FileCheck {
+  row: FileRow
+  /** The audio file is on disk. */
+  exists: boolean
+  size: number
+  mtimeMs: number
+  /** On disk with the recorded bytes and no Outside Edit. */
+  valid: boolean
+}
+
+async function inspectFile(
+  root: string,
+  file: FileRow | undefined
+): Promise<FileCheck | undefined> {
+  if (!file) return undefined
+  const absolute = path.join(root, file.relativePath)
+  try {
+    const info = await stat(absolute)
+    const valid =
+      info.isFile() &&
+      !file.outsideEdit &&
+      info.size === file.size &&
+      (await sha256File(absolute)) === file.contentSha256
+    return {
+      row: file,
+      exists: true,
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      valid,
+    }
+  } catch {
+    return { row: file, exists: false, size: 0, mtimeMs: 0, valid: false }
+  }
+}
+
+/**
+ * Moves `from`'s contributions into `into` and deletes `from`. Of the two
+ * files, the survivor keeps a valid one holding the matched video, else any
+ * valid one until a download replaces it. A displaced healthy copy is deleted
+ * only once the survivor's replacement is in place (see processTombstones);
+ * a damaged one is kept on disk as a released Unmanaged File.
+ */
 function mergeTracks(
   db: Db,
   from: TrackRow,
   into: TrackRow,
   at: string,
-  survivorFileValid: boolean
+  checks: { from?: FileCheck; into?: FileCheck },
+  catalogVideoId: string
 ): void {
   db.update(contributions)
     .set({ trackId: into.id })
     .where(eq(contributions.trackId, from.id))
     .run()
-  const fromFile = db
-    .select()
-    .from(files)
-    .where(eq(files.trackId, from.id))
-    .get()
-  const intoFile = db
-    .select()
-    .from(files)
-    .where(eq(files.trackId, into.id))
-    .get()
-  const fromUpload = db
-    .select()
-    .from(uploads)
-    .where(eq(uploads.trackId, from.id))
-    .get()
-  if (fromFile && (!intoFile || !survivorFileValid)) {
-    if (intoFile) db.delete(files).where(eq(files.trackId, into.id)).run()
+  const holds = (check?: FileCheck) =>
+    Boolean(check?.valid && check.row.audioVideoId === catalogVideoId)
+  const kept = holds(checks.into)
+    ? checks.into
+    : holds(checks.from)
+      ? checks.from
+      : checks.into?.valid
+        ? checks.into
+        : checks.from?.valid
+          ? checks.from
+          : undefined
+  const upload = (trackId: string) =>
+    db.select().from(uploads).where(eq(uploads.trackId, trackId)).get()
+  const fromUpload = upload(from.id)
+  const intoUpload = upload(into.id)
+  // The upload record describes the kept file's remote copy, so it moves with it.
+  const keptUpload = !kept
+    ? undefined
+    : kept === checks.from
+      ? fromUpload
+      : intoUpload
+  for (const check of [checks.from, checks.into]) {
+    if (!check || check === kept) continue
+    displaceFile(db, check, into.id, at)
+  }
+  if (kept && kept === checks.from) {
     db.update(files)
       .set({ trackId: into.id })
       .where(eq(files.trackId, from.id))
       .run()
-    if (
-      fromUpload &&
-      !db.select().from(uploads).where(eq(uploads.trackId, into.id)).get()
-    ) {
-      db.update(uploads)
-        .set({ trackId: into.id })
-        .where(eq(uploads.trackId, from.id))
+  }
+  for (const record of [fromUpload, intoUpload]) {
+    if (!record || record === keptUpload) continue
+    for (const remotePath of [record.remotePath, record.lrcRemotePath]) {
+      if (!remotePath) continue
+      db.insert(tombstones)
+        .values({
+          id: randomUUID(),
+          trackId: null,
+          kind: 'remote',
+          path: remotePath,
+          remoteTarget: record.remoteTarget,
+          reason: 'merged',
+          createdAt: at,
+          replacementTrackId: into.id,
+        })
         .run()
     }
-  } else if (fromFile) {
-    // Redundant copy of the same Release Track: remove it through tombstones.
-    db.insert(tombstones)
-      .values({
-        id: randomUUID(),
-        trackId: null,
-        kind: 'local',
-        path: fromFile.relativePath,
-        reason: 'merged',
-        createdAt: at,
-      })
+    db.delete(uploads).where(eq(uploads.trackId, record.trackId)).run()
+  }
+  if (keptUpload && keptUpload.trackId !== into.id)
+    db.update(uploads)
+      .set({ trackId: into.id })
+      .where(eq(uploads.trackId, keptUpload.trackId))
       .run()
-    if (fromFile.lrcSha256) {
-      db.insert(tombstones)
-        .values({
-          id: randomUUID(),
-          trackId: null,
-          kind: 'local',
-          path: sidecarPath(fromFile.relativePath),
-          reason: 'merged',
-          createdAt: at,
-        })
-        .run()
-    }
-    db.delete(files).where(eq(files.trackId, from.id)).run()
-  }
-  if (
-    fromUpload &&
-    db.select().from(uploads).where(eq(uploads.trackId, from.id)).get()
-  ) {
-    if (fromUpload.remotePath)
-      db.insert(tombstones)
-        .values({
-          id: randomUUID(),
-          trackId: null,
-          kind: 'remote',
-          path: fromUpload.remotePath,
-          remoteTarget: fromUpload.remoteTarget,
-          reason: 'merged',
-          createdAt: at,
-        })
-        .run()
-    if (fromUpload.lrcRemotePath)
-      db.insert(tombstones)
-        .values({
-          id: randomUUID(),
-          trackId: null,
-          kind: 'remote',
-          path: fromUpload.lrcRemotePath,
-          remoteTarget: fromUpload.remoteTarget,
-          reason: 'merged',
-          createdAt: at,
-        })
-        .run()
-    db.delete(uploads).where(eq(uploads.trackId, from.id)).run()
-  }
+  // Cleanup that waited for `from` now waits for the survivor.
+  db.update(tombstones)
+    .set({ replacementTrackId: into.id })
+    .where(eq(tombstones.replacementTrackId, from.id))
+    .run()
   db.delete(trackArtists).where(eq(trackArtists.trackId, from.id)).run()
   db.insert(trackHistory)
     .values({
@@ -467,6 +543,106 @@ function mergeTracks(
     })
     .run()
   db.delete(tracks).where(eq(tracks.id, from.id)).run()
+}
+
+/** Drops a merged track's file record and decides what happens to the file on disk. */
+function displaceFile(
+  db: Db,
+  check: FileCheck,
+  survivorId: string,
+  at: string
+): void {
+  const file = check.row
+  db.delete(files).where(eq(files.trackId, file.trackId)).run()
+  if (check.exists && !check.valid) {
+    // Damaged or edited outside the app: never delete it, never adopt it again.
+    releaseToUnmanaged(db, file.relativePath, check.size, check.mtimeMs, at)
+    if (file.lrcSha256)
+      deferLocalRelease(db, sidecarPath(file.relativePath), at)
+    return
+  }
+  const cleanup = (relative: string, expectedSha256: string) =>
+    db
+      .insert(tombstones)
+      .values({
+        id: randomUUID(),
+        trackId: null,
+        kind: 'local',
+        path: relative,
+        reason: 'merged',
+        createdAt: at,
+        replacementTrackId: survivorId,
+        expectedSha256,
+      })
+      .run()
+  if (check.exists) cleanup(file.relativePath, file.contentSha256)
+  if (file.lrcSha256) cleanup(sidecarPath(file.relativePath), file.lrcSha256)
+}
+
+export function releaseToUnmanaged(
+  db: Db,
+  relativePath: string,
+  size: number,
+  mtimeMs: number,
+  at: string
+): void {
+  db.insert(unmanagedFiles)
+    .values({ relativePath, size, mtimeMs, seenAt: at, released: true })
+    .onConflictDoUpdate({
+      target: unmanagedFiles.relativePath,
+      set: { size, mtimeMs, seenAt: at, released: true },
+    })
+    .run()
+}
+
+/** Keeps a local path as a released Unmanaged File once the tombstone loop can look at it. */
+function deferLocalRelease(db: Db, relativePath: string, at: string): void {
+  db.insert(tombstones)
+    .values({
+      id: randomUUID(),
+      trackId: null,
+      kind: 'local',
+      path: relativePath,
+      reason: RELEASE_REASON,
+      createdAt: at,
+    })
+    .run()
+}
+
+/** Tombstone reason for a path to keep as Unmanaged instead of deleting. */
+const RELEASE_REASON = 'release'
+
+/**
+ * Cancels merge cleanup that waits for `trackId` (Stop managing, or the part of
+ * a delete the user did not choose): local copies are kept as Unmanaged Files
+ * and remote copies are left alone.
+ */
+export function cancelMergeCleanup(
+  db: Db,
+  trackId: string,
+  scope: 'local' | 'remote' | 'both'
+): void {
+  if (scope !== 'remote')
+    db.update(tombstones)
+      .set({ replacementTrackId: null, reason: RELEASE_REASON })
+      .where(
+        and(
+          eq(tombstones.replacementTrackId, trackId),
+          eq(tombstones.kind, 'local'),
+          isNull(tombstones.doneAt)
+        )
+      )
+      .run()
+  if (scope !== 'local')
+    db.delete(tombstones)
+      .where(
+        and(
+          eq(tombstones.replacementTrackId, trackId),
+          eq(tombstones.kind, 'remote'),
+          isNull(tombstones.doneAt)
+        )
+      )
+      .run()
 }
 
 async function validFile(
@@ -517,13 +693,9 @@ export async function assertUnchanged(
       (await sha256File(absolute)) !== file.contentSha256
     ) {
       try {
-        const read = readTags(absolute).fields
-        const written = parseFields(file)
-        const { coverSha256: readCover, ...readRest } = read
-        const { coverSha256: writtenCover, ...writtenRest } = written
-        if (JSON.stringify(readRest) !== JSON.stringify(writtenRest))
-          parts.push('tags')
-        if (readCover !== writtenCover) parts.push('artwork')
+        parts.push(
+          ...changedTagParts(readTags(absolute).fields, parseFields(file))
+        )
       } catch {
         // Unreadable tags: report it as an audio change below.
       }
@@ -551,11 +723,55 @@ export interface MatchOutcome {
   trackId: string
 }
 
+/**
+ * The step can't run yet for a reason that isn't a failure (a delete still in
+ * progress, sources still changing). The track waits without using retries.
+ */
+export class RetryLaterError extends Error {
+  readonly kind = 'transient' as const
+  constructor(
+    message: string,
+    readonly delayMs = 60_000
+  ) {
+    super(message)
+    this.name = 'RetryLaterError'
+  }
+}
+
+/** Sources changed while the lookup ran; re-running it is not a failure. */
+const STALE = Symbol('stale match')
+const STALE_RETRIES = 5
+
 export async function runMatch(
   deps: StepDeps,
   track: TrackRow,
   run: StepRun
 ): Promise<MatchOutcome> {
+  let current = track
+  for (let attempt = 0; ; attempt += 1) {
+    const outcome = await matchOnce(deps, current, run)
+    if (outcome !== STALE) return outcome
+    const reloaded = deps.db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.id, current.id))
+      .get()
+    if (!reloaded) return { trackId: current.id }
+    if (attempt + 1 >= STALE_RETRIES)
+      throw new RetryLaterError(
+        'Its sources kept changing while matching; will try again'
+      )
+    current = reloaded
+  }
+}
+
+async function matchOnce(
+  deps: StepDeps,
+  track: TrackRow,
+  run: StepRun
+): Promise<MatchOutcome | typeof STALE> {
+  const sourcesBefore = matchSources(deps.db, track.id)
+  const sourceId = matchSource(deps.db, track.id)?.id ?? null
   let input = matchInputFor(deps.db, track)
   if (!input)
     throw Object.assign(
@@ -648,27 +864,31 @@ export async function runMatch(
     .where(eq(tracks.identityKey, match.identityKey))
     .get()
   if (candidate?.id === track.id) candidate = undefined
-  if (!candidate) candidate = adoptedClaim(deps.db, match)
-  const candidateFile =
-    candidate && candidate.id !== track.id
-      ? deps.db
-          .select()
-          .from(files)
-          .where(eq(files.trackId, candidate.id))
-          .get()
-      : undefined
-  const survivorFileValid = candidateFile
-    ? await validFile(libraryRoot(settings), candidateFile)
-    : false
+  const fileOf = (trackId: string) =>
+    deps.db.select().from(files).where(eq(files.trackId, trackId)).get()
+  const root = libraryRoot(settings)
+  const checks = {
+    from: await inspectFile(root, fileOf(track.id)),
+    into: candidate ? await inspectFile(root, fileOf(candidate.id)) : undefined,
+  }
   run.signal.throwIfAborted()
-  deps.db.transaction((tx) => {
+  const status = deps.db.transaction((tx): MatchCommit => {
     const db = tx as unknown as Db
     const current = db
       .select()
       .from(tracks)
       .where(eq(tracks.id, track.id))
       .get()
-    if (!current) return
+    // Deleted, or the user stopped managing it while the lookup ran.
+    // No Longer Wanted meanwhile: nothing may merge or move its file until
+    // the user decides.
+    if (
+      !current ||
+      current.state === 'released' ||
+      current.state === 'no_longer_wanted'
+    )
+      return 'cancelled'
+    if (matchSources(db, current.id) !== sourcesBefore) return 'stale'
     const previousIdentityKey = current.identityKey
     let target = db
       .select()
@@ -676,12 +896,53 @@ export async function runMatch(
       .where(eq(tracks.identityKey, match.identityKey))
       .get()
     if (target?.id === current.id) target = undefined
-    if (!target) {
-      const claimed = adoptedClaim(db, match)
-      if (claimed && claimed.id !== current.id) target = claimed
+    // A catalog contribution only ever belongs to its own Release Track.
+    const required = [
+      ...catalogIdentities(db, current.id),
+      ...(target ? catalogIdentities(db, target.id) : []),
+    ]
+    if (required.some((key) => key !== match.identityKey)) return 'stale'
+    if (target?.state === 'released') {
+      // The user stopped managing this Release Track: record that this source
+      // wants it too, without reviving the file or merging into it.
+      if (sourceId)
+        db.update(contributions)
+          .set({ trackId: target.id })
+          .where(eq(contributions.id, sourceId))
+          .run()
+      settleEmptiedTrack(db, current.id, at)
+      return 'excluded'
     }
+    if (
+      target?.state === 'no_longer_wanted' &&
+      db
+        .select({ id: tombstones.id })
+        .from(tombstones)
+        .where(
+          and(eq(tombstones.trackId, target.id), isNull(tombstones.doneAt))
+        )
+        .get()
+    )
+      return 'waiting'
     if (target && target.id !== current.id) {
-      mergeTracks(db, current, target, at, survivorFileValid)
+      // The files were checked before this transaction; merge only what was checked.
+      const unchanged = (trackId: string, check?: FileCheck) => {
+        const row = db
+          .select()
+          .from(files)
+          .where(eq(files.trackId, trackId))
+          .get()
+        return (
+          (row?.contentSha256 ?? null) === (check?.row.contentSha256 ?? null)
+        )
+      }
+      if (
+        target.id !== candidate?.id ||
+        !unchanged(current.id, checks.from) ||
+        !unchanged(target.id, checks.into)
+      )
+        return 'stale'
+      mergeTracks(db, current, target, at, checks, match.catalogVideoId)
       survivor = target.id
     }
     const release = match.release
@@ -714,7 +975,7 @@ export async function runMatch(
         spotifyTrackId,
         coverUrl: match.coverUrl,
         coverPath,
-        match: JSON.stringify(match),
+        match: JSON.stringify({ ...match, confirmed: true } satisfies Match),
         enrichmentErrors: JSON.stringify(errors),
         refreshRequested: false,
         updatedAt: at,
@@ -746,8 +1007,57 @@ export async function runMatch(
         }),
       })
       .run()
+    return 'committed'
   })
+  if (status === 'stale') return STALE
+  if (status === 'waiting')
+    throw new RetryLaterError(
+      'Waiting for an earlier delete of this song to finish'
+    )
   return { trackId: survivor }
+}
+
+type MatchCommit = 'committed' | 'stale' | 'cancelled' | 'excluded' | 'waiting'
+
+/**
+ * After its source moved to another track: a track left with no contribution,
+ * file or upload is removed; one still holding files becomes No Longer Wanted.
+ */
+function settleEmptiedTrack(db: Db, trackId: string, at: string): void {
+  const hasActive = db
+    .select({ id: contributions.id })
+    .from(contributions)
+    .where(
+      and(eq(contributions.trackId, trackId), eq(contributions.active, true))
+    )
+    .get()
+  if (hasActive) return
+  const keep =
+    db
+      .select({ id: contributions.id })
+      .from(contributions)
+      .where(eq(contributions.trackId, trackId))
+      .get() ||
+    db
+      .select({ id: files.trackId })
+      .from(files)
+      .where(eq(files.trackId, trackId))
+      .get() ||
+    db
+      .select({ id: uploads.trackId })
+      .from(uploads)
+      .where(eq(uploads.trackId, trackId))
+      .get()
+  if (keep) {
+    db.update(tracks)
+      .set({ state: 'no_longer_wanted', updatedAt: at })
+      .where(eq(tracks.id, trackId))
+      .run()
+    return
+  }
+  cancelMergeCleanup(db, trackId, 'both')
+  db.delete(trackArtists).where(eq(trackArtists.trackId, trackId)).run()
+  db.delete(tracks).where(eq(tracks.id, trackId)).run()
 }
 
 // ---------------------------------------------------------------- file placement
@@ -967,6 +1277,25 @@ function commitFile(
   const at = iso(deps)
   deps.db.transaction((tx) => {
     const db = tx as unknown as Db
+    const state = db
+      .select({ state: tracks.state })
+      .from(tracks)
+      .where(eq(tracks.id, track.id))
+      .get()?.state
+    if (state === 'released') {
+      // Stopped managing while the file was written: keep it, as Unmanaged.
+      releaseToUnmanaged(
+        db,
+        placed.relativePath,
+        placed.size,
+        placed.mtimeMs,
+        at
+      )
+      if (placed.lrcSha256)
+        deferLocalRelease(db, sidecarPath(placed.relativePath), at)
+      clearJournal(db, track.id, step)
+      return
+    }
     const row = {
       trackId: track.id,
       relativePath: placed.relativePath,
@@ -1417,6 +1746,13 @@ export async function runUpload(
   }
   deps.db.transaction((tx) => {
     const db = tx as unknown as Db
+    const state = db
+      .select({ state: tracks.state })
+      .from(tracks)
+      .where(eq(tracks.id, track.id))
+      .get()?.state
+    // Stopped managing meanwhile: the app no longer tracks its remote copy.
+    if (state === 'released') return
     if (db.select().from(uploads).where(eq(uploads.trackId, track.id)).get()) {
       db.update(uploads).set(row).where(eq(uploads.trackId, track.id)).run()
     } else {
@@ -1424,6 +1760,45 @@ export async function runUpload(
     }
   })
   run.progress(1)
+}
+
+/**
+ * A merge survivor's replacement is in place locally when its file holds the
+ * video its saved Match chose, with the recorded bytes and no Outside Edit.
+ * `uploadedTo` names the remote target where that exact file is uploaded.
+ */
+async function replacementState(
+  deps: StepDeps,
+  trackId: string,
+  rootReadable: boolean
+): Promise<{ local: boolean; uploadedTo: string | null }> {
+  const none = { local: false, uploadedTo: null }
+  const track = deps.db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, trackId))
+    .get()
+  const file = deps.db
+    .select()
+    .from(files)
+    .where(eq(files.trackId, trackId))
+    .get()
+  const match = track ? parseMatch(track) : null
+  if (!rootReadable || !track || !file || !match || file.outsideEdit)
+    return none
+  if (file.audioVideoId !== match.catalogVideoId) return none
+  if (!(await validFile(deps.settings().libraryFolder, file))) return none
+  const upload = deps.db
+    .select()
+    .from(uploads)
+    .where(eq(uploads.trackId, trackId))
+    .get()
+  const uploaded =
+    upload &&
+    upload.localSha256 === file.contentSha256 &&
+    upload.remotePath === file.relativePath &&
+    (upload.lrcHash ?? null) === (file.lrcSha256 ?? null)
+  return { local: true, uploadedTo: uploaded ? upload.remoteTarget : null }
 }
 
 /** Deletes files named by pending tombstones. */
@@ -1446,10 +1821,66 @@ export async function processTombstones(
       .all()
       .map((file) => pathKey(file.path))
   )
+  // Whether a merge survivor's replacement is really in place: facts, not track state.
+  const replacements = new Map<
+    string,
+    Promise<{ local: boolean; uploadedTo: string | null }>
+  >()
+  const replacement = (trackId: string) => {
+    let known = replacements.get(trackId)
+    if (!known) {
+      known = replacementState(deps, trackId, rootReadable)
+      replacements.set(trackId, known)
+    }
+    return known
+  }
+  const verified = new Map<string, Promise<boolean>>()
+  const remoteReplacement = (trackId: string, remote: RemoteTarget) => {
+    let known = verified.get(trackId)
+    if (!known) {
+      const file = deps.db
+        .select()
+        .from(files)
+        .where(eq(files.trackId, trackId))
+        .get()
+      const check = (relative: string) =>
+        deps.rclone
+          .verify(
+            remote,
+            path.join(settings.libraryFolder, relative),
+            relative,
+            signal
+          )
+          .then(Boolean)
+      known = file
+        ? check(file.relativePath).then(
+            async (audio) =>
+              audio &&
+              (!file.lrcSha256 || (await check(sidecarPath(file.relativePath))))
+          )
+        : Promise.resolve(false)
+      verified.set(trackId, known)
+    }
+    return known
+  }
   for (const row of pending) {
     if (signal.aborted) return
     // One failing tombstone (e.g. an unreachable remote) must not block the rest.
     try {
+      if (row.replacementTrackId) {
+        const ready = await replacement(row.replacementTrackId)
+        if (!ready.local) continue
+        // Remote copies go only once the replacement is on that same, enabled
+        // remote, checked on the remote itself rather than from the record.
+        if (
+          row.kind === 'remote' &&
+          (!target ||
+            targetKey(target) !== row.remoteTarget ||
+            ready.uploadedTo !== row.remoteTarget ||
+            !(await remoteReplacement(row.replacementTrackId, target)))
+        )
+          continue
+      }
       if (row.kind === 'local') {
         // An unmounted folder would make the delete a silent no-op; try again later.
         if (!rootReadable) continue
@@ -1457,8 +1888,25 @@ export async function processTombstones(
         // Never delete a path another track now owns.
         const audioPath = row.path.replace(/\.lrc$/i, '.m4a')
         if (!ownedLocal.has(pathKey(audioPath))) {
-          await rm(absolute, { force: true })
-          await pruneEmptyDirs(settings.libraryFolder, path.dirname(absolute))
+          const info = await stat(absolute).catch(() => null)
+          const keep =
+            info &&
+            (row.reason === RELEASE_REASON ||
+              (row.expectedSha256 !== null &&
+                (await sha256File(absolute)) !== row.expectedSha256))
+          if (keep) {
+            // Not the bytes the app meant to delete: keep them, as Unmanaged.
+            releaseToUnmanaged(
+              deps.db,
+              row.path,
+              info.size,
+              info.mtimeMs,
+              iso(deps)
+            )
+          } else if (info) {
+            await rm(absolute, { force: true })
+            await pruneEmptyDirs(settings.libraryFolder, path.dirname(absolute))
+          }
         }
       } else {
         const storedTarget = row.remoteTarget
@@ -1573,6 +2021,7 @@ export function deleteTracks(
         .get()
       if (track?.state !== 'no_longer_wanted' || active) continue
       deleted.push(trackId)
+      mergeCleanupIntoDelete(db, trackId, where)
       const file = db
         .select()
         .from(files)

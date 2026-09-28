@@ -11,11 +11,11 @@ The inventory of Managed Files and their metadata in the user's output folder. I
 _Avoid_: Player library, playback library
 
 **Managed File**:
-An audio file the app created and tagged as its own. Only Managed Files belong to the Library, and the app can rebuild its inventory from their tags.
+An audio file the app created and tagged as its own. Only Managed Files belong to the Library. The app can rebuild its inventory from the tags of files that record a confirmed Match.
 _Avoid_: Library file, owned file
 
 **Unmanaged File**:
-An audio file in the output folder that the app did not create. The app reports it but never merges it into the Library.
+An audio file in the output folder that the app does not manage: a file it did not create, a file from an older version whose tags record no confirmed Match, or an extra copy of a Release Track the Library already holds. The app reports it but never merges it into the Library or deletes it.
 _Avoid_: Foreign file, imported file
 
 **Outside Edit**:
@@ -113,7 +113,7 @@ What the app is doing now and did recently, shown per track with the reason the 
 _Avoid_: Sync Job, run, queue, run history
 
 **Match**:
-The saved decision behind a Desired Track: which source track, Release, MusicBrainz recording, and lyrics the app chose. The app writes tags from the Match and only looks it up again on Refresh.
+The saved decision behind a Desired Track: which source track, Release, MusicBrainz recording, and lyrics the app chose. The app writes tags from the Match and only looks it up again on Refresh. A Full Discography catalog names its exact Release Track, so a track a catalog wants is always looked up from that catalog, even when it is also liked.
 _Avoid_: Resolution, candidate, lookup result
 
 **Refresh**:

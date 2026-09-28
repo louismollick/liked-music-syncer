@@ -4,6 +4,7 @@ import type {
   CatalogRelease,
   CatalogTrack,
   LikedSong,
+  ReleaseShelf,
   YouTubeMusicCatalog,
 } from '../catalog/types'
 import { CatalogShapeError } from '../catalog/types'
@@ -39,6 +40,8 @@ export interface LikedRaw {
 export interface CatalogRaw {
   kind: 'catalog'
   artistId: string
+  /** Artist page list the release came from. Missing on rows saved before it was recorded. */
+  shelf?: ReleaseShelf
   release: Omit<CatalogRelease, 'tracks'>
   track: CatalogTrack
 }
@@ -259,10 +262,28 @@ export async function checkLikedSongs(options: {
   }
 }
 
-/** Official Main Catalog release kinds (albums, singles, EPs). */
-function isMainCatalogRelease(kindLabel: string | null): boolean {
-  if (!kindLabel) return true
-  return /album|single|ep/i.test(kindLabel)
+/** Shelves that held active contributions of the artist's previous snapshot. */
+function populatedShelves(db: Db, artistId: string): Set<ReleaseShelf> {
+  const shelves = new Set<ReleaseShelf>()
+  for (const row of db
+    .select({ raw: contributions.raw })
+    .from(contributions)
+    .where(
+      and(
+        eq(contributions.kind, 'catalog'),
+        eq(contributions.artistId, artistId),
+        eq(contributions.active, true)
+      )
+    )
+    .all()) {
+    try {
+      const shelf = (JSON.parse(row.raw) as Partial<CatalogRaw>).shelf
+      if (shelf) shelves.add(shelf)
+    } catch {
+      // Unreadable raw: it can't say which shelf it came from.
+    }
+  }
+  return shelves
 }
 
 /** Fetches one full-discography artist's Official Main Catalog and commits it. */
@@ -285,13 +306,19 @@ export async function checkArtistCatalog(options: {
     startedAt
   )
   try {
-    const refs = (
-      await catalog.artistReleases(options.channelId, options.signal)
-    ).filter((ref) => isMainCatalogRelease(ref.kindLabel))
+    // Every release on the Albums and Singles & EPs shelves is Official Main Catalog.
+    const refs = await catalog.artistReleases(options.channelId, options.signal)
     if (refs.length === 0) {
       throw new CatalogShapeError(
         'The artist page listed no albums or singles.'
       )
+    }
+    const shelves = new Set(refs.map((ref) => ref.shelf))
+    for (const shelf of populatedShelves(db, artistId)) {
+      if (!shelves.has(shelf))
+        throw new SuspiciousSnapshotError(
+          `The artist page no longer lists any ${shelf === 'albums' ? 'albums' : 'singles or EPs'}; keeping the previous catalog. If that is right, turn Full Discography off and on again.`
+        )
     }
     const staged: CatalogRaw[] = []
     for (const ref of refs) {
@@ -304,7 +331,13 @@ export async function checkArtistCatalog(options: {
       }
       const { tracks: _tracks, ...releaseInfo } = release
       for (const track of available) {
-        staged.push({ kind: 'catalog', artistId, release: releaseInfo, track })
+        staged.push({
+          kind: 'catalog',
+          artistId,
+          shelf: ref.shelf,
+          release: releaseInfo,
+          track,
+        })
       }
     }
     const previousActive =
@@ -364,11 +397,24 @@ export async function checkArtistCatalog(options: {
           .where(eq(contributions.sourceKey, key))
           .get()
         if (existing) {
+          // While inactive, its track may have been re-keyed to another
+          // Release Track (e.g. by a like's Refresh): link it afresh.
+          const linked = existing.trackId
+            ? tx
+                .select({ identityKey: tracks.identityKey })
+                .from(tracks)
+                .where(eq(tracks.id, existing.trackId))
+                .get()
+            : undefined
+          const stillItsTrack =
+            linked?.identityKey ===
+            releaseIdentityKey(raw.release.browseId, raw.track.videoId)
           tx.update(contributions)
             .set({
               lastSeenAt: committedAt,
               active: true,
               raw: JSON.stringify(raw),
+              ...(stillItsTrack ? {} : { trackId: null }),
             })
             .where(eq(contributions.id, existing.id))
             .run()
@@ -456,6 +502,47 @@ export function deactivateArtistCatalog(db: Db, artistId: string): void {
 }
 
 /**
+ * Restored files not yet claimed by a like, by the liked video each
+ * records. A video recorded by several files maps to none of them: the like is
+ * matched normally and merges by Release Track identity instead.
+ */
+function unclaimedRestoredBySource(db: Db): Map<string, string> {
+  const bySource = new Map<string, string[]>()
+  for (const row of db
+    .select({ id: tracks.id, match: tracks.match })
+    .from(tracks)
+    .where(
+      and(
+        eq(tracks.adopted, true),
+        // Not a track the user stopped managing, or is still deleting.
+        sql`${tracks.state} != 'released'`,
+        sql`NOT EXISTS (SELECT 1 FROM tombstones tb WHERE tb.track_id = ${tracks.id} AND tb.done_at IS NULL)`
+      )
+    )
+    .all()) {
+    try {
+      const saved = JSON.parse(row.match ?? 'null') as {
+        sourceVideoId?: string
+        resolutionMethod?: string
+      } | null
+      // A catalog wrote this file; its video was never a liked source.
+      if (saved?.resolutionMethod === 'favorite_artist_release_exact') continue
+      if (saved?.sourceVideoId)
+        bySource.set(saved.sourceVideoId, [
+          ...(bySource.get(saved.sourceVideoId) ?? []),
+          row.id,
+        ])
+    } catch {
+      // Unreadable saved match: leave the track unclaimed.
+    }
+  }
+  const unique = new Map<string, string>()
+  for (const [videoId, ids] of bySource)
+    if (ids.length === 1) unique.set(videoId, ids[0])
+  return unique
+}
+
+/**
  * Gives every active contribution a track. Catalog contributions know their
  * identity; liked contributions get a provisional track (no identity key)
  * that the match step re-keys or merges.
@@ -472,25 +559,9 @@ export function linkContributions(
       .from(contributions)
       .where(and(eq(contributions.active, true), isNull(contributions.trackId)))
       .all()
-    // Adopted files record the liked video they were downloaded from; a like of
-    // that same video claims the file right away (no download, no re-key yet).
-    const adoptedBySource = new Map<string, string>()
-    for (const candidate of tx
-      .select({ id: tracks.id, match: tracks.match })
-      .from(tracks)
-      .where(eq(tracks.adopted, true))
-      .all()) {
-      try {
-        const saved = JSON.parse(candidate.match ?? 'null') as {
-          sourceVideoId?: string
-        } | null
-        if (saved?.sourceVideoId && !adoptedBySource.has(saved.sourceVideoId)) {
-          adoptedBySource.set(saved.sourceVideoId, candidate.id)
-        }
-      } catch {
-        // Unreadable saved match: leave the track unclaimed.
-      }
-    }
+    // Restored files record the liked video they were downloaded from; a like of
+    // that same video claims the file right away (no match, no download).
+    const adoptedBySource = unclaimedRestoredBySource(tx as unknown as Db)
     for (const row of unlinked) {
       const raw = JSON.parse(row.raw) as LikedRaw | CatalogRaw
       if (raw.kind === 'catalog') {
@@ -500,32 +571,10 @@ export function linkContributions(
           .from(tracks)
           .where(eq(tracks.identityKey, key))
           .get()
-        const adopted = existing
-          ? null
-          : tx
-              .select({ id: tracks.id })
-              .from(tracks)
-              .where(
-                eq(
-                  tracks.identityKey,
-                  `adopted:${raw.release.browseId}:${raw.track.videoId}`
-                )
-              )
-              .get()
-        const targetId = existing?.id ?? adopted?.id
-        if (targetId) {
-          if (adopted) {
-            tx.update(tracks)
-              .set({
-                identityKey: key,
-                adopted: false,
-                updatedAt: at,
-              })
-              .where(eq(tracks.id, adopted.id))
-              .run()
-          }
+        if (existing) {
+          // A restored file stays claimable by the like it records.
           tx.update(contributions)
-            .set({ trackId: targetId })
+            .set({ trackId: existing.id })
             .where(eq(contributions.id, row.id))
             .run()
           continue
@@ -612,22 +661,7 @@ export function claimAdoptedFiles(
   const at = nowIso(now)
   let claimed = 0
   db.transaction((tx) => {
-    const adopted = new Map<string, string>()
-    for (const row of tx
-      .select({ id: tracks.id, match: tracks.match })
-      .from(tracks)
-      .where(eq(tracks.adopted, true))
-      .all()) {
-      try {
-        const saved = JSON.parse(row.match ?? 'null') as {
-          sourceVideoId?: string
-        } | null
-        if (saved?.sourceVideoId && !adopted.has(saved.sourceVideoId))
-          adopted.set(saved.sourceVideoId, row.id)
-      } catch {
-        // Unreadable saved match: leave unclaimed.
-      }
-    }
+    const adopted = unclaimedRestoredBySource(tx as unknown as Db)
     if (adopted.size === 0) return
     const candidates = tx.all<{
       id: string
@@ -681,6 +715,8 @@ export function updateWantedStates(
     UPDATE tracks SET state = 'pending', updated_at = ${at}
     WHERE state = 'no_longer_wanted'
       AND EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = tracks.id AND c.active = 1)
+      -- A delete the user asked for finishes first; the track comes back after.
+      AND NOT EXISTS (SELECT 1 FROM tombstones tb WHERE tb.track_id = tracks.id AND tb.done_at IS NULL)
   `)
   // Marking tracks unwanted waits for the liked-songs source to have completed a
   // full check (or, without an account, every full-discography catalog), so a

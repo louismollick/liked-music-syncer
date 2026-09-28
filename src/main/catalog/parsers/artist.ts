@@ -2,6 +2,7 @@ import {
   type CatalogArtist,
   type CatalogReleaseRef,
   CatalogShapeError,
+  type ReleaseShelf,
 } from '../types'
 import {
   array,
@@ -15,8 +16,22 @@ import {
 } from './nav'
 import { continuationToken } from './playlist'
 
-function releaseRef(value: unknown): CatalogReleaseRef | null {
+/** Items a release shelf or grid may hold besides release cards. */
+const NON_RELEASE_ITEMS = ['continuationItemRenderer']
+
+/**
+ * Reads one card of the Albums or Singles & EPs list. The shelf decides the
+ * category: album cards often show only a year where singles show "Single".
+ */
+function releaseRef(
+  value: unknown,
+  shelf: ReleaseShelf
+): CatalogReleaseRef | null {
   const item = nav(value, ['musicTwoRowItemRenderer'])
+  if (!item) {
+    if (NON_RELEASE_ITEMS.some((key) => nav(value, [key]))) return null
+    throw new CatalogShapeError(`Unexpected item in the ${shelf} list`)
+  }
   const browseId =
     at(item, ['navigationEndpoint', 'browseEndpoint', 'browseId']) ??
     at(item, [
@@ -28,15 +43,23 @@ function releaseRef(value: unknown): CatalogReleaseRef | null {
       'browseId',
     ])
   const title = firstRun(nav(item, ['title']))
-  if (!browseId?.startsWith('MPRE') || !title) return null
+  if (!browseId?.startsWith('MPRE') || !title)
+    throw new CatalogShapeError(`Unreadable release card in the ${shelf} list`)
   const subtitle = array(nav(item, ['subtitle', 'runs'])) ?? []
   return {
     browseId,
     title,
-    kindLabel: at(subtitle[0], ['text']),
+    shelf,
     year: year(at(subtitle[2], ['text']) ?? at(subtitle[0], ['text'])),
     thumbnailUrl: thumbnail(nav(item, ['thumbnailRenderer'])),
   }
+}
+
+function releaseRefs(items: unknown[], shelf: ReleaseShelf) {
+  return items.flatMap((item) => {
+    const ref = releaseRef(item, shelf)
+    return ref ? [ref] : []
+  })
 }
 
 export function parseArtist(
@@ -86,11 +109,9 @@ export function parseArtist(
           ? 'singles'
           : null
     if (!category) continue
-    result[category] = (array(nav(shelf, ['contents'])) ?? []).flatMap(
-      (item) => {
-        const ref = releaseRef(item)
-        return ref ? [ref] : []
-      }
+    result[category] = releaseRefs(
+      requiredArray(shelf, ['contents'], `${category} shelf items`),
+      category
     )
     const endpoint =
       nav(shelf, [
@@ -120,7 +141,8 @@ export function parseArtist(
 
 export function parseArtistReleasesPage(
   response: unknown,
-  continuation: boolean
+  continuation: boolean,
+  shelf: ReleaseShelf
 ): { releases: CatalogReleaseRef[]; token: string | null } {
   const actions = array(nav(response, ['onResponseReceivedActions'])) ?? []
   const append = actions
@@ -154,10 +176,7 @@ export function parseArtistReleasesPage(
     continuation && append ? ['continuationItems'] : ['items'],
     'artist release items'
   )
-  const releases = items.flatMap((item) => {
-    const ref = releaseRef(item)
-    return ref ? [ref] : []
-  })
+  const releases = releaseRefs(items, shelf)
   const token = continuationToken(grid)
   return { releases, token }
 }

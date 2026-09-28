@@ -51,11 +51,14 @@ export interface LikedSongsResult {
   pageCount: number
 }
 
+/** Artist page list a release came from: "Albums" or "Singles & EPs". */
+export type ReleaseShelf = 'albums' | 'singles'
+
 export interface CatalogReleaseRef {
   browseId: string
   title: string
-  /** Raw type label from YouTube Music, e.g. "Album", "Single", "EP". */
-  kindLabel: string | null
+  /** Which list the artist page shows the release in. Card subtitles are not a reliable kind. */
+  shelf: ReleaseShelf
   year: number | null
   thumbnailUrl: string | null
 }

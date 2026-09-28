@@ -31,4 +31,27 @@ describe('migrations', () => {
     })
     sqlite.close()
   })
+
+  it('keeps existing tombstones as plain deletes with no replacement to wait for', () => {
+    const sqlite = new Database(':memory:')
+    sqlite.exec(MIGRATIONS[0])
+    sqlite.exec(MIGRATIONS[1])
+    sqlite.pragma('user_version = 2')
+    sqlite
+      .prepare(
+        `INSERT INTO tombstones (id, track_id, kind, path, reason, created_at) VALUES ('t', NULL, 'local', 'a.m4a', 'merged', 'now')`
+      )
+      .run()
+
+    migrate(sqlite)
+
+    expect(
+      sqlite
+        .prepare(
+          'SELECT replacement_track_id, expected_sha256 FROM tombstones WHERE id = ?'
+        )
+        .get('t')
+    ).toEqual({ replacement_track_id: null, expected_sha256: null })
+    sqlite.close()
+  })
 })
