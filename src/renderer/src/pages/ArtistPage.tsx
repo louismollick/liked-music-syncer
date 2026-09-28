@@ -1,11 +1,11 @@
 import { useParams } from '@tanstack/react-router'
-import { Download, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
+import { FullDiscographyToggle } from '../components/FullDiscographyToggle'
 import { AlbumTile } from '../components/Grids'
 import { Crumbs, Section } from '../components/layout/Page'
 import { SongTable } from '../components/SongTable'
 import { Artwork } from '../components/ui/Artwork'
 import { Button } from '../components/ui/Button'
-import { Tooltip } from '../components/ui/Tooltip'
 import { invoke, useLibraryData } from '../lib/api'
 import { useDominantColor } from '../lib/dominant-color'
 import { plural } from '../lib/format'
@@ -43,7 +43,6 @@ export function ArtistPage() {
           />
           <div className="pb-1 min-w-0 pr-48">
             <Crumbs items={[{ label: 'Artists', to: '/artists' }]} />
-            <div className="text-[12px] text-zinc-300">Artist</div>
             <h1 className="text-5xl font-bold tracking-tight truncate selectable">
               {artist.name}
             </h1>
@@ -53,27 +52,11 @@ export function ArtistPage() {
                 {standalone.length ? ` · ${standalone.length} standalone` : ''}
               </span>
               {artist.identified && (
-                <Tooltip
-                  interactive
-                  label={
-                    artist.fullDiscography
-                      ? 'Downloading every album, single and EP. Click to stop.'
-                      : 'Download every album, single and EP by this artist.'
-                  }
-                >
-                  <Button
-                    variant={artist.fullDiscography ? 'primary' : 'default'}
-                    aria-pressed={artist.fullDiscography}
-                    onClick={() =>
-                      void invoke('library:setFullDiscography', {
-                        artistId: artist.id,
-                        fullDiscography: !artist.fullDiscography,
-                      }).then(reload)
-                    }
-                  >
-                    <Download className="w-3.5 h-3.5" /> Full Discography
-                  </Button>
-                </Tooltip>
+                <FullDiscographyToggle
+                  artist={artist}
+                  shape="button"
+                  onChanged={reload}
+                />
               )}
               <Button
                 onClick={() =>

@@ -70,9 +70,6 @@ export function AlbumPage() {
           />
           <div className="pb-1 min-w-0 pr-48">
             <Crumbs items={crumbs} />
-            <div className="text-[12px] text-zinc-300">
-              Album{album.year ? ` · ${album.year}` : ''}
-            </div>
             <h1 className="text-5xl font-bold tracking-tight truncate selectable">
               {album.title}
             </h1>
@@ -89,7 +86,8 @@ export function AlbumPage() {
                 <span className="font-medium">{album.albumArtist}</span>
               )}
               <span className="mr-2">
-                · {plural(album.songCount, 'song')} ·{' '}
+                {album.year ? `· ${album.year} ` : ''}·{' '}
+                {plural(album.songCount, 'song')} ·{' '}
                 {formatMinutes(album.durationSeconds)}
               </span>
               <Button

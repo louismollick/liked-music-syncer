@@ -1,12 +1,10 @@
 import { Link } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { Download } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { AlbumView, ArtistView } from '../../../shared/ipc'
-import { invoke } from '../lib/api'
 import { cx, plural } from '../lib/format'
+import { FullDiscographyToggle } from './FullDiscographyToggle'
 import { Artwork } from './ui/Artwork'
-import { Tooltip } from './ui/Tooltip'
 
 const GAP = 20
 
@@ -123,36 +121,11 @@ export function ArtistGrid(props: {
                   : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
               )}
             >
-              <Tooltip
-                interactive
-                label={
-                  artist.fullDiscography
-                    ? 'Full Discography: downloading every album, single and EP'
-                    : 'Full Discography: download every album, single and EP'
-                }
-              >
-                <button
-                  type="button"
-                  aria-label="Full Discography"
-                  aria-pressed={artist.fullDiscography}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    void invoke('library:setFullDiscography', {
-                      artistId: artist.id,
-                      fullDiscography: !artist.fullDiscography,
-                    }).then(props.onChanged)
-                  }}
-                  className={cx(
-                    'w-8 h-8 rounded-md backdrop-blur flex items-center justify-center transition-colors',
-                    artist.fullDiscography
-                      ? 'bg-white text-black'
-                      : 'bg-black/55 text-zinc-300 hover:text-white'
-                  )}
-                >
-                  <Download className="w-4 h-4" strokeWidth={2} />
-                </button>
-              </Tooltip>
+              <FullDiscographyToggle
+                artist={artist}
+                shape="overlay"
+                onChanged={props.onChanged}
+              />
             </div>
           )}
           <div className="mt-2 text-[13px] truncate">{artist.name}</div>
