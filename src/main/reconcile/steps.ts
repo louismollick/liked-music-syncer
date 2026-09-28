@@ -1843,15 +1843,21 @@ export async function processTombstones(
         .from(files)
         .where(eq(files.trackId, trackId))
         .get()
+      const check = (relative: string) =>
+        deps.rclone
+          .verify(
+            remote,
+            path.join(settings.libraryFolder, relative),
+            relative,
+            signal
+          )
+          .then(Boolean)
       known = file
-        ? deps.rclone
-            .verify(
-              remote,
-              path.join(settings.libraryFolder, file.relativePath),
-              file.relativePath,
-              signal
-            )
-            .then(Boolean)
+        ? check(file.relativePath).then(
+            async (audio) =>
+              audio &&
+              (!file.lrcSha256 || (await check(sidecarPath(file.relativePath))))
+          )
         : Promise.resolve(false)
       verified.set(trackId, known)
     }

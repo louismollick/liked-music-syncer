@@ -8,6 +8,7 @@ import {
 } from '../../src/main/inventory/inventory'
 import {
   artists,
+  contributions,
   files,
   operations,
   tracks,
@@ -17,6 +18,7 @@ import {
   checkLikedSongs,
   claimAdoptedFiles,
   linkContributions,
+  updateWantedStates,
 } from '../../src/main/reconcile/sources'
 import { deleteTracks, runMatch } from '../../src/main/reconcile/steps'
 import { credit, Harness, release, releaseMatch, song } from './harness'
@@ -83,6 +85,16 @@ describe('fourth review fixes', () => {
     expect(waiting.state).toBe('pending')
     expect(waiting.lastError).toMatch(/earlier delete/)
     expect(waiting.nextAttemptAt).not.toBeNull()
+    // Once the delete is done, the wait ends in a normal run with a fresh count.
+    h.time = new Date(h.time.getTime() + 7 * 60 * 60_000)
+    h.reconciler.markDirty()
+    await h.idle()
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    h.reconciler.markDirty()
+    await h.idle()
+    const done = h.rows().find((row) => row.id === waiting.id)!
+    expect(done.state).toBe('done')
+    expect(done.attempts).toBe(0)
   })
 
   it('keeps a file downloaded after Stop managing as Unmanaged, not tracked', async () => {
@@ -286,5 +298,27 @@ describe('fourth review fixes', () => {
     )
     expect(h.file(track.id)?.relativePath).toBe(to)
     expect(released(h, to)).toBeUndefined()
+  })
+
+  it('keeps a No Longer Wanted track deleting until its delete finishes, even if wanted again', async () => {
+    const h = harness()
+    h.catalog.likes = [song('back', 'Back')]
+    await h.start()
+    const track = h.rows()[0]
+    h.catalog.likes = []
+    h.catalog.declaredCount = 0
+    await h.check()
+    await h.stop()
+    deleteTracks(h.deps, [track.id], 'local')
+    h.db
+      .update(contributions)
+      .set({ active: true })
+      .where(eq(contributions.trackId, track.id))
+      .run()
+    updateWantedStates(h.db, {
+      accountId: h.account,
+      fullDiscographyArtistIds: [],
+    })
+    expect(h.rows()[0].state).toBe('no_longer_wanted')
   })
 })

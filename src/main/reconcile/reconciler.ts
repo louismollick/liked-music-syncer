@@ -777,6 +777,13 @@ export class Reconciler {
         else if (step === 'move') await runMove(this.deps, track, run)
         else if (step === 'upload') await runUpload(this.deps, track, run)
         worked = true
+        // Retries count consecutive failures; a step that worked (after a
+        // wait, say) starts the count again.
+        this.db
+          .update(tracks)
+          .set({ attempts: 0 })
+          .where(and(eq(tracks.id, trackId), sql`${tracks.attempts} > 0`))
+          .run()
       } catch (error) {
         if (!this.running || signal.aborted) {
           this.db

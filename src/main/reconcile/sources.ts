@@ -715,6 +715,8 @@ export function updateWantedStates(
     UPDATE tracks SET state = 'pending', updated_at = ${at}
     WHERE state = 'no_longer_wanted'
       AND EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = tracks.id AND c.active = 1)
+      -- A delete the user asked for finishes first; the track comes back after.
+      AND NOT EXISTS (SELECT 1 FROM tombstones tb WHERE tb.track_id = tracks.id AND tb.done_at IS NULL)
   `)
   // Marking tracks unwanted waits for the liked-songs source to have completed a
   // full check (or, without an account, every full-discography catalog), so a
