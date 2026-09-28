@@ -133,16 +133,7 @@ Crash tests inject a failure after each side effect and before each commit, rest
 
 ### Adoption of the existing library
 
-On first run with an empty database, the inventory reads every `.m4a` in the folder.
-
-- Files with `LMS_TAG_SCHEMA_VERSION` become tracks with `adopted = true`, rebuilt only from facts in the tags: release ID and kind, source and resolved video IDs, title, credits, album fields, numbers, date, genre, ISRC, MusicBrainz recording ID. Embedded lyrics become `lyrics_text` (synced when a matching `.lrc` sidecar exists; the sidecar wins), embedded artwork becomes `cover_path`. The lyrics source is unknown and shown as such. They are marked done.
-- Adopted identity is provisional: `adopted:<releaseId>:<resolvedVideoId>` or `adopted:video:<videoId>`, because v5 files may carry a search-candidate ID or the liked video ID instead of the release track-list ID. When a liked-songs check links contributions, a like of the video an adopted file records as its source (`LMS_YOUTUBE_MUSIC_TRACK_ID`) claims that file immediately: no match, no download, no rewrite. The old app downloaded the file because that exact video was liked, so this is the user's intent even when today's matcher would pick another Release. A catalog contribution claims the adopted file with the same release and video. The provisional key is replaced by the canonical one only when a Refresh re-matches the track, which downloads again only if the catalog video differs from the file's audio source (the old file stays until the replacement is verified). Unclaimed adopted files become No Longer Wanted after the first complete checks. (Revised during verification: the first draft deferred claims to the match step, which briefly marked the whole adopted library No Longer Wanted and would re-download files whose Release the new matcher chose differently.)
-- Files whose `LMS_SOURCE_ORIGIN` is `favorite_artist_release` do not restore Favorite Artists automatically, because the tags do not say which artist was the favorite. Their credited artists appear as suggestions under a "Suggested from your old library" filter on the Artists list, each confirmed with one click.
-- Contributions link on the first liked-songs check and first catalog checks. Adopted tracks that no source claims after every source's first complete check become No Longer Wanted, which the user can review; nothing is deleted.
-- Files whose path differs from the fixed layout (for example Standalone Tracks under `Unknown Album` with job-index track numbers) get a retag (album becomes the title, track 1/1) and a move, local and remote.
-- Everything else is an Unmanaged File.
-
-Adoption is tested on a copy of part of the real library before the PR is opened. The PR description lists what the first run on the real folder will change.
+Superseded by [ADR 0007](../adr/0007-restore-only-confirmed-matches.md). The app no longer adopts files the previous app wrote. It restores only files that record a Match this app looked up, and the existing Library was rebuilt from current sources (see [catalog-and-adoption-repair.md](catalog-and-adoption-repair.md)).
 
 ## UI
 

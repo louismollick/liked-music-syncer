@@ -12,9 +12,17 @@ import {
   tracks,
   unmanagedFiles,
 } from '../library/schema'
-import type { Match, MatchedRelease } from '../match/types'
+import {
+  type Match,
+  type MatchedRelease,
+  RESOLUTION_METHODS,
+  type ResolutionMethod,
+  releaseIdentityKey,
+  standaloneIdentityKey,
+} from '../match/types'
 import {
   CATALOG_SOURCE_ORIGIN,
+  changedTagParts,
   readTags,
   sha256,
   type TagFields,
@@ -77,22 +85,34 @@ async function saveCover(
   return target
 }
 
-/** Rebuilds a Match from v5/v6 tags, using only facts the tags contain. */
+/**
+ * Restores the Match a file records, or null when the file does not prove this
+ * app matched it: no confirmation atom, or missing or contradictory facts.
+ * Files the previous app wrote are never restored; they stay Unmanaged.
+ */
 export function matchFromTags(fields: TagFields): Match | null {
-  const sourceVideoId = fields.lms.sourceVideoId
-  if (!sourceVideoId) return null
-  const catalogVideoId = fields.lms.resolvedVideoId ?? sourceVideoId
-  const releaseId = fields.lms.releaseBrowseId
-  const credits = fields.lms.artistCredits.length
-    ? fields.lms.artistCredits
+  const lms = fields.lms
+  if (!lms.matchConfirmed) return null
+  const sourceVideoId = lms.sourceVideoId
+  const catalogVideoId = lms.resolvedVideoId
+  const method = lms.resolutionMethod as ResolutionMethod | null
+  if (!sourceVideoId || !catalogVideoId || !fields.title) return null
+  if (!method || !RESOLUTION_METHODS.includes(method)) return null
+  const releaseId = lms.releaseBrowseId
+  // A Standalone Track has no Release and downloads the liked video itself.
+  if ((method === 'standalone') !== !releaseId) return null
+  if (!releaseId && catalogVideoId !== sourceVideoId) return null
+  if (releaseId && !(lms.releaseTitle ?? fields.album)) return null
+  const credits = lms.artistCredits.length
+    ? lms.artistCredits
     : fields.artist
       ? [{ name: fields.artist, channelId: null }]
       : []
   const release: MatchedRelease | null = releaseId
     ? {
         browseId: releaseId,
-        title: fields.lms.releaseTitle ?? fields.album ?? '',
-        kind: releaseKindFromTag(fields.lms.releaseKind),
+        title: lms.releaseTitle ?? fields.album ?? '',
+        kind: releaseKindFromTag(lms.releaseKind),
         artists: credits,
         year: yearFromDate(fields.date),
         date: fields.date,
@@ -108,20 +128,19 @@ export function matchFromTags(fields: TagFields): Match | null {
     sourceVideoId,
     catalogVideoId,
     identityKey: releaseId
-      ? `adopted:${releaseId}:${catalogVideoId}`
-      : `adopted:video:${sourceVideoId}`,
+      ? releaseIdentityKey(releaseId, catalogVideoId)
+      : standaloneIdentityKey(sourceVideoId),
     release,
-    title: fields.title ?? '',
+    title: fields.title,
     artists: credits,
     // Standalone Tracks are filed as their own single (album = title).
-    album: releaseId ? (fields.album ?? '') : (fields.title ?? ''),
+    album: releaseId ? (fields.album ?? '') : fields.title,
     albumArtist: fields.albumArtist ?? joinArtistNames(credits.slice(0, 1)),
     durationSeconds: null,
     coverUrl: null,
     lyricsBrowseId: null,
-    resolutionMethod:
-      (fields.lms.resolutionMethod as Match['resolutionMethod']) ??
-      'watch_playlist',
+    resolutionMethod: method,
+    confirmed: true,
   }
 }
 
@@ -170,13 +189,33 @@ export async function adoptFiles(
     ].map(pathKey)
   )
   // Case-insensitive: an older record may spell a folder differently than disk.
-  const entries = (await walkAudio(root)).filter(
-    (entry) => !known.has(pathKey(entry.relativePath))
-  )
+  // Sorted, so when two files hold one Release Track the same one is kept.
+  const entries = (await walkAudio(root))
+    .filter((entry) => !known.has(pathKey(entry.relativePath)))
+    .sort((a, b) => (a.relativePath < b.relativePath ? -1 : 1))
   let adopted = 0
   let unmanaged = 0
   const suggested = new Set<string>()
   const at = deps.now().toISOString()
+  const listUnmanaged = (
+    entry: { relativePath: string; size: number; mtimeMs: number },
+    released = false
+  ) => {
+    deps.db
+      .insert(unmanagedFiles)
+      .values({ ...entry, seenAt: at, released })
+      .onConflictDoUpdate({
+        target: unmanagedFiles.relativePath,
+        set: {
+          size: entry.size,
+          mtimeMs: entry.mtimeMs,
+          seenAt: at,
+          ...(released ? { released } : {}),
+        },
+      })
+      .run()
+    unmanaged += 1
+  }
   for (const [index, entry] of entries.entries()) {
     onProgress?.(index, entries.length)
     const absolute = path.join(root, entry.relativePath)
@@ -184,96 +223,97 @@ export async function adoptFiles(
     try {
       read = readTags(absolute)
     } catch {
-      deps.db
-        .insert(unmanagedFiles)
-        .values({
-          relativePath: entry.relativePath,
-          size: entry.size,
-          mtimeMs: entry.mtimeMs,
-          seenAt: at,
-        })
-        .onConflictDoNothing()
-        .run()
-      unmanaged += 1
+      listUnmanaged(entry)
       continue
     }
-    const match = read.fields.lms.schemaVersion
-      ? matchFromTags(read.fields)
-      : null
+    const match = matchFromTags(read.fields)
     if (!match) {
-      deps.db
-        .insert(unmanagedFiles)
-        .values({
-          relativePath: entry.relativePath,
-          size: entry.size,
-          mtimeMs: entry.mtimeMs,
-          seenAt: at,
-        })
-        .onConflictDoUpdate({
-          target: unmanagedFiles.relativePath,
-          set: { size: entry.size, mtimeMs: entry.mtimeMs, seenAt: at },
-        })
-        .run()
-      unmanaged += 1
+      listUnmanaged(entry)
       continue
     }
     const lrcPath = path.join(root, sidecarPath(entry.relativePath))
-    const lrcText = (await exists(lrcPath))
-      ? (await readFile(lrcPath, 'utf8')).trim()
-      : null
+    const hasSidecar = await exists(lrcPath)
+    const existing = deps.db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.identityKey, match.identityKey))
+      .get()
+    const existingFile = existing
+      ? deps.db
+          .select({ id: files.trackId })
+          .from(files)
+          .where(eq(files.trackId, existing.id))
+          .get()
+      : undefined
+    if (existing && (existingFile || existing.state === 'released')) {
+      // Another file already holds this Release Track, or the user stopped
+      // managing it: keep this copy on disk, untouched, as Unmanaged.
+      listUnmanaged(entry, true)
+      if (hasSidecar) {
+        const info = await stat(lrcPath)
+        listUnmanaged(
+          {
+            relativePath: sidecarPath(entry.relativePath),
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+          },
+          true
+        )
+      }
+      continue
+    }
+    const lrcText = hasSidecar ? (await readFile(lrcPath, 'utf8')).trim() : null
     const lyricsText = lrcText || read.fields.lyrics
     const lyricsStatus = classifyLyrics(lyricsText)
     const coverPath = await saveCover(deps.coversDir, read.cover)
     const contentSha = await sha256File(absolute)
     const lrcSha = lrcText !== null ? sha256(await readFile(lrcPath)) : null
-    let identityKey = match.identityKey
-    for (
-      let n = 2;
-      deps.db
-        .select({ id: tracks.id })
-        .from(tracks)
-        .where(eq(tracks.identityKey, identityKey))
-        .get();
-      n += 1
-    ) {
-      identityKey = `${match.identityKey}:${n}`
+    const trackId = existing?.id ?? randomUUID()
+    const values = {
+      identityKey: match.identityKey,
+      title: match.title || path.basename(entry.relativePath, '.m4a'),
+      artistCredits: JSON.stringify(match.artists),
+      artist: read.fields.artist ?? joinArtistNames(match.artists),
+      album: match.album,
+      albumArtist: match.albumArtist,
+      releaseId: match.release?.browseId ?? null,
+      releaseKind: match.release?.kind ?? null,
+      // Standalone Tracks carry no numbers; their tags always say 1 of 1.
+      trackNumber: match.release?.trackNumber ?? null,
+      trackTotal: match.release?.trackTotal ?? null,
+      discNumber: match.release?.discNumber ?? null,
+      discTotal: match.release?.discTotal ?? null,
+      date: read.fields.date,
+      year: yearFromDate(read.fields.date),
+      durationSeconds: read.durationSeconds,
+      genre: read.fields.genre,
+      isrc: read.fields.isrc,
+      mbRecordingId: read.fields.mbRecordingId,
+      language: read.fields.language,
+      lyricsStatus,
+      lyricsText: lyricsText || null,
+      spotifyTrackId: read.fields.lms.spotifyTrackId,
+      coverPath,
+      match: JSON.stringify(match),
+      updatedAt: at,
     }
-    const trackId = randomUUID()
     deps.db.transaction((tx) => {
       const db = tx as unknown as Db
-      db.insert(tracks)
-        .values({
-          id: trackId,
-          identityKey,
-          adopted: true,
-          title: match.title || path.basename(entry.relativePath, '.m4a'),
-          artistCredits: JSON.stringify(match.artists),
-          artist: read.fields.artist ?? joinArtistNames(match.artists),
-          album: match.album,
-          albumArtist: match.albumArtist,
-          releaseId: match.release?.browseId ?? null,
-          releaseKind: match.release?.kind ?? null,
-          trackNumber: read.fields.trackNumber,
-          trackTotal: read.fields.trackTotal,
-          discNumber: read.fields.discNumber,
-          discTotal: read.fields.discTotal,
-          date: read.fields.date,
-          year: yearFromDate(read.fields.date),
-          durationSeconds: read.durationSeconds,
-          genre: read.fields.genre,
-          isrc: read.fields.isrc,
-          mbRecordingId: read.fields.mbRecordingId,
-          language: read.fields.language,
-          lyricsStatus,
-          lyricsText: lyricsText || null,
-          spotifyTrackId: read.fields.lms.spotifyTrackId,
-          coverPath,
-          match: JSON.stringify(match),
-          state: 'done',
-          createdAt: at,
-          updatedAt: at,
-        })
-        .run()
+      if (existing) {
+        // A source already wants this Release Track and nothing was downloaded
+        // yet: the restored file is its file, with the Match it records.
+        db.update(tracks).set(values).where(eq(tracks.id, trackId)).run()
+      } else {
+        db.insert(tracks)
+          .values({
+            id: trackId,
+            ...values,
+            adopted: true,
+            state: 'done',
+            createdAt: at,
+          })
+          .run()
+      }
       db.insert(files)
         .values({
           trackId,
@@ -291,6 +331,8 @@ export async function adoptFiles(
         .where(eq(unmanagedFiles.relativePath, entry.relativePath))
         .run()
     })
+    if (existing)
+      deps.db.run(sql`DELETE FROM track_artists WHERE track_id = ${trackId}`)
     linkAdoptedArtists(deps.db, trackId, match.artists)
     if (read.fields.lms.sourceOrigin === CATALOG_SOURCE_ORIGIN) {
       for (const credit of match.artists)
@@ -393,11 +435,7 @@ export async function detectOutsideEdits(
         try {
           const read = readTags(absolute)
           const written = JSON.parse(row.tagFields) as TagFields
-          const { coverSha256: a, ...restRead } = read.fields
-          const { coverSha256: b, ...restWritten } = written
-          if (JSON.stringify(restRead) !== JSON.stringify(restWritten))
-            parts.push('tags')
-          if (a !== b) parts.push('artwork')
+          parts.push(...changedTagParts(read.fields, written))
           if (parts.length === 0) parts.push('audio')
         } catch {
           parts.push('audio')

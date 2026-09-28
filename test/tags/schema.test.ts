@@ -59,6 +59,23 @@ describe('tag schema', () => {
     expect(read.durationSeconds).toBeGreaterThan(0.3)
   })
 
+  it('round-trips match confirmation and treats a missing record field as unconfirmed', () => {
+    const file = makeM4a(path.join(tempDir(), 'c.m4a'))
+    const confirmed = sampleFields()
+    confirmed.lms.matchConfirmed = true
+    writeTags(file, confirmed, null)
+    expect(readTags(file).fields.lms.matchConfirmed).toBe(true)
+    const unconfirmed = sampleFields()
+    writeTags(file, unconfirmed, null)
+    const read = readTags(file).fields
+    expect(read.lms.matchConfirmed).toBe(false)
+    const older = JSON.parse(JSON.stringify(read)) as {
+      lms: Record<string, unknown>
+    }
+    delete older.lms.matchConfirmed
+    expect(fieldDiff(read, older as unknown as TagFields)).toEqual([])
+  })
+
   it('keeps year-only and full dates distinct', () => {
     const file = makeM4a(path.join(tempDir(), 'b.m4a'))
     writeTags(file, sampleFields({ date: '2019' }), null)

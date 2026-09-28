@@ -489,6 +489,37 @@ export function deactivateArtistCatalog(db: Db, artistId: string): void {
 }
 
 /**
+ * Restored files not yet claimed by any source, by the liked video each
+ * records. A video recorded by several files maps to none of them: the like is
+ * matched normally and merges by Release Track identity instead.
+ */
+function unclaimedRestoredBySource(db: Db): Map<string, string> {
+  const bySource = new Map<string, string[]>()
+  for (const row of db
+    .select({ id: tracks.id, match: tracks.match })
+    .from(tracks)
+    .where(eq(tracks.adopted, true))
+    .all()) {
+    try {
+      const saved = JSON.parse(row.match ?? 'null') as {
+        sourceVideoId?: string
+      } | null
+      if (saved?.sourceVideoId)
+        bySource.set(saved.sourceVideoId, [
+          ...(bySource.get(saved.sourceVideoId) ?? []),
+          row.id,
+        ])
+    } catch {
+      // Unreadable saved match: leave the track unclaimed.
+    }
+  }
+  const unique = new Map<string, string>()
+  for (const [videoId, ids] of bySource)
+    if (ids.length === 1) unique.set(videoId, ids[0])
+  return unique
+}
+
+/**
  * Gives every active contribution a track. Catalog contributions know their
  * identity; liked contributions get a provisional track (no identity key)
  * that the match step re-keys or merges.
@@ -505,60 +536,26 @@ export function linkContributions(
       .from(contributions)
       .where(and(eq(contributions.active, true), isNull(contributions.trackId)))
       .all()
-    // Adopted files record the liked video they were downloaded from; a like of
-    // that same video claims the file right away (no download, no re-key yet).
-    const adoptedBySource = new Map<string, string>()
-    for (const candidate of tx
-      .select({ id: tracks.id, match: tracks.match })
-      .from(tracks)
-      .where(eq(tracks.adopted, true))
-      .all()) {
-      try {
-        const saved = JSON.parse(candidate.match ?? 'null') as {
-          sourceVideoId?: string
-        } | null
-        if (saved?.sourceVideoId && !adoptedBySource.has(saved.sourceVideoId)) {
-          adoptedBySource.set(saved.sourceVideoId, candidate.id)
-        }
-      } catch {
-        // Unreadable saved match: leave the track unclaimed.
-      }
-    }
+    // Restored files record the liked video they were downloaded from; a like of
+    // that same video claims the file right away (no match, no download).
+    const adoptedBySource = unclaimedRestoredBySource(tx as unknown as Db)
     for (const row of unlinked) {
       const raw = JSON.parse(row.raw) as LikedRaw | CatalogRaw
       if (raw.kind === 'catalog') {
         const key = releaseIdentityKey(raw.release.browseId, raw.track.videoId)
         const existing = tx
-          .select({ id: tracks.id })
+          .select({ id: tracks.id, adopted: tracks.adopted })
           .from(tracks)
           .where(eq(tracks.identityKey, key))
           .get()
-        const adopted = existing
-          ? null
-          : tx
-              .select({ id: tracks.id })
-              .from(tracks)
-              .where(
-                eq(
-                  tracks.identityKey,
-                  `adopted:${raw.release.browseId}:${raw.track.videoId}`
-                )
-              )
-              .get()
-        const targetId = existing?.id ?? adopted?.id
-        if (targetId) {
-          if (adopted) {
+        if (existing) {
+          if (existing.adopted)
             tx.update(tracks)
-              .set({
-                identityKey: key,
-                adopted: false,
-                updatedAt: at,
-              })
-              .where(eq(tracks.id, adopted.id))
+              .set({ adopted: false, updatedAt: at })
+              .where(eq(tracks.id, existing.id))
               .run()
-          }
           tx.update(contributions)
-            .set({ trackId: targetId })
+            .set({ trackId: existing.id })
             .where(eq(contributions.id, row.id))
             .run()
           continue
@@ -645,22 +642,7 @@ export function claimAdoptedFiles(
   const at = nowIso(now)
   let claimed = 0
   db.transaction((tx) => {
-    const adopted = new Map<string, string>()
-    for (const row of tx
-      .select({ id: tracks.id, match: tracks.match })
-      .from(tracks)
-      .where(eq(tracks.adopted, true))
-      .all()) {
-      try {
-        const saved = JSON.parse(row.match ?? 'null') as {
-          sourceVideoId?: string
-        } | null
-        if (saved?.sourceVideoId && !adopted.has(saved.sourceVideoId))
-          adopted.set(saved.sourceVideoId, row.id)
-      } catch {
-        // Unreadable saved match: leave unclaimed.
-      }
-    }
+    const adopted = unclaimedRestoredBySource(tx as unknown as Db)
     if (adopted.size === 0) return
     const candidates = tx.all<{
       id: string

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { and, eq, inArray, isNull, like, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
@@ -48,6 +48,7 @@ import type { ToolPaths } from '../platform/tools'
 import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
 import {
   CATALOG_SOURCE_ORIGIN,
+  changedTagParts,
   fieldDiff,
   readTags,
   sha256,
@@ -179,14 +180,7 @@ export function nextStep(
   settings: Settings
 ): StepKind | null {
   const match = parseMatch(track)
-  if (
-    !match ||
-    track.refreshRequested ||
-    !track.identityKey ||
-    track.identityKey.startsWith('adopted:')
-  ) {
-    if (!match || track.refreshRequested) return 'match'
-  }
+  if (!match || track.refreshRequested) return 'match'
   if (file?.outsideEdit) return null
   if (
     !file ||
@@ -396,25 +390,6 @@ async function processCover(
   return target
 }
 
-function adoptedClaim(db: Db, match: Match): TrackRow | undefined {
-  // Adopted files keep a provisional key until a Match re-keys them, even after a like claims them.
-  const candidates = db
-    .select()
-    .from(tracks)
-    .where(like(tracks.identityKey, 'adopted:%'))
-    .all()
-  return candidates.find((candidate) => {
-    const saved = parseMatch(candidate)
-    if (!saved) return false
-    if (match.release) {
-      if (candidate.releaseId !== match.release.browseId) return false
-      const ids = new Set([saved.sourceVideoId, saved.catalogVideoId])
-      return ids.has(match.sourceVideoId) || ids.has(match.catalogVideoId)
-    }
-    return !candidate.releaseId && saved.sourceVideoId === match.sourceVideoId
-  })
-}
-
 /** Moves `from`'s contributions (and file, when `into` has none) into `into`, then deletes `from`. */
 function mergeTracks(
   db: Db,
@@ -573,13 +548,9 @@ export async function assertUnchanged(
       (await sha256File(absolute)) !== file.contentSha256
     ) {
       try {
-        const read = readTags(absolute).fields
-        const written = parseFields(file)
-        const { coverSha256: readCover, ...readRest } = read
-        const { coverSha256: writtenCover, ...writtenRest } = written
-        if (JSON.stringify(readRest) !== JSON.stringify(writtenRest))
-          parts.push('tags')
-        if (readCover !== writtenCover) parts.push('artwork')
+        parts.push(
+          ...changedTagParts(readTags(absolute).fields, parseFields(file))
+        )
       } catch {
         // Unreadable tags: report it as an audio change below.
       }
@@ -734,7 +705,6 @@ async function matchOnce(
     .where(eq(tracks.identityKey, match.identityKey))
     .get()
   if (candidate?.id === track.id) candidate = undefined
-  if (!candidate) candidate = adoptedClaim(deps.db, match)
   const candidateFile =
     candidate && candidate.id !== track.id
       ? deps.db
@@ -764,10 +734,6 @@ async function matchOnce(
       .where(eq(tracks.identityKey, match.identityKey))
       .get()
     if (target?.id === current.id) target = undefined
-    if (!target) {
-      const claimed = adoptedClaim(db, match)
-      if (claimed && claimed.id !== current.id) target = claimed
-    }
     // A catalog contribution only ever belongs to its own Release Track.
     const required = [
       ...catalogIdentities(db, current.id),
@@ -830,7 +796,7 @@ async function matchOnce(
         spotifyTrackId,
         coverUrl: match.coverUrl,
         coverPath,
-        match: JSON.stringify(match),
+        match: JSON.stringify({ ...match, confirmed: true } satisfies Match),
         enrichmentErrors: JSON.stringify(errors),
         refreshRequested: false,
         updatedAt: at,

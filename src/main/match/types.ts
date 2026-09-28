@@ -68,7 +68,20 @@ export interface Match {
   /** MPLY... lyrics browse ID found while matching, if any. */
   lyricsBrowseId: string | null
   resolutionMethod: ResolutionMethod
+  /**
+   * Set when this app's matcher produced the Match, or when it was restored
+   * from a file that records exactly that. Older saved Matches lack it.
+   */
+  confirmed?: true
 }
+
+export const RESOLUTION_METHODS: readonly ResolutionMethod[] = [
+  'favorite_artist_release_exact',
+  'liked_album_exact',
+  'search_song_exact',
+  'watch_playlist',
+  'standalone',
+]
 
 export interface Enrichment {
   mbRecordingId: string | null
