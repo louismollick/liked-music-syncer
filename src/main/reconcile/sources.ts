@@ -4,6 +4,7 @@ import type {
   CatalogRelease,
   CatalogTrack,
   LikedSong,
+  ReleaseShelf,
   YouTubeMusicCatalog,
 } from '../catalog/types'
 import { CatalogShapeError } from '../catalog/types'
@@ -39,6 +40,8 @@ export interface LikedRaw {
 export interface CatalogRaw {
   kind: 'catalog'
   artistId: string
+  /** Artist page list the release came from. Missing on rows saved before it was recorded. */
+  shelf?: ReleaseShelf
   release: Omit<CatalogRelease, 'tracks'>
   track: CatalogTrack
 }
@@ -259,10 +262,28 @@ export async function checkLikedSongs(options: {
   }
 }
 
-/** Official Main Catalog release kinds (albums, singles, EPs). */
-function isMainCatalogRelease(kindLabel: string | null): boolean {
-  if (!kindLabel) return true
-  return /album|single|ep/i.test(kindLabel)
+/** Shelves that held active contributions of the artist's previous snapshot. */
+function populatedShelves(db: Db, artistId: string): Set<ReleaseShelf> {
+  const shelves = new Set<ReleaseShelf>()
+  for (const row of db
+    .select({ raw: contributions.raw })
+    .from(contributions)
+    .where(
+      and(
+        eq(contributions.kind, 'catalog'),
+        eq(contributions.artistId, artistId),
+        eq(contributions.active, true)
+      )
+    )
+    .all()) {
+    try {
+      const shelf = (JSON.parse(row.raw) as Partial<CatalogRaw>).shelf
+      if (shelf) shelves.add(shelf)
+    } catch {
+      // Unreadable raw: it can't say which shelf it came from.
+    }
+  }
+  return shelves
 }
 
 /** Fetches one full-discography artist's Official Main Catalog and commits it. */
@@ -285,13 +306,19 @@ export async function checkArtistCatalog(options: {
     startedAt
   )
   try {
-    const refs = (
-      await catalog.artistReleases(options.channelId, options.signal)
-    ).filter((ref) => isMainCatalogRelease(ref.kindLabel))
+    // Every release on the Albums and Singles & EPs shelves is Official Main Catalog.
+    const refs = await catalog.artistReleases(options.channelId, options.signal)
     if (refs.length === 0) {
       throw new CatalogShapeError(
         'The artist page listed no albums or singles.'
       )
+    }
+    const shelves = new Set(refs.map((ref) => ref.shelf))
+    for (const shelf of populatedShelves(db, artistId)) {
+      if (!shelves.has(shelf))
+        throw new SuspiciousSnapshotError(
+          `The artist page no longer lists any ${shelf === 'albums' ? 'albums' : 'singles or EPs'}; keeping the previous catalog.`
+        )
     }
     const staged: CatalogRaw[] = []
     for (const ref of refs) {
@@ -304,7 +331,13 @@ export async function checkArtistCatalog(options: {
       }
       const { tracks: _tracks, ...releaseInfo } = release
       for (const track of available) {
-        staged.push({ kind: 'catalog', artistId, release: releaseInfo, track })
+        staged.push({
+          kind: 'catalog',
+          artistId,
+          shelf: ref.shelf,
+          release: releaseInfo,
+          track,
+        })
       }
     }
     const previousActive =

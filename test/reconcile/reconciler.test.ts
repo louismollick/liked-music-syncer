@@ -87,7 +87,7 @@ describe('reconciler', () => {
       {
         browseId: album.browseId,
         title: album.title,
-        kindLabel: 'Album',
+        shelf: 'albums',
         year: 2024,
         thumbnailUrl: null,
       },
@@ -173,7 +173,7 @@ describe('reconciler', () => {
       {
         browseId: full.browseId,
         title: full.title,
-        kindLabel: 'Album',
+        shelf: 'albums',
         year: 2024,
         thumbnailUrl: null,
       },
