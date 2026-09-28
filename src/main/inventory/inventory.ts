@@ -232,43 +232,15 @@ export async function adoptFiles(
       continue
     }
     const lrcPath = path.join(root, sidecarPath(entry.relativePath))
-    const hasSidecar = await exists(lrcPath)
-    const existing = deps.db
-      .select()
-      .from(tracks)
-      .where(eq(tracks.identityKey, match.identityKey))
-      .get()
-    const existingFile = existing
-      ? deps.db
-          .select({ id: files.trackId })
-          .from(files)
-          .where(eq(files.trackId, existing.id))
-          .get()
-      : undefined
-    if (existing && (existingFile || existing.state === 'released')) {
-      // Another file already holds this Release Track, or the user stopped
-      // managing it: keep this copy on disk, untouched, as Unmanaged.
-      listUnmanaged(entry, true)
-      if (hasSidecar) {
-        const info = await stat(lrcPath)
-        listUnmanaged(
-          {
-            relativePath: sidecarPath(entry.relativePath),
-            size: info.size,
-            mtimeMs: info.mtimeMs,
-          },
-          true
-        )
-      }
-      continue
-    }
-    const lrcText = hasSidecar ? (await readFile(lrcPath, 'utf8')).trim() : null
+    const sidecarInfo = await stat(lrcPath).catch(() => null)
+    const lrcText = sidecarInfo
+      ? (await readFile(lrcPath, 'utf8')).trim()
+      : null
     const lyricsText = lrcText || read.fields.lyrics
     const lyricsStatus = classifyLyrics(lyricsText)
     const coverPath = await saveCover(deps.coversDir, read.cover)
     const contentSha = await sha256File(absolute)
     const lrcSha = lrcText !== null ? sha256(await readFile(lrcPath)) : null
-    const trackId = existing?.id ?? randomUUID()
     const values = {
       identityKey: match.identityKey,
       title: match.title || path.basename(entry.relativePath, '.m4a'),
@@ -297,12 +269,62 @@ export async function adoptFiles(
       match: JSON.stringify(match),
       updatedAt: at,
     }
-    deps.db.transaction((tx) => {
+    // Decided inside the transaction: a source check running meanwhile may
+    // have created this Release Track since the file was read.
+    const outcome = deps.db.transaction((tx): 'extra' | string => {
       const db = tx as unknown as Db
+      const existing = db
+        .select()
+        .from(tracks)
+        .where(eq(tracks.identityKey, match.identityKey))
+        .get()
+      const hasFile =
+        existing &&
+        db
+          .select({ id: files.trackId })
+          .from(files)
+          .where(eq(files.trackId, existing.id))
+          .get()
+      if (
+        existing &&
+        (hasFile ||
+          existing.state === 'released' ||
+          existing.state === 'no_longer_wanted')
+      ) {
+        // Another file holds this Release Track, or the user stopped managing
+        // or chose to delete it: keep this copy on disk, untouched, as Unmanaged.
+        const release = (relativePath: string, size: number, mtimeMs: number) =>
+          db
+            .insert(unmanagedFiles)
+            .values({ relativePath, size, mtimeMs, seenAt: at, released: true })
+            .onConflictDoUpdate({
+              target: unmanagedFiles.relativePath,
+              set: { size, mtimeMs, seenAt: at, released: true },
+            })
+            .run()
+        release(entry.relativePath, entry.size, entry.mtimeMs)
+        if (sidecarInfo)
+          release(
+            sidecarPath(entry.relativePath),
+            sidecarInfo.size,
+            sidecarInfo.mtimeMs
+          )
+        return 'extra'
+      }
+      const trackId = existing?.id ?? randomUUID()
       if (existing) {
         // A source already wants this Release Track and nothing was downloaded
         // yet: the restored file is its file, with the Match it records.
-        db.update(tracks).set(values).where(eq(tracks.id, trackId)).run()
+        db.update(tracks)
+          .set({
+            ...values,
+            state: 'pending',
+            attempts: 0,
+            nextAttemptAt: null,
+          })
+          .where(eq(tracks.id, trackId))
+          .run()
+        db.run(sql`DELETE FROM track_artists WHERE track_id = ${trackId}`)
       } else {
         db.insert(tracks)
           .values({
@@ -330,10 +352,13 @@ export async function adoptFiles(
       db.delete(unmanagedFiles)
         .where(eq(unmanagedFiles.relativePath, entry.relativePath))
         .run()
+      return trackId
     })
-    if (existing)
-      deps.db.run(sql`DELETE FROM track_artists WHERE track_id = ${trackId}`)
-    linkAdoptedArtists(deps.db, trackId, match.artists)
+    if (outcome === 'extra') {
+      unmanaged += sidecarInfo ? 2 : 1
+      continue
+    }
+    linkAdoptedArtists(deps.db, outcome, match.artists)
     if (read.fields.lms.sourceOrigin === CATALOG_SOURCE_ORIGIN) {
       for (const credit of match.artists)
         if (credit.channelId) suggested.add(`channel:${credit.channelId}`)

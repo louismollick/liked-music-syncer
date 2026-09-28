@@ -317,7 +317,7 @@ export async function checkArtistCatalog(options: {
     for (const shelf of populatedShelves(db, artistId)) {
       if (!shelves.has(shelf))
         throw new SuspiciousSnapshotError(
-          `The artist page no longer lists any ${shelf === 'albums' ? 'albums' : 'singles or EPs'}; keeping the previous catalog.`
+          `The artist page no longer lists any ${shelf === 'albums' ? 'albums' : 'singles or EPs'}; keeping the previous catalog. If that is right, turn Full Discography off and on again.`
         )
     }
     const staged: CatalogRaw[] = []
@@ -503,7 +503,10 @@ function unclaimedRestoredBySource(db: Db): Map<string, string> {
     try {
       const saved = JSON.parse(row.match ?? 'null') as {
         sourceVideoId?: string
+        resolutionMethod?: string
       } | null
+      // A catalog wrote this file; its video was never a liked source.
+      if (saved?.resolutionMethod === 'favorite_artist_release_exact') continue
       if (saved?.sourceVideoId)
         bySource.set(saved.sourceVideoId, [
           ...(bySource.get(saved.sourceVideoId) ?? []),

@@ -170,6 +170,8 @@ describe('merge file lifecycle', () => {
     h.settings.remoteEnabled = true
     h.reconciler.retry(m.target.id)
     await h.start()
+    await h.stop()
+    await tidy(h)
     expect(existsSync(oldRemote)).toBe(false)
   })
 

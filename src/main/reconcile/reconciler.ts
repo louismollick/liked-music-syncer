@@ -57,6 +57,7 @@ import {
   OutsideEditError,
   processTombstones,
   REWRITE_AUDIO,
+  RetryLaterError,
   runAcquire,
   runMatch,
   runMove,
@@ -502,6 +503,9 @@ export class Reconciler {
    */
   stopManaging(trackId: string): void {
     const at = this.deps.now().toISOString()
+    // Abort its running step; a file it still manages to place is kept as Unmanaged.
+    if (this.current?.trackId === trackId)
+      this.controller?.abort(new Error('stopped managing'))
     this.db.transaction((tx) => {
       const db = tx as unknown as Db
       const file = db
@@ -807,6 +811,25 @@ export class Reconciler {
 
   private fail(trackId: string, step: StepKind, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error)
+    if (error instanceof RetryLaterError) {
+      // Not a failure: wait, without using up the track's retries.
+      this.db
+        .update(tracks)
+        .set({
+          state: 'pending',
+          currentStep: null,
+          nextAttemptAt: new Date(
+            this.deps.now().getTime() + error.delayMs
+          ).toISOString(),
+          lastError: message,
+          lastErrorStep: step,
+        })
+        .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
+        .run()
+      this.current = null
+      this.emitSoon()
+      return
+    }
     const kind = errorKindOf(error)
     const track = this.db
       .select()

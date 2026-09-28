@@ -489,17 +489,16 @@ function mergeTracks(
   const fromUpload = upload(from.id)
   const intoUpload = upload(into.id)
   // The upload record describes the kept file's remote copy, so it moves with it.
-  const keptUpload =
-    kept === checks.from
+  const keptUpload = !kept
+    ? undefined
+    : kept === checks.from
       ? fromUpload
-      : kept === checks.into
-        ? intoUpload
-        : undefined
+      : intoUpload
   for (const check of [checks.from, checks.into]) {
     if (!check || check === kept) continue
     displaceFile(db, check, into.id, at)
   }
-  if (kept === checks.from && checks.from) {
+  if (kept && kept === checks.from) {
     db.update(files)
       .set({ trackId: into.id })
       .where(eq(files.trackId, from.id))
@@ -724,6 +723,21 @@ export interface MatchOutcome {
   trackId: string
 }
 
+/**
+ * The step can't run yet for a reason that isn't a failure (a delete still in
+ * progress, sources still changing). The track waits without using retries.
+ */
+export class RetryLaterError extends Error {
+  readonly kind = 'transient' as const
+  constructor(
+    message: string,
+    readonly delayMs = 60_000
+  ) {
+    super(message)
+    this.name = 'RetryLaterError'
+  }
+}
+
 /** Sources changed while the lookup ran; re-running it is not a failure. */
 const STALE = Symbol('stale match')
 const STALE_RETRIES = 5
@@ -744,9 +758,8 @@ export async function runMatch(
       .get()
     if (!reloaded) return { trackId: current.id }
     if (attempt + 1 >= STALE_RETRIES)
-      throw Object.assign(
-        new Error('Its sources kept changing while matching; will try again'),
-        { kind: 'transient' }
+      throw new RetryLaterError(
+        'Its sources kept changing while matching; will try again'
       )
     current = reloaded
   }
@@ -867,7 +880,14 @@ async function matchOnce(
       .where(eq(tracks.id, track.id))
       .get()
     // Deleted, or the user stopped managing it while the lookup ran.
-    if (!current || current.state === 'released') return 'cancelled'
+    // No Longer Wanted meanwhile: nothing may merge or move its file until
+    // the user decides.
+    if (
+      !current ||
+      current.state === 'released' ||
+      current.state === 'no_longer_wanted'
+    )
+      return 'cancelled'
     if (matchSources(db, current.id) !== sourcesBefore) return 'stale'
     const previousIdentityKey = current.identityKey
     let target = db
@@ -991,9 +1011,8 @@ async function matchOnce(
   })
   if (status === 'stale') return STALE
   if (status === 'waiting')
-    throw Object.assign(
-      new Error('Waiting for an earlier delete of this song to finish'),
-      { kind: 'transient' }
+    throw new RetryLaterError(
+      'Waiting for an earlier delete of this song to finish'
     )
   return { trackId: survivor }
 }
@@ -1258,6 +1277,25 @@ function commitFile(
   const at = iso(deps)
   deps.db.transaction((tx) => {
     const db = tx as unknown as Db
+    const state = db
+      .select({ state: tracks.state })
+      .from(tracks)
+      .where(eq(tracks.id, track.id))
+      .get()?.state
+    if (state === 'released') {
+      // Stopped managing while the file was written: keep it, as Unmanaged.
+      releaseToUnmanaged(
+        db,
+        placed.relativePath,
+        placed.size,
+        placed.mtimeMs,
+        at
+      )
+      if (placed.lrcSha256)
+        deferLocalRelease(db, sidecarPath(placed.relativePath), at)
+      clearJournal(db, track.id, step)
+      return
+    }
     const row = {
       trackId: track.id,
       relativePath: placed.relativePath,
@@ -1708,6 +1746,13 @@ export async function runUpload(
   }
   deps.db.transaction((tx) => {
     const db = tx as unknown as Db
+    const state = db
+      .select({ state: tracks.state })
+      .from(tracks)
+      .where(eq(tracks.id, track.id))
+      .get()?.state
+    // Stopped managing meanwhile: the app no longer tracks its remote copy.
+    if (state === 'released') return
     if (db.select().from(uploads).where(eq(uploads.trackId, track.id)).get()) {
       db.update(uploads).set(row).where(eq(uploads.trackId, track.id)).run()
     } else {
@@ -1788,6 +1833,29 @@ export async function processTombstones(
     }
     return known
   }
+  const verified = new Map<string, Promise<boolean>>()
+  const remoteReplacement = (trackId: string, remote: RemoteTarget) => {
+    let known = verified.get(trackId)
+    if (!known) {
+      const file = deps.db
+        .select()
+        .from(files)
+        .where(eq(files.trackId, trackId))
+        .get()
+      known = file
+        ? deps.rclone
+            .verify(
+              remote,
+              path.join(settings.libraryFolder, file.relativePath),
+              file.relativePath,
+              signal
+            )
+            .then(Boolean)
+        : Promise.resolve(false)
+      verified.set(trackId, known)
+    }
+    return known
+  }
   for (const row of pending) {
     if (signal.aborted) return
     // One failing tombstone (e.g. an unreachable remote) must not block the rest.
@@ -1795,12 +1863,14 @@ export async function processTombstones(
       if (row.replacementTrackId) {
         const ready = await replacement(row.replacementTrackId)
         if (!ready.local) continue
-        // Remote copies go only once the replacement is on that same, enabled remote.
+        // Remote copies go only once the replacement is on that same, enabled
+        // remote, checked on the remote itself rather than from the record.
         if (
           row.kind === 'remote' &&
           (!target ||
             targetKey(target) !== row.remoteTarget ||
-            ready.uploadedTo !== row.remoteTarget)
+            ready.uploadedTo !== row.remoteTarget ||
+            !(await remoteReplacement(row.replacementTrackId, target)))
         )
           continue
       }
