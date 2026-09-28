@@ -21,7 +21,7 @@ export function Artwork({
   label: string
   className?: string
   kind?: 'album' | 'artist'
-  /** Grow slightly on hover: of itself, or of the enclosing `group`. */
+  /** Outline on hover: of itself, or of the enclosing `group`. */
   hover?: 'self' | 'group'
 }) {
   const [failed, setFailed] = useState(false)
@@ -31,10 +31,10 @@ export function Artwork({
   const hoverClass =
     hover &&
     cx(
-      'transition-[scale,filter] duration-300 ease-out',
+      'outline-2 outline-offset-2 outline-transparent transition-[outline-color] duration-200',
       hover === 'self'
-        ? 'motion-safe:hover:scale-[1.03] hover:brightness-110'
-        : 'motion-safe:group-hover:scale-[1.03] group-hover:brightness-110'
+        ? 'hover:outline-white/20'
+        : 'group-hover:outline-white/20'
     )
   if (src && !failed) {
     return (
