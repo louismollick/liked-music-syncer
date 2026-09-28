@@ -178,6 +178,13 @@ export const tombstones = sqliteTable('tombstones', {
   reason: text('reason').notNull(),
   createdAt: text('created_at').notNull(),
   doneAt: text('done_at'),
+  /**
+   * Merge cleanup: the surviving track whose replacement must be in place
+   * (locally, or uploaded for remote rows) before this copy is deleted.
+   */
+  replacementTrackId: text('replacement_track_id'),
+  /** Bytes the path must still hold to be deleted; anything else is kept as Unmanaged. */
+  expectedSha256: text('expected_sha256'),
 })
 
 export const operations = sqliteTable('operations', {

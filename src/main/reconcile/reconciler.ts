@@ -50,6 +50,7 @@ import {
 } from './sources'
 import {
   auditRemote,
+  cancelMergeCleanup,
   coversDir,
   deleteTracks,
   nextStep,
@@ -530,6 +531,8 @@ export class Reconciler {
       }
       db.delete(files).where(eq(files.trackId, trackId)).run()
       db.delete(uploads).where(eq(uploads.trackId, trackId)).run()
+      // Copies a merge meant to delete after this track's replacement stay too.
+      cancelMergeCleanup(db, trackId, 'both')
       db.update(tracks)
         .set({ state: 'released', currentStep: null, updatedAt: at })
         .where(eq(tracks.id, trackId))
