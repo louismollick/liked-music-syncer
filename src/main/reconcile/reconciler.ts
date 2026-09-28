@@ -700,7 +700,12 @@ export class Reconciler {
         .from(tracks)
         .where(eq(tracks.id, trackId))
         .get()
-      if (!track || track.state === 'no_longer_wanted' || signal.aborted) {
+      if (
+        !track ||
+        track.state === 'no_longer_wanted' ||
+        track.state === 'released' ||
+        signal.aborted
+      ) {
         this.current = null
         return
       }

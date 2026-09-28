@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { and, eq, inArray, like, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, like, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
@@ -23,6 +23,7 @@ import { pathKey, resolveCollision, sidecarPath } from '../inventory/layout'
 import type { Db } from '../library/db'
 import {
   artists,
+  type ContributionRow,
   contributions,
   type FileRow,
   files,
@@ -36,7 +37,12 @@ import {
   uploads,
 } from '../library/schema'
 import type { LyricsFinder } from '../lyrics/types'
-import type { Match, Matcher, MatchInput } from '../match/types'
+import {
+  type Match,
+  type Matcher,
+  type MatchInput,
+  releaseIdentityKey,
+} from '../match/types'
 import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
 import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
@@ -247,17 +253,67 @@ function releaseWithTracks(
   return release
 }
 
-function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
+/**
+ * The contribution a Match is looked up from. An active catalog contribution
+ * names its exact Release Track, so it wins over a like; otherwise an active
+ * like, and only then inactive ones.
+ */
+function matchSource(db: Db, trackId: string): ContributionRow | undefined {
   const rows = db
     .select()
     .from(contributions)
-    .where(eq(contributions.trackId, track.id))
+    .where(eq(contributions.trackId, trackId))
     .all()
   const active = rows.filter((row) => row.active)
-  const candidates = active.length ? active : rows
-  const chosen =
-    candidates.find((row) => row.kind === 'liked') ??
-    candidates.find((row) => row.kind === 'catalog')
+  if (active.length)
+    return (
+      active.find((row) => row.kind === 'catalog') ??
+      active.find((row) => row.kind === 'liked')
+    )
+  return (
+    rows.find((row) => row.kind === 'liked') ??
+    rows.find((row) => row.kind === 'catalog')
+  )
+}
+
+/** What the match of a track depends on; a change while matching makes the result stale. */
+function matchSources(db: Db, trackId: string): string {
+  const active = db
+    .select({ id: contributions.id, key: contributions.sourceKey })
+    .from(contributions)
+    .where(
+      and(eq(contributions.trackId, trackId), eq(contributions.active, true))
+    )
+    .all()
+    .map((row) => `${row.id}:${row.key}`)
+    .sort()
+  return JSON.stringify({
+    source: matchSource(db, trackId)?.id ?? null,
+    active,
+  })
+}
+
+/** Release Track identities that the track's active catalog contributions require. */
+function catalogIdentities(db: Db, trackId: string): string[] {
+  return db
+    .select({
+      releaseId: contributions.releaseId,
+      videoId: contributions.sourceVideoId,
+    })
+    .from(contributions)
+    .where(
+      and(
+        eq(contributions.trackId, trackId),
+        eq(contributions.kind, 'catalog'),
+        eq(contributions.active, true)
+      )
+    )
+    .all()
+    .map((row) => releaseIdentityKey(row.releaseId ?? '', row.videoId))
+}
+
+function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
+  const chosen = matchSource(db, track.id)
   if (chosen) {
     const raw = JSON.parse(chosen.raw) as LikedRaw | CatalogRaw
     if (raw.kind === 'liked') return { kind: 'liked', song: raw.song }
@@ -551,11 +607,41 @@ export interface MatchOutcome {
   trackId: string
 }
 
+/** Sources changed while the lookup ran; re-running it is not a failure. */
+const STALE = Symbol('stale match')
+const STALE_RETRIES = 5
+
 export async function runMatch(
   deps: StepDeps,
   track: TrackRow,
   run: StepRun
 ): Promise<MatchOutcome> {
+  let current = track
+  for (let attempt = 0; ; attempt += 1) {
+    const outcome = await matchOnce(deps, current, run)
+    if (outcome !== STALE) return outcome
+    const reloaded = deps.db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.id, current.id))
+      .get()
+    if (!reloaded) return { trackId: current.id }
+    if (attempt + 1 >= STALE_RETRIES)
+      throw Object.assign(
+        new Error('Its sources kept changing while matching; will try again'),
+        { kind: 'transient' }
+      )
+    current = reloaded
+  }
+}
+
+async function matchOnce(
+  deps: StepDeps,
+  track: TrackRow,
+  run: StepRun
+): Promise<MatchOutcome | typeof STALE> {
+  const sourcesBefore = matchSources(deps.db, track.id)
+  const sourceId = matchSource(deps.db, track.id)?.id ?? null
   let input = matchInputFor(deps.db, track)
   if (!input)
     throw Object.assign(
@@ -661,14 +747,16 @@ export async function runMatch(
     ? await validFile(libraryRoot(settings), candidateFile)
     : false
   run.signal.throwIfAborted()
-  deps.db.transaction((tx) => {
+  const status = deps.db.transaction((tx): MatchCommit => {
     const db = tx as unknown as Db
     const current = db
       .select()
       .from(tracks)
       .where(eq(tracks.id, track.id))
       .get()
-    if (!current) return
+    // Deleted, or the user stopped managing it while the lookup ran.
+    if (!current || current.state === 'released') return 'cancelled'
+    if (matchSources(db, current.id) !== sourcesBefore) return 'stale'
     const previousIdentityKey = current.identityKey
     let target = db
       .select()
@@ -680,6 +768,34 @@ export async function runMatch(
       const claimed = adoptedClaim(db, match)
       if (claimed && claimed.id !== current.id) target = claimed
     }
+    // A catalog contribution only ever belongs to its own Release Track.
+    const required = [
+      ...catalogIdentities(db, current.id),
+      ...(target ? catalogIdentities(db, target.id) : []),
+    ]
+    if (required.some((key) => key !== match.identityKey)) return 'stale'
+    if (target?.state === 'released') {
+      // The user stopped managing this Release Track: record that this source
+      // wants it too, without reviving the file or merging into it.
+      if (sourceId)
+        db.update(contributions)
+          .set({ trackId: target.id })
+          .where(eq(contributions.id, sourceId))
+          .run()
+      settleEmptiedTrack(db, current.id, at)
+      return 'excluded'
+    }
+    if (
+      target?.state === 'no_longer_wanted' &&
+      db
+        .select({ id: tombstones.id })
+        .from(tombstones)
+        .where(
+          and(eq(tombstones.trackId, target.id), isNull(tombstones.doneAt))
+        )
+        .get()
+    )
+      return 'waiting'
     if (target && target.id !== current.id) {
       mergeTracks(db, current, target, at, survivorFileValid)
       survivor = target.id
@@ -746,8 +862,57 @@ export async function runMatch(
         }),
       })
       .run()
+    return 'committed'
   })
+  if (status === 'stale') return STALE
+  if (status === 'waiting')
+    throw Object.assign(
+      new Error('Waiting for an earlier delete of this song to finish'),
+      { kind: 'transient' }
+    )
   return { trackId: survivor }
+}
+
+type MatchCommit = 'committed' | 'stale' | 'cancelled' | 'excluded' | 'waiting'
+
+/**
+ * After its source moved to another track: a track left with no contribution,
+ * file or upload is removed; one still holding files becomes No Longer Wanted.
+ */
+function settleEmptiedTrack(db: Db, trackId: string, at: string): void {
+  const hasActive = db
+    .select({ id: contributions.id })
+    .from(contributions)
+    .where(
+      and(eq(contributions.trackId, trackId), eq(contributions.active, true))
+    )
+    .get()
+  if (hasActive) return
+  const keep =
+    db
+      .select({ id: contributions.id })
+      .from(contributions)
+      .where(eq(contributions.trackId, trackId))
+      .get() ||
+    db
+      .select({ id: files.trackId })
+      .from(files)
+      .where(eq(files.trackId, trackId))
+      .get() ||
+    db
+      .select({ id: uploads.trackId })
+      .from(uploads)
+      .where(eq(uploads.trackId, trackId))
+      .get()
+  if (keep) {
+    db.update(tracks)
+      .set({ state: 'no_longer_wanted', updatedAt: at })
+      .where(eq(tracks.id, trackId))
+      .run()
+    return
+  }
+  db.delete(trackArtists).where(eq(trackArtists.trackId, trackId)).run()
+  db.delete(tracks).where(eq(tracks.id, trackId)).run()
 }
 
 // ---------------------------------------------------------------- file placement

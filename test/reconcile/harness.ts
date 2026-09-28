@@ -19,6 +19,7 @@ import {
   uploads,
 } from '../../src/main/library/schema'
 import type { LyricsFinder } from '../../src/main/lyrics/types'
+import { catalogContribution } from '../../src/main/match/resolve'
 import {
   type Match,
   type Matcher,
@@ -119,12 +120,18 @@ export class FakeMatcher implements Matcher {
   matches = new Map<string, Match>()
   error: Error | null = null
   calls = 0
+  /** Runs while a match is in flight, e.g. to change sources mid-match. */
+  during: ((input: MatchInput) => Promise<void> | void) | null = null
   async match(input: MatchInput): Promise<Match> {
     this.calls++
     if (this.error) throw this.error
+    await this.during?.(input)
     const item = input.kind === 'liked' ? input.song : input.track
     const fromMap = this.matches.get(item.videoId)
     if (fromMap) return fromMap
+    // Like the real matcher, a catalog track is its own Release Track.
+    if (input.kind === 'catalog')
+      return catalogContribution(input.release, input.track, null)
     return {
       version: 1,
       sourceVideoId: item.videoId,
