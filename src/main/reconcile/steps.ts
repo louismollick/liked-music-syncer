@@ -62,7 +62,7 @@ import {
   desiredTagFields,
   parseMatch,
 } from './desired'
-import type { CatalogRaw, LikedRaw } from './sources'
+import { type CatalogRaw, checkArtistCatalog, type LikedRaw } from './sources'
 
 export interface StepDeps {
   db: Db
@@ -234,14 +234,24 @@ const releaseCache = new Map<
   { at: number; release: Promise<CatalogRelease> }
 >()
 
+/** User-requested Refresh must look up releases again, even inside the cache window. */
+export function invalidateReleaseCache(): void {
+  releaseCache.clear()
+}
+
 /** Release pages are shared by every track of a catalog; cache them briefly. */
-function releaseWithTracks(
+async function releaseWithTracks(
   catalog: YouTubeMusicCatalog,
   browseId: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  expectedVideoId: string
 ): Promise<CatalogRelease> {
   const cached = releaseCache.get(browseId)
-  if (cached && Date.now() - cached.at < RELEASE_CACHE_MS) return cached.release
+  if (cached && Date.now() - cached.at < RELEASE_CACHE_MS) {
+    const release = await cached.release
+    if (release.tracks.some((track) => track.videoId === expectedVideoId))
+      return release
+  }
   const release = catalog.release(browseId, signal)
   releaseCache.set(browseId, { at: Date.now(), release })
   release.catch(() => releaseCache.delete(browseId))
@@ -785,12 +795,55 @@ async function matchOnce(
       release: await releaseWithTracks(
         deps.catalog,
         input.release.browseId,
-        run.signal
+        run.signal,
+        input.track.videoId
       ),
     }
   }
   const settings = deps.settings()
   const match = await deps.matcher.match(input, run.signal)
+  const conflictingArtists = deps.db
+    .select({
+      artistId: contributions.artistId,
+      releaseId: contributions.releaseId,
+      videoId: contributions.sourceVideoId,
+    })
+    .from(contributions)
+    .where(
+      and(
+        eq(contributions.trackId, track.id),
+        eq(contributions.kind, 'catalog'),
+        eq(contributions.active, true)
+      )
+    )
+    .all()
+    .filter(
+      (source) =>
+        releaseIdentityKey(source.releaseId ?? '', source.videoId) !==
+        match.identityKey
+    )
+    .map((source) => source.artistId)
+  let refreshed = false
+  for (const artistId of new Set(conflictingArtists)) {
+    if (!artistId) continue
+    const artist = deps.db
+      .select()
+      .from(artists)
+      .where(eq(artists.id, artistId))
+      .get()
+    if (!artist?.fullDiscography || !artist.channelId) continue
+    // Every catalog source must agree before a shared release can change identity.
+    await checkArtistCatalog({
+      db: deps.db,
+      catalog: deps.catalog,
+      artistId: artist.id,
+      channelId: artist.channelId,
+      now: deps.now,
+      signal: run.signal,
+    })
+    refreshed = true
+  }
+  if (refreshed) return STALE
   run.progress(0.4)
   const errors: Record<string, string> = {}
   // A provider outage must never strip what the track already has.

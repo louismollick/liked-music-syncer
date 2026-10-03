@@ -19,7 +19,6 @@ export interface ResolveToolOptions {
   resourcesPath: string
   appPath: string
   execPath: string
-  ffmpegStaticPath: string | null
   platform?: NodeJS.Platform
 }
 
@@ -29,11 +28,15 @@ export function resolveToolPaths(options: ResolveToolOptions): ToolPaths {
     : path.join(options.appPath, 'resources', 'bin')
   const exe = (options.platform ?? process.platform) === 'win32' ? '.exe' : ''
   const bundledRclone = path.join(resourcesBin, `rclone${exe}`)
-  const ffmpeg = options.ffmpegStaticPath
-    ? options.isPackaged
-      ? options.ffmpegStaticPath.replace('app.asar', 'app.asar.unpacked')
-      : options.ffmpegStaticPath
-    : 'ffmpeg'
+  const bundledFfmpeg = path.join(resourcesBin, `ffmpeg${exe}`)
+  if (
+    !existsSync(bundledFfmpeg) &&
+    (options.isPackaged || (options.platform ?? process.platform) === 'darwin')
+  )
+    throw new Error(
+      'Bundled FFmpeg is missing. Run pnpm tools:fetch before starting or building the app.'
+    )
+  const ffmpeg = existsSync(bundledFfmpeg) ? bundledFfmpeg : `ffmpeg${exe}`
   return {
     userData: options.userData,
     resourcesBin,

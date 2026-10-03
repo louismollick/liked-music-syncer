@@ -143,7 +143,7 @@ export interface YouTubeMusicCatalog {
   account(signal?: AbortSignal): Promise<CatalogAccount | null>
 }
 
-export type InnertubeClientName = 'WEB_REMIX' | 'ANDROID_MUSIC'
+export type InnertubeClientName = 'WEB_REMIX' | 'ANDROID_MUSIC' | 'WEB'
 
 export interface InnertubeRequest {
   endpoint: 'browse' | 'next' | 'search' | 'player' | 'account/account_menu'

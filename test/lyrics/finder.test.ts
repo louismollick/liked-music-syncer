@@ -63,6 +63,55 @@ const lyricServer = { lyricsServerUrl: 'https://lyrics.example/lyrics' }
 const noServer = { lyricsServerUrl: null }
 
 describe('lyrics finder', () => {
+  it('treats missing Spotify lyrics as a normal miss and continues to other providers', async () => {
+    const { http } = fakeHttp((url) =>
+      url.hostname === 'lyrics.example'
+        ? new HttpError('not found', 'permanent', 404)
+        : { plainLyrics: 'LRCLIB lyrics' }
+    )
+    const result = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(query, lyricServer)
+    expect(result.errors).toEqual({})
+    expect(result.lyrics).toMatchObject({
+      source: 'lrclib',
+      text: 'LRCLIB lyrics',
+    })
+  })
+
+  it.each([
+    401, 503,
+  ])('still records a real Spotify lyrics failure (%s)', async (status) => {
+    const { http } = fakeHttp((url) =>
+      url.hostname === 'lyrics.example'
+        ? new HttpError(
+            'provider failed',
+            status === 503 ? 'transient' : 'permanent',
+            status
+          )
+        : { plainLyrics: 'LRCLIB lyrics' }
+    )
+    const result = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(query, lyricServer)
+    expect(result.errors).toEqual({ spotify: 'provider failed' })
+  })
+
+  it('uses search for concert-length uploads instead of sending an invalid LRCLIB duration', async () => {
+    const { http, calls } = fakeHttp(() => [
+      { duration: 240, plainLyrics: 'Wrong recording' },
+      { duration: 5159, plainLyrics: 'Concert lyrics' },
+    ])
+    const result = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find({ ...query, durationSeconds: 5159, lyricsBrowseId: null }, noServer)
+    expect(calls.map((call) => call.url.pathname)).toEqual(['/api/search'])
+    expect(result.errors).toEqual({})
+    expect(result.lyrics?.text).toBe('Concert lyrics')
+  })
   it('prefers Spotify synced lyrics and stops before YouTube Music and LRCLIB', async () => {
     const catalogCalls: string[] = []
     const { http, calls } = fakeHttp((url) => {

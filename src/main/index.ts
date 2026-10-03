@@ -1,7 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
-import ffmpegStatic from 'ffmpeg-static'
 import { createAudioDownloader } from './acquire/audio'
 import { createPotProvider } from './acquire/pot-provider'
 import { createYtDlpBinary } from './acquire/ytdlp-binary'
@@ -83,7 +82,6 @@ async function main() {
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
     execPath: process.execPath,
-    ffmpegStaticPath: (ffmpegStatic as unknown as string | null) ?? null,
   })
 
   if (isSmokeTest) {

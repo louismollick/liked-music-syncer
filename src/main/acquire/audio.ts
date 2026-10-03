@@ -61,7 +61,8 @@ export function createAudioDownloader(deps: {
         '--plugin-dirs',
         deps.pot.pluginDir,
         '--extractor-args',
-        `youtube:player_client=mweb;youtubepot-bgutilhttp:base_url=${POT_BASE_URL}`,
+        // Let yt-dlp maintain client selection and fallbacks as YouTube changes.
+        `youtubepot-bgutilhttp:base_url=${POT_BASE_URL}`,
         '-f',
         'bestaudio/best',
         '--progress-template',
@@ -118,31 +119,57 @@ export async function toM4a(
   const isAac = codec?.startsWith('mp4a') || codec === 'aac'
   if (isAac && input.toLowerCase().endsWith('.m4a')) {
     await rename(input, output)
+    await validateAudio(ffmpeg, output, signal)
     return output
   }
+  const args = [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-i',
+    input,
+    '-vn',
+    '-map_metadata',
+    '-1',
+    '-c:a',
+    isAac ? 'copy' : 'aac',
+    ...(isAac ? [] : ['-b:a', '256k']),
+    '-movflags',
+    '+faststart',
+    output,
+  ]
+  await runChecked(ffmpeg, args, { signal })
+  await validateAudio(ffmpeg, output, signal)
+  await rm(input, { force: true })
+  return output
+}
+
+/** Decode every audio packet before replacing a verified library file. */
+export async function validateAudio(
+  ffmpeg: string,
+  file: string,
+  signal?: AbortSignal
+): Promise<void> {
   await runChecked(
     ffmpeg,
     [
       '-hide_banner',
       '-loglevel',
       'error',
-      '-y',
+      '-xerror',
+      '-threads',
+      '1',
       '-i',
-      input,
-      '-vn',
-      '-map_metadata',
-      '-1',
-      '-c:a',
-      isAac ? 'copy' : 'aac',
-      ...(isAac ? [] : ['-b:a', '256k']),
-      '-movflags',
-      '+faststart',
-      output,
+      file,
+      '-map',
+      '0:a:0',
+      '-f',
+      'null',
+      '-',
     ],
     { signal }
   )
-  await rm(input, { force: true })
-  return output
 }
 
 export async function clearWorkDir(workDir: string): Promise<void> {

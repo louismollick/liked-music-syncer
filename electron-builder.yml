@@ -12,7 +12,6 @@ files:
   - '!docs/*'
   - '!scripts/*'
 asarUnpack:
-  - node_modules/ffmpeg-static/**
   - node_modules/better-sqlite3/**
 extraResources:
   - from: resources/bin

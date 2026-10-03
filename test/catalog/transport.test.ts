@@ -49,6 +49,66 @@ function transportAnswering(
 }
 
 describe('Innertube transport sessions', () => {
+  it('reads official audio playlists from regular YouTube without session headers', async () => {
+    let calls = 0
+    const http = createHttpClient(async (url, init) => {
+      calls++
+      expect(new URL(url).origin).toBe('https://www.youtube.com')
+      expect(new Headers(init?.headers).get('cookie')).toBeNull()
+      expect(new Headers(init?.headers).get('authorization')).toBeNull()
+      const body = JSON.parse(String(init?.body))
+      expect(body.context.client.clientName).toBe('WEB')
+      expect(body.context.client.clientVersion).toMatch(/^2\./)
+      return Response.json({})
+    })
+    const transport = createInnertubeTransport({
+      http,
+      auth: {
+        headers: async () => {
+          throw new Error('Should not request session headers')
+        },
+      },
+    })
+    await transport.call({
+      endpoint: 'browse',
+      body: { browseId: 'VLOLAK_test' },
+      authenticated: false,
+      client: 'WEB',
+    })
+    await expect(
+      transport.call({
+        endpoint: 'browse',
+        body: {},
+        authenticated: true,
+        client: 'WEB',
+      })
+    ).rejects.toThrow('Only WEB_REMIX')
+    expect(calls).toBe(1)
+  })
+
+  it('retries a temporary failure from a read-only Innertube POST', async () => {
+    let calls = 0
+    let time = 0
+    const http = createHttpClient(
+      async () =>
+        ++calls === 1
+          ? new Response(null, { status: 503 })
+          : Response.json({ catalog: 'available' }),
+      () => time,
+      async (ms) => {
+        time += ms
+      }
+    )
+    const transport = createInnertubeTransport({ http, auth: null })
+    await expect(
+      transport.call({
+        endpoint: 'browse',
+        body: { browseId: 'MPRE_album' },
+        authenticated: false,
+      })
+    ).resolves.toEqual({ catalog: 'available' })
+    expect(calls).toBe(2)
+  })
   it('recognizes a signed-out answer', () => {
     expect(answeredSignedOut(tracking('0'))).toBe(true)
     expect(answeredSignedOut(tracking('1'))).toBe(false)

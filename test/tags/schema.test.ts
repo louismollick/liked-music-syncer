@@ -48,6 +48,19 @@ function sampleFields(overrides: Partial<TagFields> = {}): TagFields {
 }
 
 describe('tag schema', () => {
+  it('preserves semicolons in text fields and complete embedded lyrics', () => {
+    const file = makeM4a(path.join(tempDir(), 'semicolons.m4a'))
+    const fields = sampleFields({
+      title: 'ex;curse velvet',
+      artist: 'Artist; Guest',
+      album: 'Part I; Part II',
+      albumArtist: 'Artist; Guest',
+      lyrics: '[00:01.00]First; second\n[00:05.00]Last line',
+    })
+    writeTags(file, fields, TINY_JPEG)
+    expect(fieldDiff(readTags(file).fields, fields)).toEqual([])
+  })
+
   it('round-trips every app-owned field, including a partial date', () => {
     const file = makeM4a(path.join(tempDir(), 'a.m4a'))
     const fields = sampleFields()

@@ -113,6 +113,56 @@ function catalogRow(h: Harness, trackId: string, album: CatalogRelease) {
 }
 
 describe('a catalog keeps its exact Release Track', () => {
+  it.each([
+    'track',
+    'album',
+    'all',
+  ] as const)('refreshes the catalog source before committing restored audio on a %s refresh', async (kind) => {
+    const h = harness()
+    const video = { ...song('video', 'Song'), videoType: 'OMV' as const }
+    const album = release('album', video)
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    await h.start()
+    const id = h.row('album:video')!.id
+    h.catalog.releases.set('album', release('album', song('audio', 'Song')))
+    h.reconciler.refresh(
+      kind === 'track'
+        ? { kind, id }
+        : kind === 'album'
+          ? { kind, key: 'Test%20Album|Test%20Artist' }
+          : { kind }
+    )
+    await h.idle()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:audio')?.id).toBe(id)
+    expect(h.file(id)?.audioVideoId).toBe('audio')
+    expect(h.downloads).toEqual(['video', 'audio'])
+    expectCatalogInvariant(h)
+  })
+  it('refreshes every artist sharing a release before committing restored audio', async () => {
+    const h = harness()
+    const album = release('album', {
+      ...song('video', 'Song'),
+      videoType: 'OMV' as const,
+    })
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    fullDiscography(h, album, 'channel:artist-2')
+    await h.start()
+    const id = h.row('album:video')!.id
+    expect(
+      h.contributions().filter((row) => row.kind === 'catalog')
+    ).toHaveLength(2)
+    h.catalog.releases.set('album', release('album', song('audio', 'Song')))
+    h.reconciler.refresh({ kind: 'track', id })
+    await h.idle()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:audio')?.id).toBe(id)
+    expect(h.file(id)?.audioVideoId).toBe('audio')
+    expect(h.downloads).toEqual(['video', 'audio'])
+    expectCatalogInvariant(h)
+  })
   it('keeps a shared like and catalog track on the album through Refresh', async () => {
     const h = harness()
     const { album, single } = catalogs(h)

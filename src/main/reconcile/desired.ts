@@ -40,10 +40,10 @@ export function desiredTagFields(
   const credits = trackCredits(track)
   const release = match?.release ?? null
   return {
-    title: track.title || null,
-    artist: track.artist || joinArtistNames(credits) || null,
-    album: track.album || null,
-    albumArtist: track.albumArtist || null,
+    title: track.title.trim() || null,
+    artist: track.artist.trim() || joinArtistNames(credits) || null,
+    album: track.album.trim() || null,
+    albumArtist: track.albumArtist.trim() || null,
     trackNumber: release ? (track.trackNumber ?? null) : 1,
     trackTotal: release ? (track.trackTotal ?? null) : 1,
     discNumber: release ? (track.discNumber ?? null) : null,

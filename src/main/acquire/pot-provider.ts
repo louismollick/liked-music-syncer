@@ -50,22 +50,44 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
         { kind: 'permanent' as const }
       )
     }
-    child = spawn(
+    const launched = spawn(
       tools.nodeRuntime,
       ['-e', `import(${JSON.stringify(pathToFileURL(entry).href)})`],
       {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        stdio: 'ignore',
+        stdio: ['ignore', 'ignore', 'pipe'],
       }
     )
-    child.on('exit', () => {
-      child = null
+    child = launched
+    let failure: Error | null = null
+    let stderr = ''
+    launched.stderr?.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString('utf8')).slice(-4096)
     })
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      if (await ping()) return
-      await new Promise((resolve) => setTimeout(resolve, 250))
+    launched.on('error', (error) => {
+      failure = error
+    })
+    launched.on('exit', (code, signal) => {
+      if (child === launched) child = null
+      failure ??= new Error(
+        `PO token provider exited (${signal ?? code}): ${stderr.trim()}`
+      )
+    })
+    try {
+      // A cold Electron/Node start can exceed ten seconds on a busy Mac.
+      const deadline = Date.now() + 60_000
+      while (Date.now() < deadline) {
+        if (await ping()) return
+        if (failure) throw failure
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      throw new Error(`PO token provider startup timed out: ${stderr.trim()}`)
+    } catch (error) {
+      // A failed start must not leave a server behind for the next retry.
+      if (!launched.killed) launched.kill('SIGTERM')
+      if (child === launched) child = null
+      throw error
     }
-    throw new Error('PO token provider did not start')
   }
 
   return {

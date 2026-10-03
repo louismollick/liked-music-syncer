@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import {
+  releaseTitlesMatch,
+  sameReleasePosition,
+} from '../catalog/release-match'
 import type {
   CatalogRelease,
   CatalogTrack,
@@ -391,17 +395,54 @@ export async function checkArtistCatalog(options: {
         )
         if (seen.has(key)) continue
         seen.add(key)
-        const existing = tx
+        let existing = tx
           .select()
           .from(contributions)
           .where(eq(contributions.sourceKey, key))
           .get()
+        let restoredAudio = false
+        if (!existing && raw.track.videoType === 'ATV') {
+          const previous = tx
+            .select()
+            .from(contributions)
+            .where(
+              and(
+                eq(contributions.kind, 'catalog'),
+                eq(contributions.artistId, artistId),
+                eq(contributions.releaseId, raw.release.browseId)
+              )
+            )
+            .all()
+            .filter((row) => {
+              try {
+                const saved = JSON.parse(row.raw) as CatalogRaw
+                return (
+                  saved.track.videoType === 'OMV' &&
+                  sameReleasePosition(saved.track, raw.track)
+                )
+              } catch {
+                return false
+              }
+            })
+          if (previous.length === 1) {
+            existing = previous[0]
+            restoredAudio = true
+          }
+        }
         if (existing) {
           // While inactive, its track may have been re-keyed to another
           // Release Track (e.g. by a like's Refresh): link it afresh.
           const linked = existing.trackId
             ? tx
-                .select({ identityKey: tracks.identityKey })
+                .select({
+                  identityKey: tracks.identityKey,
+                  state: tracks.state,
+                  refreshRequested: tracks.refreshRequested,
+                  releaseId: tracks.releaseId,
+                  trackNumber: tracks.trackNumber,
+                  discNumber: tracks.discNumber,
+                  title: tracks.title,
+                })
                 .from(tracks)
                 .where(eq(tracks.id, existing.trackId))
                 .get()
@@ -409,12 +450,47 @@ export async function checkArtistCatalog(options: {
           const stillItsTrack =
             linked?.identityKey ===
             releaseIdentityKey(raw.release.browseId, raw.track.videoId)
+          const canRestore =
+            restoredAudio &&
+            linked?.identityKey ===
+              releaseIdentityKey(raw.release.browseId, existing.sourceVideoId)
+          const keepPosition =
+            (linked?.state === 'released' || linked?.refreshRequested) &&
+            linked.releaseId === raw.release.browseId &&
+            linked.trackNumber === raw.track.trackNumber &&
+            linked.discNumber === raw.track.discNumber &&
+            releaseTitlesMatch(linked.title, raw.track.title)
+          if (canRestore && existing.trackId) {
+            tx.update(tracks)
+              .set({
+                refreshRequested: true,
+                state:
+                  linked?.state === 'no_longer_wanted'
+                    ? 'no_longer_wanted'
+                    : 'pending',
+                attempts: 0,
+                nextAttemptAt: null,
+                lastError: null,
+                updatedAt: committedAt,
+              })
+              .where(
+                and(
+                  eq(tracks.id, existing.trackId),
+                  sql`${tracks.state} != 'released'`
+                )
+              )
+              .run()
+          }
           tx.update(contributions)
             .set({
+              sourceKey: key,
+              sourceVideoId: raw.track.videoId,
               lastSeenAt: committedAt,
               active: true,
               raw: JSON.stringify(raw),
-              ...(stillItsTrack ? {} : { trackId: null }),
+              ...(stillItsTrack || canRestore || keepPosition
+                ? {}
+                : { trackId: null }),
             })
             .where(eq(contributions.id, existing.id))
             .run()

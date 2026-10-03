@@ -64,6 +64,78 @@ function setup(
   return { matcher: createMatcher({ catalog, http }), catalog, http }
 }
 describe('catalog resolution', () => {
+  it.each([
+    'Song (Live)',
+    'Song (2024 Remaster)',
+    'Song (Acoustic)',
+  ])('does not replace a missing source ID with %s on its release', async (title) => {
+    const source = liked(track('video', 'Song', 'MPRE1', 'OMV'))
+    const { matcher } = setup(
+      { video: { track: source, lyricsBrowseId: null } },
+      { MPRE1: release([track('wrong-version', title, 'MPRE1')]) }
+    )
+    const match = await matcher.match({ kind: 'liked', song: source })
+    expect(match.catalogVideoId).toBe('video')
+    expect(match.resolutionMethod).toBe('standalone')
+  })
+  it('disambiguates restored catalog audio by its saved release position', async () => {
+    const original = track('video', 'Song', 'MPRE1', 'OMV', null, 2)
+    const { matcher } = setup({}, {})
+    const match = await matcher.match({
+      kind: 'catalog',
+      artistId: 'UCartist',
+      track: original,
+      release: release([
+        track('audio-1', 'Song', 'MPRE1', 'ATV', null, 1),
+        track('audio-2', 'Song', 'MPRE1', 'ATV', null, 2),
+      ]),
+    })
+    expect(match.catalogVideoId).toBe('audio-2')
+    expect(match.release?.trackNumber).toBe(2)
+  })
+  it('refreshes a catalog contribution whose release restored the original audio', async () => {
+    const original = track('video', 'Song', 'MPRE1', 'OMV')
+    const restored = track('audio', 'Song', 'MPRE1')
+    const { matcher } = setup({}, {})
+    const match = await matcher.match({
+      kind: 'catalog',
+      artistId: 'UCartist',
+      track: original,
+      release: release([restored, track('other', 'Other', 'MPRE1')]),
+    })
+    expect(match).toMatchObject({
+      sourceVideoId: 'video',
+      catalogVideoId: 'audio',
+      identityKey: 'MPRE1:audio',
+    })
+  })
+  it('uses the liked release when watch metadata has no album', async () => {
+    const song = liked(track('liked', 'Song', 'MPRE1'))
+    const { matcher, catalog } = setup(
+      { liked: { track: track('liked', 'Song'), lyricsBrowseId: null } },
+      { MPRE1: release([track('liked', 'Song', 'MPRE1')]) }
+    )
+    const match = await matcher.match({ kind: 'liked', song })
+    expect(match.release?.browseId).toBe('MPRE1')
+    expect(catalog.searchSongs).not.toHaveBeenCalled()
+  })
+
+  it('finds the restored audio by unique title and artist in the liked release', async () => {
+    const song = liked(track('video', 'Song', 'MPRE1', 'OMV'))
+    const { matcher, catalog } = setup(
+      { video: { track: song, lyricsBrowseId: null } },
+      {
+        MPRE1: release([
+          track('audio', 'Song', 'MPRE1'),
+          track('other', 'Other', 'MPRE1'),
+        ]),
+      }
+    )
+    const match = await matcher.match({ kind: 'liked', song })
+    expect(match.catalogVideoId).toBe('audio')
+    expect(match.resolutionMethod).toBe('liked_album_exact')
+    expect(catalog.searchSongs).not.toHaveBeenCalled()
+  })
   it('matches a liked ATV to its own release track ID', async () => {
     const likedTrack = liked(track('liked', 'Song', 'MPRE1'))
     const albumTrack = track('liked', 'Song', 'MPRE1')
