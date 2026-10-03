@@ -1,5 +1,5 @@
 import { CatalogShapeError, type CatalogTrack } from '../types'
-import { array, firstRun, nav, requiredArray } from './nav'
+import { array, firstRun, nav, requiredArray, text } from './nav'
 import { continuationToken } from './playlist'
 import { parseListTracks } from './tracks'
 
@@ -46,7 +46,21 @@ export function parseSearchPage(
   const shelf = shelves.find(
     (entry) => firstRun(nav(entry, ['title'])) === 'Songs'
   )
-  if (!shelf) throw new CatalogShapeError('Missing songs shelf')
+  if (!shelf) {
+    // A valid empty search has a message instead of a Songs shelf. Keep
+    // rejecting unknown shapes so a broken response cannot become a match.
+    const noResults = sections.some((section) =>
+      (array(nav(section, ['itemSectionRenderer', 'contents'])) ?? []).some(
+        (item) =>
+          nav(item, ['messageRenderer', 'icon', 'iconType']) === 'SEARCH' &&
+          text(nav(item, ['messageRenderer', 'text']))?.startsWith(
+            'No results for '
+          )
+      )
+    )
+    if (noResults) return { tracks: [], token: null }
+    throw new CatalogShapeError('Missing songs shelf')
+  }
   const items = requiredArray(shelf, ['contents'], 'songs shelf items')
   return {
     tracks: parseListTracks(items),

@@ -1,3 +1,7 @@
+import {
+  releaseTitlesMatch,
+  sameReleasePosition,
+} from '../catalog/release-match'
 import type {
   CatalogRelease,
   CatalogTrack,
@@ -107,7 +111,10 @@ export function catalogContribution(
 ): Match {
   return releaseTrack(
     release,
-    release.tracks.find((entry) => entry.videoId === track.videoId) ?? track,
+    release.tracks.find((entry) => entry.videoId === track.videoId) ??
+      release.tracks.find((entry) => sameReleasePosition(track, entry)) ??
+      findReleaseTrack(release, [track.videoId], track.title, track.artists) ??
+      track,
     track.videoId,
     'favorite_artist_release_exact',
     lyricsBrowseId
@@ -125,13 +132,13 @@ function findReleaseTrack(
   }
   if (
     release.tracks.length === 1 &&
-    textSimilarity(release.tracks[0].title, fallbackTitle) >= 0.96
+    releaseTitlesMatch(release.tracks[0].title, fallbackTitle)
   )
     return release.tracks[0]
   if (fallbackArtists.length) {
     const possible = release.tracks.filter(
       (entry) =>
-        textSimilarity(entry.title, fallbackTitle) >= 0.96 &&
+        releaseTitlesMatch(entry.title, fallbackTitle) &&
         entry.artists.some((credited) =>
           fallbackArtists.some(
             (fallback) =>
@@ -318,10 +325,15 @@ export async function likedContribution(
 ): Promise<Match> {
   const watch = await catalog.watch(song.videoId, signal)
   const primary = watch.track ?? song
-  const directReleaseId = primary.album?.browseId
+  const directReleaseId = primary.album?.browseId ?? song.album?.browseId
   if (directReleaseId) {
     const release = await catalog.release(directReleaseId, signal)
-    const track = findReleaseTrack(release, [song.videoId], primary.title)
+    const track = findReleaseTrack(
+      release,
+      [song.videoId],
+      primary.title,
+      primary.artists
+    )
     if (track)
       return releaseTrack(
         release,

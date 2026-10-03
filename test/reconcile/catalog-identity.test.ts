@@ -1,7 +1,12 @@
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CatalogRelease } from '../../src/main/catalog/types'
-import { artists, contributions, tracks } from '../../src/main/library/schema'
+import {
+  artists,
+  contributions,
+  trackHistory,
+  tracks,
+} from '../../src/main/library/schema'
 import { releaseIdentityKey } from '../../src/main/match/types'
 import {
   type CatalogRaw,
@@ -10,6 +15,7 @@ import {
 } from '../../src/main/reconcile/sources'
 import {
   deleteTracks,
+  invalidateReleaseCache,
   processTombstones,
   runMatch,
 } from '../../src/main/reconcile/steps'
@@ -113,6 +119,205 @@ function catalogRow(h: Harness, trackId: string, album: CatalogRelease) {
 }
 
 describe('a catalog keeps its exact Release Track', () => {
+  it('keeps a different recording managed when a released position changes version', async () => {
+    const h = harness()
+    const album = release('album', {
+      ...song('video', 'Song'),
+      videoType: 'OMV' as const,
+    })
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    await h.start()
+    const id = h.row('album:video')!.id
+    h.reconciler.stopManaging(id)
+    await h.idle()
+    h.catalog.releases.set(
+      'album',
+      release('album', song('live', 'Song (Live)'))
+    )
+    await h.reconciler.check({ catalogs: 'all' })
+    await h.idle()
+    expect(h.rows()).toHaveLength(2)
+    expect(h.row('album:video')).toMatchObject({ id, state: 'released' })
+    expect(h.row('album:live')?.state).toBe('done')
+    expect(h.downloads).toEqual(['video', 'live'])
+    expectCatalogInvariant(h)
+  })
+  it('retries a restored-audio match when another release blocks its artist catalog', async () => {
+    const h = harness()
+    const album = release('album', {
+      ...song('video', 'Song'),
+      videoType: 'OMV' as const,
+    })
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    await h.start()
+    await h.stop()
+    const track = h.row('album:video')!
+    h.catalog.releases.set('album', release('album', song('audio', 'Song')))
+    invalidateReleaseCache()
+    h.catalog.refs.push({
+      browseId: 'unavailable-release',
+      title: 'Other album',
+      shelf: 'albums',
+      year: 2024,
+      thumbnailUrl: null,
+    })
+    await expect(runMatch(h.deps, track, run())).rejects.toMatchObject({
+      name: 'RetryLaterError',
+      kind: 'transient',
+      message: expect.stringContaining('Missing release unavailable-release'),
+    })
+    expect(h.row('album:video')?.id).toBe(track.id)
+    expect(h.file(track.id)?.audioVideoId).toBe('video')
+    expect(h.downloads).toEqual(['video'])
+    expectCatalogInvariant(h)
+
+    h.catalog.refs.pop()
+    h.reconciler.refresh({ kind: 'track', id: track.id })
+    await h.start()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:audio')).toMatchObject({ id: track.id, state: 'done' })
+    expect(h.downloads).toEqual(['video', 'audio'])
+    expectCatalogInvariant(h)
+  })
+  it('links restored catalog audio to its existing track without re-keying a released track over it', async () => {
+    const h = harness()
+    const album = release('album', {
+      ...song('video', 'Song'),
+      videoType: 'OMV' as const,
+    })
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    await h.start()
+    const excludedId = h.row('album:video')!.id
+    h.reconciler.stopManaging(excludedId)
+    await h.idle()
+
+    const restored = release('album', song('audio', 'Song'))
+    const like = song('audio', 'Song')
+    h.matcher.matches.set('audio', releaseMatch(like, restored))
+    h.catalog.likes = [like]
+    await h.check()
+    const audioId = h.row('album:audio')!.id
+    h.catalog.releases.set('album', restored)
+    await h.reconciler.check({ catalogs: 'all' })
+    await h.idle()
+    expect(h.rows()).toHaveLength(2)
+    expect(h.row('album:video')).toMatchObject({
+      id: excludedId,
+      state: 'released',
+    })
+    expect(h.row('album:audio')).toMatchObject({ id: audioId, state: 'done' })
+    expect(h.downloads).toEqual(['video', 'audio'])
+    expectCatalogInvariant(h)
+  })
+  it.each([
+    'audio',
+    'another-video',
+  ])('keeps restored audio excluded when a new like of %s resolves to it', async (videoId) => {
+    const h = harness()
+    const album = release('album', {
+      ...song('video', 'Song'),
+      videoType: 'OMV' as const,
+    })
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    fullDiscography(h, album, 'channel:artist-2')
+    await h.start()
+    const id = h.row('album:video')!.id
+    h.reconciler.stopManaging(id)
+    await h.idle()
+
+    const restored = release('album', song('audio', 'Song'))
+    h.catalog.releases.set('album', restored)
+    await h.reconciler.check({ catalogs: 'all' })
+    await h.idle()
+    expect(h.row('album:audio')).toMatchObject({ id, state: 'released' })
+    expectCatalogInvariant(h)
+
+    const like = song(videoId, 'Song')
+    h.matcher.matches.set(videoId, releaseMatch(like, restored, 'audio'))
+    h.catalog.likes = [like]
+    await h.check()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.rows()[0]).toMatchObject({ id, state: 'released' })
+    expect(h.file(id)).toBeUndefined()
+    expect(h.downloads).toEqual(['video'])
+    expect(h.contributions().every((row) => row.trackId === id)).toBe(true)
+    expectCatalogInvariant(h)
+
+    expect(
+      h.db.select().from(trackHistory).where(eq(trackHistory.trackId, id)).all()
+    ).toContainEqual(
+      expect.objectContaining({
+        event: 're-keyed',
+        detail: JSON.stringify({ from: 'album:video', to: 'album:audio' }),
+      })
+    )
+    expect(h.rows()[0].match).toBeNull()
+    // Removing the separate audio must not forget the same exclusion.
+    h.catalog.releases.set('album', album)
+    await h.reconciler.check({ catalogs: 'all' })
+    await h.idle()
+    h.matcher.matches.set('video', releaseMatch(song('video', 'Song'), album))
+    h.catalog.likes = [song('video', 'Song')]
+    await h.check()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:video')).toMatchObject({ id, state: 'released' })
+    expect(h.downloads).toEqual(['video'])
+    expectCatalogInvariant(h)
+  })
+  it.each([
+    'track',
+    'album',
+    'all',
+  ] as const)('refreshes the catalog source before committing restored audio on a %s refresh', async (kind) => {
+    const h = harness()
+    const video = { ...song('video', 'Song'), videoType: 'OMV' as const }
+    const album = release('album', video)
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    await h.start()
+    const id = h.row('album:video')!.id
+    h.catalog.releases.set('album', release('album', song('audio', 'Song')))
+    h.reconciler.refresh(
+      kind === 'track'
+        ? { kind, id }
+        : kind === 'album'
+          ? { kind, key: 'Test%20Album|Test%20Artist' }
+          : { kind }
+    )
+    await h.idle()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:audio')?.id).toBe(id)
+    expect(h.file(id)?.audioVideoId).toBe('audio')
+    expect(h.downloads).toEqual(['video', 'audio'])
+    expectCatalogInvariant(h)
+  })
+  it('refreshes every artist sharing a release before committing restored audio', async () => {
+    const h = harness()
+    const album = release('album', {
+      ...song('video', 'Song'),
+      videoType: 'OMV' as const,
+    })
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    fullDiscography(h, album, 'channel:artist-2')
+    await h.start()
+    const id = h.row('album:video')!.id
+    expect(
+      h.contributions().filter((row) => row.kind === 'catalog')
+    ).toHaveLength(2)
+    h.catalog.releases.set('album', release('album', song('audio', 'Song')))
+    h.reconciler.refresh({ kind: 'track', id })
+    await h.idle()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:audio')?.id).toBe(id)
+    expect(h.file(id)?.audioVideoId).toBe('audio')
+    expect(h.downloads).toEqual(['video', 'audio'])
+    expectCatalogInvariant(h)
+  })
   it('keeps a shared like and catalog track on the album through Refresh', async () => {
     const h = harness()
     const { album, single } = catalogs(h)

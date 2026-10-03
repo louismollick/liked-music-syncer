@@ -53,6 +53,7 @@ import {
   cancelMergeCleanup,
   coversDir,
   deleteTracks,
+  invalidateReleaseCache,
   nextStep,
   OutsideEditError,
   processTombstones,
@@ -384,6 +385,7 @@ export class Reconciler {
         .map((r) => r.id)
     }
     if (ids.length === 0) return
+    invalidateReleaseCache()
     for (let i = 0; i < ids.length; i += 500) {
       this.db
         .update(tracks)

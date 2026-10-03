@@ -21,7 +21,13 @@ function clientContext(name: InnertubeClientName) {
   if (name === 'ANDROID_MUSIC') {
     return { clientName: 'ANDROID_MUSIC', clientVersion: '7.21.50' }
   }
-  return { clientName: 'WEB_REMIX', clientVersion: webRemixVersion() }
+  return {
+    clientName: name,
+    clientVersion:
+      name === 'WEB'
+        ? webRemixVersion().replace(/^1\./, '2.')
+        : webRemixVersion(),
+  }
 }
 
 export interface AuthHeaderSource {
@@ -69,8 +75,7 @@ export interface TransportOptions {
 
 /**
  * Minimal Innertube transport. Personal reads are signed with the Google
- * Session's headers; public reads (and every ANDROID_MUSIC call, which YouTube
- * rejects when cookies are attached) are sent signed out.
+ * Session's headers. WEB and ANDROID_MUSIC calls are public reads only.
  */
 export function createInnertubeTransport(
   options: TransportOptions
@@ -80,10 +85,13 @@ export function createInnertubeTransport(
   return {
     async call(request: InnertubeRequest) {
       const client = request.client ?? 'WEB_REMIX'
+      if (request.authenticated && client !== 'WEB_REMIX')
+        throw new Error('Only WEB_REMIX supports signed catalog reads')
+      const origin = client === 'WEB' ? 'https://www.youtube.com' : YTM_ORIGIN
       const headers: Record<string, string> = {
         'content-type': 'application/json',
-        origin: YTM_ORIGIN,
-        'x-origin': YTM_ORIGIN,
+        origin,
+        'x-origin': origin,
         'user-agent': USER_AGENT,
       }
       if (request.authenticated) {
@@ -97,10 +105,11 @@ export function createInnertubeTransport(
         },
         ...request.body,
       }
-      const url = `${YTM_ORIGIN}/youtubei/v1/${request.endpoint}?alt=json&prettyPrint=false`
+      const url = `${origin}/youtubei/v1/${request.endpoint}?alt=json&prettyPrint=false`
       const init = {
         host: 'youtube-music' as const,
         method: 'POST',
+        retryable: true,
         headers,
         body: JSON.stringify(body),
         signal: request.signal,

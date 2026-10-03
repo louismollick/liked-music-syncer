@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto'
 import {
   ByteVector,
   File,
+  Mpeg4AppleDataBoxFlagType,
   type Mpeg4AppleTag,
   Mpeg4BoxType,
   Picture,
   PictureType,
+  StringType,
   TagTypes,
 } from 'node-taglib-sharp'
 import { type ArtistCredit, normalizeArtistCredits } from '../domain'
@@ -118,6 +120,18 @@ function freeform(apple: Mpeg4AppleTag, name: string): string | null {
   return blank(apple.getFirstItunesString(ITUNES, name))
 }
 
+/** TagLib's string getter splits on semicolons, including titles and lyrics. */
+function quickTimeText(
+  apple: Mpeg4AppleTag,
+  type: ByteVector,
+  separator?: string
+): string | null {
+  const values = apple
+    .getQuickTimeData(type, Mpeg4AppleDataBoxFlagType.ContainsText)
+    .map((data) => data.toString(StringType.UTF8))
+  return blank(separator === undefined ? values[0] : values.join(separator))
+}
+
 function parseCredits(raw: string | null): ArtistCredit[] {
   if (!raw) return []
   try {
@@ -188,10 +202,18 @@ export function readTags(path: string): ReadResult {
     const props = file.properties
     return {
       fields: {
-        title: blank(tag.title),
-        artist: blank(tag.performers.join(', ')),
-        album: blank(tag.album),
-        albumArtist: blank(tag.albumArtists.join(', ')),
+        title: apple
+          ? quickTimeText(apple, Mpeg4BoxType.NAM)
+          : blank(tag.title),
+        artist: apple
+          ? quickTimeText(apple, Mpeg4BoxType.ART, ', ')
+          : blank(tag.performers.join(', ')),
+        album: apple
+          ? quickTimeText(apple, Mpeg4BoxType.ALB)
+          : blank(tag.album),
+        albumArtist: apple
+          ? quickTimeText(apple, Mpeg4BoxType.AART, ', ')
+          : blank(tag.albumArtists.join(', ')),
         trackNumber: positive(tag.track),
         trackTotal: positive(tag.trackCount),
         discNumber: positive(tag.disc),
@@ -201,7 +223,9 @@ export function readTags(path: string): ReadResult {
         language,
         isrc,
         mbRecordingId,
-        lyrics: blank(tag.lyrics),
+        lyrics: apple
+          ? quickTimeText(apple, Mpeg4BoxType.LYR)
+          : blank(tag.lyrics),
         coverSha256: cover ? sha256(cover) : null,
         lms,
       },

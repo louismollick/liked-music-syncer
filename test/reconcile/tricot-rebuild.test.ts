@@ -79,6 +79,10 @@ describe('a fresh Library for tricot', () => {
         if (id === TRICOT) return tricotPage()
         if (id === FUDEKI) return fixture('release-fudeki')
         if (id === JODEKI) return fixture('release-jodeki')
+        if (id === 'VLOLAK5uy_mwHjByzWZRpiwWmmVI7O9lxeFIW6wNQ1M')
+          return fixture('release-fudeki-audio')
+        if (id === 'VLOLAK5uy_ndKXwdzJGooHSVq_hijdTx9UOl5qLVvPs')
+          return fixture('release-jodeki-audio')
         throw new Error(`unexpected request ${JSON.stringify(request.body)}`)
       },
     })

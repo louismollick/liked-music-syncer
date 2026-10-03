@@ -1,5 +1,6 @@
 import { parseAccount } from './parsers/account'
 import { parseArtist, parseArtistReleasesPage } from './parsers/artist'
+import { restoreReleaseAudio } from './parsers/audio-playlist'
 import { parsePlainLyrics, parseTimedLyrics } from './parsers/lyrics'
 import { parsePlaylistPage, playlistHeaderCount } from './parsers/playlist'
 import { parseRelease } from './parsers/release'
@@ -71,7 +72,39 @@ export function createYouTubeMusicCatalog(
         authenticated: false,
         signal,
       })
-      return parseRelease(response, browseId)
+      const release = parseRelease(response, browseId)
+      // Music album pages substitute music videos. The official audio
+      // playlist on regular YouTube preserves the original album recordings.
+      if (
+        release.audioPlaylistId &&
+        release.tracks.some((track) => track.videoType === 'OMV')
+      ) {
+        const audio = await transport.call({
+          endpoint: 'browse',
+          body: {
+            browseId: `VL${release.audioPlaylistId}`,
+            // Show unavailable entries so hidden videos cannot shift positions.
+            params: 'wgYCCAA%3D',
+          },
+          client: 'WEB',
+          authenticated: false,
+          signal,
+        })
+        return restoreReleaseAudio(audio, release, async (videoId) => {
+          const response = await transport.call({
+            endpoint: 'next',
+            body: {
+              videoId,
+              isAudioOnly: true,
+              enablePersistentPlaylistPanel: true,
+            },
+            authenticated: false,
+            signal,
+          })
+          return parseWatch(response, videoId).track?.title ?? null
+        })
+      }
+      return release
     },
     artist: readArtist,
     async artistReleases(channelId, signal) {

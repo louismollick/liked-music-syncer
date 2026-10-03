@@ -19,17 +19,18 @@ Domain terms are defined in [`CONTEXT.md`](CONTEXT.md); design decisions are in
 
 ## Development
 
-Requirements: Node 22+, pnpm 11, macOS. rclone on your PATH is enough for
-development; `pnpm tools:fetch` bundles a pinned copy for packaging.
+Requirements: Node 22+, pnpm 11, macOS. `pnpm tools:fetch` prepares pinned,
+checksummed tools for development and packaging.
 
 ```bash
 pnpm install
-pnpm tools:fetch   # bgutil PO token provider + rclone into resources/bin
+pnpm tools:fetch   # bgutil PO token provider + rclone + FFmpeg into resources/bin
 pnpm dev
 ```
 
 yt-dlp is downloaded by the app on first use into its data folder and updated
-at most once a day. ffmpeg comes from `ffmpeg-static`.
+at most once a day. `tools:fetch` pins and verifies FFmpeg 9.0 for Apple Silicon
+and 9.0.2 for Intel Macs. The `ffmpeg-static` dependency is only used in tests.
 
 Other commands:
 
@@ -37,9 +38,12 @@ Other commands:
 pnpm lint          # biome
 pnpm typecheck     # main, renderer, tests
 pnpm test          # vitest (uses real SQLite, ffmpeg and rclone's local backend)
-pnpm build:unpack  # unpacked .app in release/
+pnpm build:unpack  # local unpacked .app in release/
 pnpm build:mac     # signed and notarized when Apple credentials are in the environment
 ```
+
+Local unpacked builds disable hardened runtime so ad-hoc signatures can load
+the bundled Electron framework. Release builds keep hardened runtime enabled.
 
 A packaged build can check itself: `"Liked Music.app/Contents/MacOS/Liked Music" --smoke-test`.
 

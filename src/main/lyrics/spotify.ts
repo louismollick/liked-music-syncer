@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto'
-import type { HttpClient } from '../net/http'
+import { type HttpClient, HttpError } from '../net/http'
 import { formatLrcLine, isZeroTimestampOnlyLrc } from './lrc'
 import type { LyricsQuery } from './types'
 
@@ -221,6 +221,7 @@ export function createSpotifyClient(http: HttpClient) {
       return http.request(PATHFINDER, {
         host: 'spotify',
         method: 'POST',
+        retryable: true,
         body,
         signal,
         headers: {
@@ -291,9 +292,15 @@ export function createSpotifyClient(http: HttpClient) {
     const url = new URL(serverUrl)
     url.searchParams.set('trackid', trackId)
     url.searchParams.set('format', 'lrc')
-    const payload = record(
-      await http.json(url.toString(), { host: 'lyrics-server', signal })
-    )
+    let payload: Record<string, unknown>
+    try {
+      payload = record(
+        await http.json(url.toString(), { host: 'lyrics-server', signal })
+      )
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 404) return null
+      throw error
+    }
     if (!Array.isArray(payload.lines)) return null
     const synced: string[] = []
     const plain: string[] = []

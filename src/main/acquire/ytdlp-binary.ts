@@ -49,11 +49,18 @@ export function createYtDlpBinary(options: {
   const stampFile = path.join(binDir, 'yt-dlp.checked')
   const now = options.now ?? Date.now
   let inflight: Promise<string> | null = null
+  let verified: { size: number; mtimeMs: number; checkedAt: number } | null =
+    null
 
-  async function version(file: string): Promise<string | null> {
+  async function version(
+    file: string,
+    signal?: AbortSignal
+  ): Promise<string | null> {
     try {
       const { stdout } = await execFileAsync(file, ['--version'], {
-        timeout: 60_000,
+        // A cold start on macOS can take over a minute.
+        timeout: 180_000,
+        signal,
       })
       return stdout.trim() || null
     } catch {
@@ -85,8 +92,9 @@ export function createYtDlpBinary(options: {
     const incoming = `${binary}.new`
     await writeFile(incoming, bytes)
     await chmod(incoming, 0o755)
-    if (!(await version(incoming))) {
+    if (!(await version(incoming, signal))) {
       await rm(incoming, { force: true })
+      signal?.throwIfAborted()
       throw new Error('Downloaded yt-dlp binary does not run')
     }
     const previous = `${binary}.previous`
@@ -96,8 +104,9 @@ export function createYtDlpBinary(options: {
     )
     if (hadBinary) await rename(binary, previous)
     await rename(incoming, binary)
-    if (!(await version(binary))) {
+    if (!(await version(binary, signal))) {
       if (hadBinary) await rename(previous, binary)
+      signal?.throwIfAborted()
       throw new Error('Updated yt-dlp failed its version check; rolled back')
     }
     if (hadBinary) await rm(previous, { force: true })
@@ -112,19 +121,45 @@ export function createYtDlpBinary(options: {
   }
 
   async function ensureInner(signal?: AbortSignal): Promise<string> {
-    const current = await version(binary)
+    signal?.throwIfAborted()
+    const info = await stat(binary).catch(() => null)
+    if (
+      info &&
+      verified &&
+      info.size === verified.size &&
+      info.mtimeMs === verified.mtimeMs &&
+      now() - verified.checkedAt <= UPDATE_INTERVAL_MS
+    )
+      return binary
+    // The standalone executable has an expensive cold start on macOS. Check
+    // it once per unchanged binary, rather than spawning it for every song.
+    const current = await version(binary, signal)
+    signal?.throwIfAborted()
     if (!current) {
       await download(signal)
       await writeFile(stampFile, String(now()))
+      const installed = await stat(binary)
+      verified = {
+        size: installed.size,
+        mtimeMs: installed.mtimeMs,
+        checkedAt: now(),
+      }
       return binary
     }
     if (now() - (await lastChecked()) > UPDATE_INTERVAL_MS) {
       try {
         await download(signal)
       } catch (error) {
+        signal?.throwIfAborted()
         console.warn('[yt-dlp] update failed, keeping current binary', error)
       }
       await writeFile(stampFile, String(now()))
+    }
+    const installed = await stat(binary)
+    verified = {
+      size: installed.size,
+      mtimeMs: installed.mtimeMs,
+      checkedAt: await lastChecked(),
     }
     return binary
   }
