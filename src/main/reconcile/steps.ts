@@ -833,14 +833,21 @@ async function matchOnce(
       .get()
     if (!artist?.fullDiscography || !artist.channelId) continue
     // Every catalog source must agree before a shared release can change identity.
-    await checkArtistCatalog({
-      db: deps.db,
-      catalog: deps.catalog,
-      artistId: artist.id,
-      channelId: artist.channelId,
-      now: deps.now,
-      signal: run.signal,
-    })
+    try {
+      await checkArtistCatalog({
+        db: deps.db,
+        catalog: deps.catalog,
+        artistId: artist.id,
+        channelId: artist.channelId,
+        now: deps.now,
+        signal: run.signal,
+      })
+    } catch (error) {
+      if (run.signal.aborted) throw error
+      throw new RetryLaterError(
+        `Waiting for ${artist.name}'s catalog: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
     refreshed = true
   }
   if (refreshed) return STALE

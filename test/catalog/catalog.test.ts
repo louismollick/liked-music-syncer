@@ -56,6 +56,36 @@ function findArray(value: unknown, key: string): unknown[] | null {
 }
 
 describe('YouTube Music catalog', () => {
+  it('preserves an OMV and its duration when the audio playlist uses the same video', async () => {
+    const { release, audio } = fixture('gate-audio-title') as {
+      release: CatalogRelease
+      audio: unknown
+    }
+    release.tracks[0].videoId = 'JX5vgvcQLQk'
+    release.tracks[0].durationSeconds = 300
+    const lockup = nav(audio, [
+      'contents',
+      'twoColumnBrowseResultsRenderer',
+      'tabs',
+      0,
+      'tabRenderer',
+      'content',
+      'sectionListRenderer',
+      'contents',
+      0,
+      'itemSectionRenderer',
+      'contents',
+      0,
+      'lockupViewModel',
+    ]) as Record<string, unknown>
+    delete lockup.contentImage
+    const restored = await restoreReleaseAudio(audio, release)
+    expect(restored.tracks[0]).toEqual(release.tracks[0])
+    expect(restored.tracks[0]).toMatchObject({
+      videoType: 'OMV',
+      durationSeconds: 300,
+    })
+  })
   it('checks the exact audio title when YouTube truncates the playlist title', async () => {
     const { release, audio, fullTitle } = fixture('gate-audio-title') as {
       release: CatalogRelease

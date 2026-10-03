@@ -47,7 +47,7 @@ export function createAudioDownloader(deps: {
   return {
     async download(videoId, workDir, onProgress, signal) {
       const binary = await deps.ytdlp.ensure(signal)
-      await deps.pot.ensureReady()
+      await deps.pot.ensureReady(signal)
       const template = path.join(workDir, 'source.%(ext)s')
       const args = [
         '--no-config',
@@ -118,8 +118,8 @@ export async function toM4a(
   const output = path.join(workDir, 'audio.m4a')
   const isAac = codec?.startsWith('mp4a') || codec === 'aac'
   if (isAac && input.toLowerCase().endsWith('.m4a')) {
+    await validateAudio(ffmpeg, input, signal)
     await rename(input, output)
-    await validateAudio(ffmpeg, output, signal)
     return output
   }
   const args = [

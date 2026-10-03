@@ -73,7 +73,7 @@ export async function restoreReleaseAudio(
           'Official audio playlist does not match the release track list'
         )
     }
-    if (track.videoType !== 'OMV') {
+    if (track.videoType !== 'OMV' || videoId === track.videoId) {
       tracks.push(track)
       continue
     }

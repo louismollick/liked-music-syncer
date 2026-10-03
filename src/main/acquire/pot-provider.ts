@@ -8,7 +8,7 @@ export const POT_BASE_URL = 'http://127.0.0.1:4416'
 
 export interface PotProvider {
   pluginDir: string
-  ensureReady(): Promise<void>
+  ensureReady(signal?: AbortSignal): Promise<void>
   dispose(): void
 }
 
@@ -42,6 +42,14 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
 
   async function start(): Promise<void> {
     if (await ping()) return
+    // A missed health check must not orphan a provider we still own.
+    if (
+      child &&
+      !child.killed &&
+      child.exitCode === null &&
+      child.signalCode === null
+    )
+      throw new Error('PO token provider is running but not responding')
     if (!existsSync(entry) || !existsSync(pluginDir)) {
       throw Object.assign(
         new Error(
@@ -67,7 +75,7 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
     launched.on('error', (error) => {
       failure = error
     })
-    launched.on('exit', (code, signal) => {
+    launched.on('close', (code, signal) => {
       if (child === launched) child = null
       failure ??= new Error(
         `PO token provider exited (${signal ?? code}): ${stderr.trim()}`
@@ -92,11 +100,21 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
 
   return {
     pluginDir,
-    ensureReady() {
+    ensureReady(signal) {
+      signal?.throwIfAborted()
       starting ??= start().finally(() => {
         starting = null
       })
-      return starting
+      if (!signal) return starting
+      // Each caller can stop waiting without cancelling the shared startup.
+      const ready = starting
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+        ready.then(resolve, reject).finally(() => {
+          signal.removeEventListener('abort', onAbort)
+        })
+      })
     },
     dispose() {
       if (child && !child.killed) child.kill('SIGTERM')

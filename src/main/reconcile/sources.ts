@@ -450,12 +450,33 @@ export async function checkArtistCatalog(options: {
           const stillItsTrack =
             linked?.identityKey ===
             releaseIdentityKey(raw.release.browseId, raw.track.videoId)
-          const canRestore =
+          let canRestore =
             restoredAudio &&
             linked?.identityKey ===
               releaseIdentityKey(raw.release.browseId, existing.sourceVideoId)
+          if (canRestore && linked?.state === 'released' && existing.trackId) {
+            const identityKey = releaseIdentityKey(
+              raw.release.browseId,
+              raw.track.videoId
+            )
+            const target = tx
+              .select({ id: tracks.id })
+              .from(tracks)
+              .where(eq(tracks.identityKey, identityKey))
+              .get()
+            if (target) canRestore = false
+            else {
+              // Keep Stop managing attached to the restored recording so a
+              // later like cannot create another managed copy of this track.
+              tx.update(tracks)
+                .set({ identityKey, updatedAt: committedAt })
+                .where(eq(tracks.id, existing.trackId))
+                .run()
+            }
+          }
           const keepPosition =
-            (linked?.state === 'released' || linked?.refreshRequested) &&
+            linked?.state !== 'released' &&
+            linked?.refreshRequested &&
             linked.releaseId === raw.release.browseId &&
             linked.trackNumber === raw.track.trackNumber &&
             linked.discNumber === raw.track.discNumber &&

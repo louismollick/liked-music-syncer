@@ -25,6 +25,8 @@ describe('audio acquisition', () => {
     bytes.fill(0, payload, payload + 96)
     writeFileSync(input, bytes)
     await expect(toM4a(ffmpeg, input, 'aac', dir)).rejects.toThrow()
+    expect(existsSync(input)).toBe(true)
+    expect(existsSync(path.join(dir, 'audio.m4a'))).toBe(false)
   })
 
   it('validates a transcoded file before removing its source', async () => {

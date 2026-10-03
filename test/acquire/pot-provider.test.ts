@@ -22,6 +22,51 @@ function provider(script: string) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('PO token provider startup', () => {
+  it('lets a cancelled caller stop waiting while another caller finishes startup', async () => {
+    const marker = path.join(tempDir(), 'starts')
+    vi.stubGlobal('fetch', async () => {
+      if (!existsSync(marker)) throw new Error('not ready')
+      return new Response(null, { status: 200 })
+    })
+    const pot = provider(
+      `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started'), 300); setInterval(() => {}, 1000)`
+    )
+    const controller = new AbortController()
+    try {
+      const cancelled = pot.ensureReady(controller.signal)
+      const shared = pot.ensureReady()
+      controller.abort(new Error('cancelled download'))
+      await expect(cancelled).rejects.toThrow('cancelled download')
+      expect(existsSync(marker)).toBe(false)
+      await expect(shared).resolves.toBeUndefined()
+    } finally {
+      pot.dispose()
+    }
+  })
+
+  it('keeps its live child after a missed health check', async () => {
+    const marker = path.join(tempDir(), 'starts')
+    let healthy = true
+    vi.stubGlobal('fetch', async () => {
+      if (!healthy || !existsSync(marker)) throw new Error('not ready')
+      return new Response(null, { status: 200 })
+    })
+    const pot = provider(
+      `require('node:fs').appendFileSync(${JSON.stringify(marker)}, 'started\\n'); setInterval(() => {}, 1000)`
+    )
+    try {
+      await pot.ensureReady()
+      healthy = false
+      await expect(pot.ensureReady()).rejects.toThrow(
+        'running but not responding'
+      )
+      healthy = true
+      await pot.ensureReady()
+      expect(readFileSync(marker, 'utf8')).toBe('started\n')
+    } finally {
+      pot.dispose()
+    }
+  })
   it('reports an early process failure instead of waiting for the startup deadline', async () => {
     vi.stubGlobal('fetch', async () => {
       throw new Error('not ready')

@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createYouTubeMusicCatalog } from '../../src/main/catalog/catalog'
+import { restoreReleaseAudio } from '../../src/main/catalog/parsers/audio-playlist'
 import type { CatalogReleaseRef } from '../../src/main/catalog/types'
 import { artists, tracks } from '../../src/main/library/schema'
 import {
@@ -47,6 +48,88 @@ function ref(
 }
 
 describe('Full Discography catalog discovery', () => {
+  it('restores an OMV in place when its playlist later supplies separate audio', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = false
+    fullDiscography(h, 'channel:artist-1', credit.channelId)
+    const album = {
+      ...release('album', {
+        ...song('video', 'Song'),
+        videoType: 'OMV' as const,
+      }),
+      audioPlaylistId: 'audio-playlist',
+    }
+    const playlist = (videoId: string) => ({
+      contents: {
+        twoColumnBrowseResultsRenderer: {
+          tabs: [
+            {
+              tabRenderer: {
+                content: {
+                  sectionListRenderer: {
+                    contents: [
+                      {
+                        itemSectionRenderer: {
+                          contents: [
+                            {
+                              lockupViewModel: {
+                                contentId: videoId,
+                                metadata: {
+                                  lockupMetadataViewModel: {
+                                    title: { content: 'Song' },
+                                  },
+                                },
+                                rendererContext: {
+                                  commandContext: {
+                                    onTap: {
+                                      innertubeCommand: {
+                                        watchEndpoint: {
+                                          videoId,
+                                          playlistId: 'audio-playlist',
+                                          index: 0,
+                                        },
+                                      },
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    })
+    h.catalog.releases.set(
+      'album',
+      await restoreReleaseAudio(playlist('video'), album)
+    )
+    h.catalog.refs = [ref('album', 'albums')]
+    await h.start()
+    const id = h.row('album:video')!.id
+    const contributionId = h.contributions()[0].id
+    h.catalog.releases.set(
+      'album',
+      await restoreReleaseAudio(playlist('audio'), album)
+    )
+    await h.reconciler.check({ catalogs: 'all' })
+    await h.idle()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:audio')).toMatchObject({ id, state: 'done' })
+    expect(h.contributions()).toHaveLength(1)
+    expect(h.contributions()[0]).toMatchObject({
+      id: contributionId,
+      trackId: id,
+      sourceVideoId: 'audio',
+    })
+    expect(h.downloads).toEqual(['video', 'audio'])
+  })
   it('finishes a pending deletion before restoring re-enabled catalog audio', async () => {
     const h = harness()
     h.settings.remoteEnabled = false
