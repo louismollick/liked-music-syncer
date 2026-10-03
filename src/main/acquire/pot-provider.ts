@@ -28,6 +28,7 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
   )
   let child: ChildProcess | null = null
   let starting: Promise<void> | null = null
+  let disposed = false
 
   async function ping(): Promise<boolean> {
     try {
@@ -41,15 +42,30 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
   }
 
   async function start(): Promise<void> {
+    if (disposed) throw new Error('PO token provider is disposed')
     if (await ping()) return
-    // A missed health check must not orphan a provider we still own.
+    // Recheck once before restarting a hung child, and wait for its port to
+    // close before spawning a replacement. Keep ownership until it exits.
     if (
       child &&
       !child.killed &&
       child.exitCode === null &&
       child.signalCode === null
-    )
-      throw new Error('PO token provider is running but not responding')
+    ) {
+      const hung = child
+      if (await ping()) return
+      if (hung.exitCode === null && hung.signalCode === null) {
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(() => hung.kill('SIGKILL'), 2_000)
+          hung.once('close', () => {
+            clearTimeout(timeout)
+            resolve()
+          })
+          hung.kill('SIGTERM')
+        })
+      }
+    }
+    if (disposed) throw new Error('PO token provider is disposed')
     if (!existsSync(entry) || !existsSync(pluginDir)) {
       throw Object.assign(
         new Error(
@@ -85,6 +101,7 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
       // A cold Electron/Node start can exceed ten seconds on a busy Mac.
       const deadline = Date.now() + 60_000
       while (Date.now() < deadline) {
+        if (disposed) throw new Error('PO token provider is disposed')
         if (await ping()) return
         if (failure) throw failure
         await new Promise((resolve) => setTimeout(resolve, 250))
@@ -117,6 +134,7 @@ export function createPotProvider(tools: ToolPaths): PotProvider {
       })
     },
     dispose() {
+      disposed = true
       if (child && !child.killed) child.kill('SIGTERM')
       child = null
     },

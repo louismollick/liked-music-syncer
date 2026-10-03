@@ -18,6 +18,7 @@ import {
   artists,
   contributions,
   sourceSnapshots,
+  trackHistory,
   tracks,
 } from '../library/schema'
 import { releaseIdentityKey } from '../match/types'
@@ -400,11 +401,12 @@ export async function checkArtistCatalog(options: {
           .from(contributions)
           .where(eq(contributions.sourceKey, key))
           .get()
-        let restoredAudio = false
-        if (!existing && raw.track.videoType === 'ATV') {
+        let changedVideo = false
+        if (!existing) {
           const previous = tx
-            .select()
+            .select({ contribution: contributions, state: tracks.state })
             .from(contributions)
+            .leftJoin(tracks, eq(tracks.id, contributions.trackId))
             .where(
               and(
                 eq(contributions.kind, 'catalog'),
@@ -415,9 +417,13 @@ export async function checkArtistCatalog(options: {
             .all()
             .filter((row) => {
               try {
-                const saved = JSON.parse(row.raw) as CatalogRaw
+                const saved = JSON.parse(row.contribution.raw) as CatalogRaw
+                // Released tracks keep their exclusion when the same recording
+                // changes IDs in either direction, including a catalog reversal.
                 return (
-                  saved.track.videoType === 'OMV' &&
+                  (row.state === 'released' ||
+                    (saved.track.videoType === 'OMV' &&
+                      raw.track.videoType === 'ATV')) &&
                   sameReleasePosition(saved.track, raw.track)
                 )
               } catch {
@@ -425,8 +431,8 @@ export async function checkArtistCatalog(options: {
               }
             })
           if (previous.length === 1) {
-            existing = previous[0]
-            restoredAudio = true
+            existing = previous[0].contribution
+            changedVideo = true
           }
         }
         if (existing) {
@@ -451,7 +457,7 @@ export async function checkArtistCatalog(options: {
             linked?.identityKey ===
             releaseIdentityKey(raw.release.browseId, raw.track.videoId)
           let canRestore =
-            restoredAudio &&
+            changedVideo &&
             linked?.identityKey ===
               releaseIdentityKey(raw.release.browseId, existing.sourceVideoId)
           if (canRestore && linked?.state === 'released' && existing.trackId) {
@@ -469,8 +475,19 @@ export async function checkArtistCatalog(options: {
               // Keep Stop managing attached to the restored recording so a
               // later like cannot create another managed copy of this track.
               tx.update(tracks)
-                .set({ identityKey, updatedAt: committedAt })
+                .set({ identityKey, match: null, updatedAt: committedAt })
                 .where(eq(tracks.id, existing.trackId))
+                .run()
+              tx.insert(trackHistory)
+                .values({
+                  trackId: existing.trackId,
+                  at: committedAt,
+                  event: 're-keyed',
+                  detail: JSON.stringify({
+                    from: linked.identityKey,
+                    to: identityKey,
+                  }),
+                })
                 .run()
             }
           }

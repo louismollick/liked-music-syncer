@@ -22,6 +22,25 @@ function provider(script: string) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('PO token provider startup', () => {
+  it('does not spawn a child after disposal during its initial health check', async () => {
+    const marker = path.join(tempDir(), 'starts')
+    let finishPing!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      () =>
+        new Promise<Response>((resolve) => {
+          finishPing = resolve
+        })
+    )
+    const pot = provider(
+      `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started')`
+    )
+    const starting = pot.ensureReady()
+    pot.dispose()
+    finishPing(new Response(null, { status: 503 }))
+    await expect(starting).rejects.toThrow('disposed')
+    expect(existsSync(marker)).toBe(false)
+  })
   it('lets a cancelled caller stop waiting while another caller finishes startup', async () => {
     const marker = path.join(tempDir(), 'starts')
     vi.stubGlobal('fetch', async () => {
@@ -46,9 +65,9 @@ describe('PO token provider startup', () => {
 
   it('keeps its live child after a missed health check', async () => {
     const marker = path.join(tempDir(), 'starts')
-    let healthy = true
+    let missedPings = 0
     vi.stubGlobal('fetch', async () => {
-      if (!healthy || !existsSync(marker)) throw new Error('not ready')
+      if (missedPings-- > 0 || !existsSync(marker)) throw new Error('not ready')
       return new Response(null, { status: 200 })
     })
     const pot = provider(
@@ -56,13 +75,35 @@ describe('PO token provider startup', () => {
     )
     try {
       await pot.ensureReady()
-      healthy = false
-      await expect(pot.ensureReady()).rejects.toThrow(
-        'running but not responding'
-      )
-      healthy = true
+      missedPings = 1
       await pot.ensureReady()
       expect(readFileSync(marker, 'utf8')).toBe('started\n')
+    } finally {
+      pot.dispose()
+    }
+  })
+
+  it('restarts a hung provider after its old child closes', async () => {
+    const marker = path.join(tempDir(), 'starts')
+    let hung = false
+    vi.stubGlobal('fetch', async () => {
+      const starts = existsSync(marker)
+        ? readFileSync(marker, 'utf8').trim().split('\n')
+        : []
+      if (!starts.length || (hung && starts.length === 1))
+        throw new Error('not ready')
+      return new Response(null, { status: 200 })
+    })
+    const pot = provider(
+      `const fs = require('node:fs'); const first = !fs.existsSync(${JSON.stringify(marker)}); fs.appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n'); if (first) process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)`
+    )
+    try {
+      await pot.ensureReady()
+      const oldPid = Number(readFileSync(marker, 'utf8').trim())
+      hung = true
+      await pot.ensureReady()
+      expect(readFileSync(marker, 'utf8').trim().split('\n')).toHaveLength(2)
+      expect(() => process.kill(oldPid, 0)).toThrow()
     } finally {
       pot.dispose()
     }

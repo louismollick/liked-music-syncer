@@ -1,7 +1,12 @@
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CatalogRelease } from '../../src/main/catalog/types'
-import { artists, contributions, tracks } from '../../src/main/library/schema'
+import {
+  artists,
+  contributions,
+  trackHistory,
+  tracks,
+} from '../../src/main/library/schema'
 import { releaseIdentityKey } from '../../src/main/match/types'
 import {
   type CatalogRaw,
@@ -114,6 +119,30 @@ function catalogRow(h: Harness, trackId: string, album: CatalogRelease) {
 }
 
 describe('a catalog keeps its exact Release Track', () => {
+  it('keeps a different recording managed when a released position changes version', async () => {
+    const h = harness()
+    const album = release('album', {
+      ...song('video', 'Song'),
+      videoType: 'OMV' as const,
+    })
+    h.catalog.releases.set('album', album)
+    fullDiscography(h, album)
+    await h.start()
+    const id = h.row('album:video')!.id
+    h.reconciler.stopManaging(id)
+    await h.idle()
+    h.catalog.releases.set(
+      'album',
+      release('album', song('live', 'Song (Live)'))
+    )
+    await h.reconciler.check({ catalogs: 'all' })
+    await h.idle()
+    expect(h.rows()).toHaveLength(2)
+    expect(h.row('album:video')).toMatchObject({ id, state: 'released' })
+    expect(h.row('album:live')?.state).toBe('done')
+    expect(h.downloads).toEqual(['video', 'live'])
+    expectCatalogInvariant(h)
+  })
   it('retries a restored-audio match when another release blocks its artist catalog', async () => {
     const h = harness()
     const album = release('album', {
@@ -216,6 +245,27 @@ describe('a catalog keeps its exact Release Track', () => {
     expect(h.file(id)).toBeUndefined()
     expect(h.downloads).toEqual(['video'])
     expect(h.contributions().every((row) => row.trackId === id)).toBe(true)
+    expectCatalogInvariant(h)
+
+    expect(
+      h.db.select().from(trackHistory).where(eq(trackHistory.trackId, id)).all()
+    ).toContainEqual(
+      expect.objectContaining({
+        event: 're-keyed',
+        detail: JSON.stringify({ from: 'album:video', to: 'album:audio' }),
+      })
+    )
+    expect(h.rows()[0].match).toBeNull()
+    // Removing the separate audio must not forget the same exclusion.
+    h.catalog.releases.set('album', album)
+    await h.reconciler.check({ catalogs: 'all' })
+    await h.idle()
+    h.matcher.matches.set('video', releaseMatch(song('video', 'Song'), album))
+    h.catalog.likes = [song('video', 'Song')]
+    await h.check()
+    expect(h.rows()).toHaveLength(1)
+    expect(h.row('album:video')).toMatchObject({ id, state: 'released' })
+    expect(h.downloads).toEqual(['video'])
     expectCatalogInvariant(h)
   })
   it.each([
