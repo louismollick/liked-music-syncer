@@ -185,15 +185,34 @@ export function versionMarkers(value: string | null | undefined): Set<string> {
       .map(([name]) => name)
   )
 }
+function albumVersionMarkers(value: string): Set<string> {
+  const versions = [
+    ...value.matchAll(/[([{（【]([^)\]}）】]*)[)\]}）】]/gu),
+  ].map((match) => match[1])
+  const suffix = /\s+-\s+(.+)$/u.exec(value)
+  if (suffix) versions.push(suffix[1])
+  const markers = versionMarkers(
+    versions
+      .join(' ')
+      .replace(/\b(remixes|covers|edits|demos)\b/giu, (word) =>
+        word.toLowerCase() === 'remixes' ? 'remix' : word.slice(0, -1)
+      )
+  )
+  if (/(?<![\p{L}\p{N}_])live\s+(?:at|in|from|on)\b/iu.test(value))
+    markers.add('live')
+  return markers
+}
 export function versionCompatible(
-  sourceTitle: string,
-  _sourceArtist: string,
+  source: Pick<CatalogTrack, 'title' | 'album'>,
   candidate: Pick<CatalogTrack, 'title' | 'album'>
 ): boolean {
-  const markers = versionMarkers(sourceTitle)
-  const found = versionMarkers(
-    `${candidate.title} ${candidate.album?.name ?? ''}`
-  )
+  const markersFor = (track: Pick<CatalogTrack, 'title' | 'album'>) =>
+    new Set([
+      ...versionMarkers(track.title),
+      ...albumVersionMarkers(track.album?.name ?? ''),
+    ])
+  const markers = markersFor(source)
+  const found = markersFor(candidate)
   return (
     markers.size === found.size &&
     [...markers].every((marker) => found.has(marker))

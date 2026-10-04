@@ -47,7 +47,7 @@ import {
 } from '../library/schema'
 import { isInstrumentalTitle } from '../lyrics/query'
 import type { LyricsFinder } from '../lyrics/types'
-import { selectSpotifyCandidate, spotifyCandidateScore } from '../match/resolve'
+import { spotifyCandidateScore } from '../match/resolve'
 import {
   type Match,
   type Matcher,
@@ -528,7 +528,8 @@ function existingSpotifyMatch(
       })
       return scores ? [{ match, ...scores }] : []
     })
-  return selectSpotifyCandidate(candidates)
+  candidates.sort((a, b) => b.albumScore - a.albumScore || b.score - a.score)
+  return candidates[0]?.match ?? null
 }
 
 /** Likes join a known Recording; catalog inputs keep their exact Release Track. */
@@ -541,14 +542,15 @@ function recordingTarget(
   const candidates = db
     .select()
     .from(tracks)
-    .all()
-    .filter(
-      (track) =>
-        track.id !== current.id &&
-        track.state !== 'released' &&
-        parseMatch(track)?.catalogVideoId === match.catalogVideoId &&
-        parseMatch(track)?.confirmed
+    .where(
+      and(
+        ne(tracks.id, current.id),
+        ne(tracks.state, 'released'),
+        sql`json_extract(${tracks.match}, '$.catalogVideoId') = ${match.catalogVideoId}`,
+        sql`json_extract(${tracks.match}, '$.confirmed') = 1`
+      )
     )
+    .all()
   return (
     candidates.find((track) => track.identityKey === match.identityKey) ??
     candidates[0]
@@ -1129,8 +1131,7 @@ async function matchOnce(
     isrc: (recording ?? track).isrc,
   }
   try {
-    if (input.kind !== 'spotify')
-      enrichment = await deps.matcher.enrich(match, run.signal)
+    enrichment = await deps.matcher.enrich(match, run.signal)
   } catch (error) {
     if (run.signal.aborted) throw error
     errors.musicbrainz = error instanceof Error ? error.message : String(error)

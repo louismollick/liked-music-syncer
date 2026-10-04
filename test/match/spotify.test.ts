@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMatcher } from '../../src/main/match/matcher'
 import { spotifyCandidateScore } from '../../src/main/match/resolve'
+import * as similarity from '../../src/main/match/sequence-matcher'
 import { versionCompatible } from '../../src/main/match/text'
 import type { Match } from '../../src/main/match/types'
 import type { SpotifyLikedTrack } from '../../src/main/spotify/library'
@@ -161,6 +162,48 @@ describe('Spotify Release Track matching', () => {
       Math.abs(delta) <= 5
     )
   })
+  it('rejects out-of-range duration before running SequenceMatcher', () => {
+    const compare = vi.spyOn(similarity, 'sequenceMatcherRatio')
+    const candidate = {
+      title: 'Another Song',
+      artists: [{ name: 'Different Artist', channelId: null }],
+      album: 'Other Album',
+      durationSeconds: 206,
+    }
+    try {
+      expect(spotifyCandidateScore(source, candidate)).toBeNull()
+      expect(compare).not.toHaveBeenCalled()
+      spotifyCandidateScore(source, { ...candidate, durationSeconds: 205 })
+      expect(compare).toHaveBeenCalled()
+    } finally {
+      compare.mockRestore()
+    }
+  })
+  it.each([
+    'Live Through This',
+    'Demo Tapes',
+    'Covers',
+    'Edit',
+  ])('matches a studio track from %s to a single in both directions', (album) => {
+    const candidate = {
+      title: source.title,
+      artists: [{ name: 'Test Artist', channelId: null }],
+      album: 'Single',
+      durationSeconds: 200,
+    }
+    expect(
+      spotifyCandidateScore(
+        { ...source, album: { ...source.album, name: album } },
+        candidate
+      )
+    ).not.toBeNull()
+    expect(
+      spotifyCandidateScore(
+        { ...source, album: { ...source.album, name: 'Single' } },
+        { ...candidate, album }
+      )
+    ).not.toBeNull()
+  })
   it.each([
     'Live',
     'Remix',
@@ -191,10 +234,13 @@ describe('Spotify Release Track matching', () => {
       spotifyCandidateScore({ ...source, title: candidate.title }, candidate)
     ).not.toBeNull()
     expect(
-      versionCompatible('A Song', 'Test Artist', {
-        title: candidate.title,
-        album: null,
-      })
+      versionCompatible(
+        { title: 'A Song', album: null },
+        {
+          title: candidate.title,
+          album: null,
+        }
+      )
     ).toBe(false)
   })
   it('preserves network and authentication failures instead of reporting a missing match', async () => {

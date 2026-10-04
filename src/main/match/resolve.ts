@@ -253,8 +253,7 @@ async function searchCandidate(
     let [, titleScore, artistScore] = scores
     if (artistIdMatch) artistScore = 1
     const versionMatches = versionCompatible(
-      `${title} ${primary.album?.name ?? song.album?.name ?? ''}`,
-      artistName,
+      { title, album: primary.album ?? song.album },
       candidate
     )
     if (
@@ -354,8 +353,7 @@ export async function likedContribution(
     if (
       track &&
       versionCompatible(
-        `${primary.title} ${primary.album?.name ?? song.album?.name ?? ''}`,
-        joinArtistNames(primary.artists),
+        { title: primary.title, album: primary.album ?? song.album },
         {
           title: track.title,
           album: { name: release.title, browseId: release.browseId },
@@ -406,6 +404,7 @@ export function spotifyCandidateScore(
 ): { score: number; albumScore: number } | null {
   if (candidate.durationSeconds === null) return null
   const delta = Math.abs(source.durationMs / 1000 - candidate.durationSeconds)
+  if (delta > 5) return null
   const titleScore = textSimilarity(
     spotifySearchTitle(source.title),
     spotifySearchTitle(candidate.title)
@@ -417,12 +416,13 @@ export function spotifyCandidateScore(
     )
   )
   if (
-    delta > 5 ||
     titleScore < 0.9 ||
     artistScore < 0.88 ||
     !versionCompatible(
-      `${source.title} ${source.album.name}`,
-      source.artists[0]?.name ?? '',
+      {
+        title: source.title,
+        album: { name: source.album.name, browseId: null },
+      },
       {
         title: candidate.title,
         album: { name: candidate.album, browseId: null },

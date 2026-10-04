@@ -306,6 +306,29 @@ describe('catalog resolution', () => {
 
 describe('YouTube like search fallback version gates', () => {
   it.each([
+    ['Live Through This', 'Single', 'search_song_exact'],
+    ['Single', 'Live Through This', 'search_song_exact'],
+    ['Live at Budokan', 'Single', 'standalone'],
+    ['Single', 'Live at Budokan', 'standalone'],
+  ])('compares album version context for %s and %s', async (sourceAlbum, candidateAlbum, method) => {
+    const source = liked({
+      ...track('source'),
+      album: { name: sourceAlbum, browseId: null },
+    })
+    const found = {
+      ...track('candidate', 'Song', 'MPRE1'),
+      album: { name: candidateAlbum, browseId: 'MPRE1' },
+    }
+    const { matcher } = setup(
+      { source: { track: source, lyricsBrowseId: null } },
+      { MPRE1: { ...release([found]), title: candidateAlbum } },
+      [found]
+    )
+    expect(
+      (await matcher.match({ kind: 'liked', song: source })).resolutionMethod
+    ).toBe(method)
+  })
+  it.each([
     'Live',
     'Remix',
     'Instrumental',

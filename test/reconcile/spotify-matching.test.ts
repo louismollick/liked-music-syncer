@@ -1,8 +1,9 @@
 import { eq } from 'drizzle-orm'
 import { afterEach, expect, it, vi } from 'vitest'
-import { artists, contributions } from '../../src/main/library/schema'
+import { artists, contributions, tracks } from '../../src/main/library/schema'
 import { SpotifyMatchError } from '../../src/main/match/resolve'
 import {
+  checkLikedSongs,
   checkSpotifyLikedSongs,
   linkContributions,
 } from '../../src/main/reconcile/sources'
@@ -30,18 +31,185 @@ const spotify: SpotifyLikedTrack = {
   addedAt: '2026-09-01T00:00:00Z',
   position: 0,
 }
-async function addSpotify(h: Harness) {
+async function addSpotify(h: Harness, track = spotify) {
   await checkSpotifyLikedSongs({
     db: h.db,
     accountId: 'spotify-account',
     library: {
-      likedSongs: async () => ({ tracks: [spotify], declaredCount: 1 }),
+      likedSongs: async () => ({ tracks: [track], declaredCount: 1 }),
     },
     stillCurrent: () => true,
   })
   linkContributions(h.db)
 }
 const run = () => ({ signal: new AbortController().signal, progress: () => {} })
+
+it('enriches the YouTube Music Match for a Spotify-only track', async () => {
+  const h = harness()
+  const album = release('album', song('audio', 'A Song'))
+  const match = {
+    ...releaseMatch(song('source', 'A Song'), album, 'audio'),
+    sourceVideoId: null,
+  }
+  h.matcher.matches.set('spotify', match)
+  const enrich = vi.spyOn(h.deps.matcher, 'enrich').mockResolvedValue({
+    genre: 'Rock',
+    isrc: 'USABC2600001',
+    mbRecordingId: 'recording',
+  })
+  await addSpotify(h)
+  await runMatch(h.deps, h.rows()[0], run())
+  expect(enrich.mock.calls[0][0]).toEqual(match)
+  expect(h.rows()[0]).toMatchObject({
+    genre: 'Rock',
+    isrc: 'USABC2600001',
+    mbRecordingId: 'recording',
+  })
+})
+
+it.each([
+  'album score',
+  'score',
+])('joins an existing Library match by %s without a catalog ambiguity error', async (priority) => {
+  const h = harness()
+  const other = song('other-like', 'A Song')
+  const preferred = song('preferred-like', 'A Song')
+  const otherAlbum = {
+    ...release('other-album', song('other-audio', 'A Song')),
+    title:
+      priority === 'album score'
+        ? `${spotify.album.name} Plus`
+        : spotify.album.name,
+  }
+  const preferredAlbum = {
+    ...release('preferred-album', song('preferred-audio', 'A Song')),
+    title: spotify.album.name,
+  }
+  otherAlbum.tracks[0].durationSeconds = priority === 'album score' ? 1 : 4
+  preferredAlbum.tracks[0].durationSeconds = priority === 'album score' ? 4 : 1
+  h.catalog.likes = [other, preferred]
+  h.matcher.matches.set(
+    other.videoId,
+    releaseMatch(other, otherAlbum, 'other-audio')
+  )
+  h.matcher.matches.set(
+    preferred.videoId,
+    releaseMatch(preferred, preferredAlbum, 'preferred-audio')
+  )
+  await h.start()
+  await h.stop()
+  const expected = h
+    .rows()
+    .find((row) => row.identityKey === 'preferred-album:preferred-audio')!
+  h.db
+    .update(tracks)
+    .set({ durationSeconds: preferredAlbum.tracks[0].durationSeconds })
+    .where(eq(tracks.id, expected.id))
+    .run()
+  h.db
+    .update(tracks)
+    .set({ durationSeconds: otherAlbum.tracks[0].durationSeconds })
+    .where(eq(tracks.identityKey, 'other-album:other-audio'))
+    .run()
+  const calls = h.matcher.calls
+  await addSpotify(h)
+  await runMatch(h.deps, h.rows().find((row) => !row.identityKey)!, run())
+  expect(h.matcher.calls).toBe(calls)
+  expect(
+    h.contributions().find((row) => row.kind === 'spotify_liked')?.trackId
+  ).toBe(expected.id)
+  expect(h.rows()).toHaveLength(2)
+  expect(h.downloads).toHaveLength(2)
+})
+
+it('looks up Recording targets without parsing unrelated or unconfirmed Matches', async () => {
+  const h = harness()
+  const like = song('youtube-like', 'A Song')
+  const targetAlbum = release('target-album', song('audio', 'A Song'))
+  const target = {
+    ...releaseMatch(like, targetAlbum, 'audio'),
+    confirmed: true,
+  }
+  const unrelated = JSON.stringify({
+    ...target,
+    catalogVideoId: 'unrelated-audio',
+    identityKey: 'unrelated:unrelated-audio',
+  })
+  const unconfirmed = JSON.stringify({
+    ...target,
+    confirmed: false,
+    identityKey: 'unconfirmed:audio',
+  })
+  for (const [id, match] of [
+    ['unrelated', unrelated],
+    ['unconfirmed', unconfirmed],
+    ['target', JSON.stringify(target)],
+  ])
+    h.db
+      .insert(tracks)
+      .values({
+        id,
+        title: 'A Song',
+        match,
+        createdAt: 'now',
+        updatedAt: 'now',
+        identityKey: id === 'target' ? target.identityKey : null,
+      })
+      .run()
+  h.catalog.likes = [like]
+  await checkLikedSongs({
+    db: h.db,
+    catalog: h.catalog,
+    accountId: 'account-a',
+    stillCurrent: () => true,
+  })
+  linkContributions(h.db)
+  const provisional = h
+    .rows()
+    .find((row) => !['unrelated', 'unconfirmed', 'target'].includes(row.id))!
+  const single = release('single', song('audio', 'A Song'))
+  h.matcher.matches.set(like.videoId, releaseMatch(like, single, 'audio'))
+  const parse = vi.spyOn(JSON, 'parse')
+  try {
+    await runMatch(h.deps, provisional, run())
+    expect(
+      parse.mock.calls.some(
+        ([value]) => value === unrelated || value === unconfirmed
+      )
+    ).toBe(false)
+  } finally {
+    parse.mockRestore()
+  }
+  expect(h.contributions()[0].trackId).toBe('target')
+  expect(h.rows().find((row) => row.id === 'target')?.identityKey).toBe(
+    target.identityKey
+  )
+})
+
+it.each([
+  ['Live Through This', 'Single'],
+  ['Single', 'Live Through This'],
+])('joins a Spotify studio like across Releases named %s and %s', async (youtubeAlbum, spotifyAlbum) => {
+  const h = harness()
+  const like = song('youtube-like', 'A Song')
+  const album = {
+    ...release('youtube-album', song('audio', 'A Song')),
+    title: youtubeAlbum,
+  }
+  h.catalog.likes = [like]
+  h.matcher.matches.set(like.videoId, releaseMatch(like, album, 'audio'))
+  await h.start()
+  await h.stop()
+  const calls = h.matcher.calls
+  await addSpotify(h, {
+    ...spotify,
+    album: { ...spotify.album, name: spotifyAlbum },
+  })
+  await runMatch(h.deps, h.rows().find((row) => !row.identityKey)!, run())
+  expect(h.matcher.calls).toBe(calls)
+  expect(h.rows()).toHaveLength(1)
+  expect(h.downloads).toEqual(['audio'])
+})
 
 it('joins a Spotify like to an existing YouTube-liked Recording on a different Release without another match or download', async () => {
   const h = harness()
