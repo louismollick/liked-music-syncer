@@ -58,13 +58,16 @@ import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
 import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
 import {
+  BOTH_LIKED_SOURCE_ORIGIN,
   CATALOG_SOURCE_ORIGIN,
   changedTagParts,
   fieldDiff,
   readTags,
+  SPOTIFY_LIKED_SOURCE_ORIGIN,
   sha256,
   type TagFields,
   writeTags,
+  YOUTUBE_LIKED_SOURCE_ORIGIN,
 } from '../tags/schema'
 import {
   desiredPath,
@@ -157,9 +160,15 @@ export function sourceOriginFor(
     )
     .all()
   if (rows.length === 0) return undefined
-  return rows.every((row) => row.kind === 'catalog')
-    ? CATALOG_SOURCE_ORIGIN
-    : null
+  const youtube = rows.some((row) => row.kind === 'liked')
+  const spotify = rows.some((row) => row.kind === 'spotify_liked')
+  return youtube && spotify
+    ? BOTH_LIKED_SOURCE_ORIGIN
+    : youtube
+      ? YOUTUBE_LIKED_SOURCE_ORIGIN
+      : spotify
+        ? SPOTIFY_LIKED_SOURCE_ORIGIN
+        : CATALOG_SOURCE_ORIGIN
 }
 
 export function desiredFieldsFor(db: Db, track: TrackRow): TagFields {
@@ -174,7 +183,26 @@ export function desiredFieldsFor(db: Db, track: TrackRow): TagFields {
       .get()
     origin = file ? (parseFields(file).lms?.sourceOrigin ?? null) : null
   }
-  return desiredTagFields(track, coverShaFromPath(track.coverPath), origin)
+  const fields = desiredTagFields(
+    track,
+    coverShaFromPath(track.coverPath),
+    origin
+  )
+  const sources = db
+    .select()
+    .from(contributions)
+    .where(
+      and(eq(contributions.trackId, track.id), eq(contributions.active, true))
+    )
+    .all()
+  const youtube = sources.find((source) => source.kind === 'liked')
+  const spotify = sources.find((source) => source.kind === 'spotify_liked')
+  if (youtube) fields.lms.sourceVideoId = youtube.sourceVideoId
+  if (spotify)
+    fields.lms.spotifyTrackId = (
+      JSON.parse(spotify.raw) as SpotifyLikedRaw
+    ).track.trackId
+  return fields
 }
 
 export function materialDiff(written: TagFields, desired: TagFields): string[] {

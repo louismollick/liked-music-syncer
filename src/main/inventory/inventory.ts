@@ -103,7 +103,7 @@ export function matchFromTags(fields: TagFields): Match | null {
   const sourceVideoId = lms.sourceVideoId
   const catalogVideoId = lms.resolvedVideoId
   const method = lms.resolutionMethod as ResolutionMethod | null
-  if (!sourceVideoId || !catalogVideoId || !fields.title) return null
+  if (!catalogVideoId || !fields.title) return null
   if (!method || !RESOLUTION_METHODS.includes(method)) return null
   const releaseId = lms.releaseBrowseId
   // A Standalone Track has no Release and downloads the liked video itself.
@@ -142,7 +142,7 @@ export function matchFromTags(fields: TagFields): Match | null {
     catalogVideoId,
     identityKey: releaseId
       ? releaseIdentityKey(releaseId, catalogVideoId)
-      : standaloneIdentityKey(sourceVideoId),
+      : standaloneIdentityKey(sourceVideoId!),
     release,
     title: fields.title,
     artists: credits,
