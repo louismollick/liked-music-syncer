@@ -1,5 +1,7 @@
 /** Domain types shared by main-process modules. Names follow CONTEXT.md. */
 
+import type { ActivityStage } from '../shared/ipc'
+
 export interface ArtistCredit {
   name: string
   /** YouTube channel ID when YouTube Music provides one (trusted Artist identity). */
@@ -19,13 +21,17 @@ export type TrackState =
   /** The user stopped managing the file; the app leaves the track alone. */
   | 'released'
 
-export type StepKind = 'match' | 'acquire' | 'retag' | 'move' | 'upload'
-
-/** Visible Activity stage for a Track Step. */
-export type ActivityStage = 'matching' | 'downloading' | 'uploading'
+export type StepKind =
+  | 'match'
+  | 'lyrics'
+  | 'acquire'
+  | 'retag'
+  | 'move'
+  | 'upload'
 
 export function stageForStep(step: StepKind): ActivityStage {
   if (step === 'match') return 'matching'
+  if (step === 'lyrics') return 'lyrics'
   if (step === 'upload') return 'uploading'
   return 'downloading'
 }

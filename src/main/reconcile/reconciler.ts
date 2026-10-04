@@ -14,6 +14,7 @@ import {
   sql,
 } from 'drizzle-orm'
 import type {
+  ActivityStage,
   ActivityTrackView,
   ActivityView,
   AttentionItemView,
@@ -61,6 +62,7 @@ import {
   REWRITE_AUDIO,
   RetryLaterError,
   runAcquire,
+  runLyrics,
   runMatch,
   runMove,
   runRetag,
@@ -75,11 +77,9 @@ const CATALOG_INTERVAL_MS = 24 * 60 * 60_000
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60_000
 const STOP_WAIT_MS = 5_000
 const MAX_WAIT_MS = 6 * 60 * 60_000
-const STAGE_WEIGHTS: Record<
-  'matching' | 'downloading' | 'uploading',
-  [number, number]
-> = {
+const STAGE_WEIGHTS: Record<ActivityStage, [number, number]> = {
   matching: [0, 0.15],
+  lyrics: [0.15, 0.7],
   downloading: [0.15, 0.7],
   uploading: [0.85, 0.15],
 }
@@ -413,6 +413,17 @@ export class Reconciler {
         .run()
     }
     this.deps.onLibraryChanged(ids.length > 500 ? null : ids)
+    this.markDirty()
+  }
+
+  /** Manual retry only; completed lookups have no expiry. */
+  recheckLyrics(): void {
+    this.db
+      .update(tracks)
+      .set({ lyricsCheckedAt: null })
+      .where(sql`${tracks.lyricsStatus} != 'synced'`)
+      .run()
+    this.deps.onLibraryChanged(null)
     this.markDirty()
   }
 
@@ -779,6 +790,8 @@ export class Reconciler {
               .where(eq(tracks.id, trackId))
               .run()
           }
+        } else if (step === 'lyrics') {
+          await runLyrics(this.deps, track, run)
         } else if (step === 'acquire') {
           await runAcquire(this.deps, track, run)
         } else if (step === 'retag') await runRetag(this.deps, track, run)
@@ -1058,9 +1071,14 @@ function mergeCatalogRequests(
   return [...new Set([...a, ...b])]
 }
 
-/** Newest Liked Date first; catalog-only tracks after, newest release first. */
+/** Lyrics-only work last; otherwise newest likes, then newest catalog releases. */
 function queueOrder() {
   return [
+    asc(sql`CASE WHEN ${tracks.match} IS NOT NULL
+      AND ${tracks.lyricsCheckedAt} IS NULL AND ${tracks.refreshRequested} = 0
+      AND EXISTS (SELECT 1 FROM files f WHERE f.track_id = ${tracks.id}
+        AND (f.audio_video_id IS NULL OR f.audio_video_id = json_extract(${tracks.match}, '$.catalogVideoId')))
+      THEN 1 ELSE 0 END`),
     desc(
       sql`(SELECT MAX(c.first_seen_at) FROM contributions c WHERE c.track_id = tracks.id AND c.kind = 'liked' AND c.active = 1)`
     ),

@@ -23,6 +23,7 @@ const LYRICS_SOURCE: Record<string, string> = {
   spotify: 'Spotify',
   'youtube-music': 'YouTube Music',
   lrclib: 'LRCLIB',
+  petitlyrics: 'PetitLyrics',
 }
 const REMOTE_TEXT = {
   in_sync: 'in sync',

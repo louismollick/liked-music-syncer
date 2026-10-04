@@ -276,6 +276,7 @@ export async function adoptFiles(
       mbRecordingId: read.fields.mbRecordingId,
       language: read.fields.language,
       lyricsStatus,
+      lyricsCheckedAt: at,
       lyricsText: lyricsText || null,
       spotifyTrackId: read.fields.lms.spotifyTrackId,
       coverPath,

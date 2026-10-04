@@ -5,7 +5,12 @@ import type {
 } from '../../src/main/catalog/types'
 import { createLyricsFinder } from '../../src/main/lyrics/finder'
 import { formatLrcLine } from '../../src/main/lyrics/lrc'
-import { candidateScore, generateTotp } from '../../src/main/lyrics/spotify'
+import { prepareLyricsQuery } from '../../src/main/lyrics/query'
+import {
+  candidateScore,
+  createSpotifyClient,
+  generateTotp,
+} from '../../src/main/lyrics/spotify'
 import type { LyricsQuery } from '../../src/main/lyrics/types'
 import {
   type HttpClient,
@@ -28,9 +33,44 @@ function fakeHttp(route: Route) {
   const request = async (raw: string, options: RequestOptions) => {
     const url = new URL(raw)
     calls.push({ url, options })
-    const value = await route(url, options)
+    let value = await route(url, options)
     if (value instanceof Error) throw value
-    return value instanceof Response ? value : Response.json(value)
+    if (value instanceof Response) return value
+    // Old fixtures omitted metadata. Real LRCLIB responses include these fields.
+    if (url.hostname === 'lrclib.net') {
+      const metadata = {
+        trackName: url.searchParams.get('track_name'),
+        artistName: url.searchParams.get('artist_name'),
+        duration: Number(url.searchParams.get('duration') ?? 261),
+      }
+      const item = (raw: unknown) => ({ ...metadata, ...(raw as object) })
+      value = Array.isArray(value)
+        ? value.map(item)
+        : url.pathname.endsWith('/search')
+          ? [item(value)]
+          : item(value)
+    }
+    if (url.hostname === 'p0.petitlyrics.com')
+      return new Response(
+        '<response><status>00000000</status><songs/></response>'
+      )
+    if (url.hostname === 'open.spotify.com' && url.pathname === '/')
+      return spotifyBootstrap()
+    if (url.pathname.endsWith('secretDict.json') && !('9' in Object(value)))
+      value = { '9': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }
+    if (url.pathname === '/api/server-time') value = { serverTime: 1700000000 }
+    if (url.pathname === '/api/token')
+      value = {
+        accessToken: 'token',
+        accessTokenExpirationTimestampMs: Date.now() + 3600000,
+      }
+    if (
+      url.pathname.endsWith('/query') &&
+      !('data' in Object(value)) &&
+      !('errors' in Object(value))
+    )
+      value = spotifyResults([])
+    return Response.json(value)
   }
   const http: HttpClient = {
     request,
@@ -57,6 +97,36 @@ function fakeCatalog(
       return value
     },
   } as YouTubeMusicCatalog
+}
+
+function spotifyBootstrap() {
+  return new Response(
+    `<script id="appServerConfig" type="text/plain">${Buffer.from(JSON.stringify({ clientVersion: 'v1' })).toString('base64')}</script>`
+  )
+}
+function spotifyResults(
+  items: { id: string; title: string; duration: number; artist?: string }[]
+) {
+  return {
+    data: {
+      searchV2: {
+        tracksV2: {
+          items: items.map((item) => ({
+            item: {
+              data: {
+                uri: `spotify:track:${item.id}`,
+                name: item.title,
+                artists: {
+                  items: [{ profile: { name: item.artist ?? 'Beyoncé' } }],
+                },
+                duration: { totalMilliseconds: item.duration * 1000 },
+              },
+            },
+          })),
+        },
+      },
+    },
+  }
 }
 
 const lyricServer = { lyricsServerUrl: 'https://lyrics.example/lyrics' }
@@ -108,7 +178,10 @@ describe('lyrics finder', () => {
       http,
       catalog: fakeCatalog(null, []),
     }).find({ ...query, durationSeconds: 5159, lyricsBrowseId: null }, noServer)
-    expect(calls.map((call) => call.url.pathname)).toEqual(['/api/search'])
+    expect(calls.map((call) => call.url.pathname)).toEqual([
+      '/api/search',
+      '/api/GetPetitLyricsData.php',
+    ])
     expect(result.errors).toEqual({})
     expect(result.lyrics?.text).toBe('Concert lyrics')
   })
@@ -156,7 +229,9 @@ describe('lyrics finder', () => {
       source: 'youtube-music',
     })
     expect(catalogCalls).toEqual(['MPLYlyrics'])
-    expect(calls).toHaveLength(1)
+    expect(
+      calls.filter((call) => call.options.host === 'lyrics-server')
+    ).toHaveLength(1)
   })
 
   it('chooses first plain result after checking every provider', async () => {
@@ -181,7 +256,10 @@ describe('lyrics finder', () => {
     })
     expect(calls.map((call) => call.options.host)).toEqual([
       'lyrics-server',
+      ...Array(5).fill('spotify'),
       'lrclib',
+      'lrclib',
+      'petitlyrics',
     ])
   })
 
@@ -337,6 +415,7 @@ describe('lyrics finder', () => {
       spotify: 'lyrics.example unavailable',
       'youtube-music': 'catalog unavailable',
       lrclib: 'lrclib.net unavailable',
+      petitlyrics: 'p0.petitlyrics.com unavailable',
     })
   })
 
@@ -363,6 +442,342 @@ describe('lyrics finder', () => {
       }).find({ ...query, lyricsBrowseId: null }, noServer)
       expect(result.lyrics?.language).toBe(code)
     }
+  })
+})
+
+describe('recording-aware lyrics matching', () => {
+  it.each([
+    'plain',
+    'synced',
+  ])('stops LRCLIB variants after the first accepted %s result', async (kind) => {
+    const { http, calls } = fakeHttp(() => ({
+      ...(kind === 'synced'
+        ? { syncedLyrics: '[00:01.00]Words' }
+        : { plainLyrics: 'Words' }),
+    }))
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(
+      { ...query, title: '相聞詩 - Soumonka', artistVariants: ['日本名'] },
+      noServer
+    )
+    expect(found.lyrics?.text).toBe(
+      kind === 'synced' ? '[00:01.00]Words' : 'Words'
+    )
+    expect(
+      calls
+        .filter((call) => call.options.host === 'lrclib')
+        .map((call) => call.url.pathname)
+    ).toEqual(kind === 'synced' ? ['/api/get'] : ['/api/get', '/api/search'])
+  })
+
+  it('keeps LRCLIB get plain as fallback while preferring compatible synced search results', async () => {
+    const { http } = fakeHttp((url) =>
+      url.pathname.endsWith('/get')
+        ? { plainLyrics: 'Plain' }
+        : [
+            {
+              trackName: 'Halo (Live)',
+              syncedLyrics: '[00:01.00]Wrong version',
+              duration: 261,
+            },
+            { plainLyrics: 'First compatible plain', duration: 261 },
+            { syncedLyrics: '[00:02.00]Synced', duration: 264 },
+          ]
+    )
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(query, noServer)
+    expect(found.lyrics).toMatchObject({
+      synced: true,
+      text: '[00:02.00]Synced',
+    })
+  })
+
+  it('keeps LRCLIB plain fallback and records a later search error', async () => {
+    const { http } = fakeHttp((url) => {
+      if (url.hostname !== 'lrclib.net') return {}
+      return url.pathname.endsWith('/get')
+        ? { plainLyrics: 'Plain fallback' }
+        : new Error('search unavailable')
+    })
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(query, noServer)
+    expect(found.lyrics).toMatchObject({
+      source: 'lrclib',
+      synced: false,
+      text: 'Plain fallback',
+    })
+    expect(found.errors).toEqual({ lrclib: 'search unavailable' })
+  })
+
+  it.each([
+    'Song (Instrumental)',
+    'Song - Off Vocal',
+    'Song (Karaoke)',
+    'Song（Inst.）',
+  ])('skips every provider for %s', async (title) => {
+    const { http, calls } = fakeHttp(() => {
+      throw new Error('must not request')
+    })
+    const catalogCalls: string[] = []
+    expect(
+      await createLyricsFinder({
+        http,
+        catalog: fakeCatalog(
+          { plain: 'Vocal lyrics', timed: null, source: null },
+          catalogCalls
+        ),
+      }).find({ ...query, title }, lyricServer)
+    ).toEqual({ lyrics: null, spotifyTrackId: 'known', errors: {} })
+    expect(calls).toEqual([])
+    expect(catalogCalls).toEqual([])
+  })
+
+  it.each([
+    'Live',
+    'TV Size',
+    'Remix',
+    'Acoustic',
+    'Cover',
+    'Demo',
+    'New Recording',
+  ])('rejects %s differences in either direction', async (qualifier) => {
+    for (const [local, candidate] of [
+      [`Halo (${qualifier})`, 'Halo'],
+      ['Halo', `Halo (${qualifier})`],
+    ]) {
+      const { http } = fakeHttp((url) =>
+        url.pathname.endsWith('/get')
+          ? { trackName: candidate, syncedLyrics: '[00:01.00]Wrong' }
+          : []
+      )
+      const found = await createLyricsFinder({
+        http,
+        catalog: fakeCatalog(null, []),
+      }).find({ ...query, title: local }, noServer)
+      expect(found.lyrics).toBeNull()
+    }
+  })
+
+  it('finds the native half of a bilingual title and uses the native artist variant', async () => {
+    const { http, calls } = fakeHttp((url) => {
+      const title = url.searchParams.get('track_name')
+      const artist = url.searchParams.get('artist_name')
+      return title === '相聞詩' && artist === 'そこに鳴る'
+        ? { syncedLyrics: '[00:01.00]言葉' }
+        : url.pathname.endsWith('/get')
+          ? new HttpError('not found', 'permanent', 404)
+          : []
+    })
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(
+      {
+        ...query,
+        title: '相聞詩 - Soumonka',
+        artists: [{ name: 'Sokoninaru', channelId: 'channel' }],
+        artistVariants: ['そこに鳴る'],
+      },
+      noServer
+    )
+    expect(found.lyrics).toMatchObject({ source: 'lrclib', synced: true })
+    expect(
+      calls.some(
+        (call) => call.url.searchParams.get('artist_name') === 'そこに鳴る'
+      )
+    ).toBe(true)
+    expect(
+      prepareLyricsQuery({ ...query, title: '相聞詩 - Soumonka (Live)' }).titles
+    ).toEqual(['相聞詩 - Soumonka (Live)'])
+  })
+
+  it('rejects Spotify candidates outside three seconds and mismatched versions', async () => {
+    const { http } = fakeHttp(() =>
+      spotifyResults([
+        { id: 'wrong-duration', title: 'Halo', duration: 264.01 },
+        { id: 'wrong-version', title: 'Halo (Live)', duration: 261 },
+        { id: 'right', title: 'Halo', duration: 264 },
+      ])
+    )
+    expect(
+      await createSpotifyClient(http).search(prepareLyricsQuery(query))
+    ).toBe('right')
+  })
+
+  it('searches native title and native artist variants on Spotify', async () => {
+    const { http, calls } = fakeHttp((_url, options) => {
+      const body = options.body
+        ? (JSON.parse(String(options.body)) as {
+            variables: { searchTerm: string }
+          })
+        : null
+      return spotifyResults(
+        body?.variables.searchTerm === '相聞詩 そこに鳴る'
+          ? [
+              {
+                id: 'native',
+                title: '相聞詩',
+                artist: 'そこに鳴る',
+                duration: 261,
+              },
+            ]
+          : []
+      )
+    })
+    expect(
+      await createSpotifyClient(http).search(
+        prepareLyricsQuery({
+          ...query,
+          title: '相聞詩 - Soumonka',
+          artistVariants: ['そこに鳴る'],
+        })
+      )
+    ).toBe('native')
+    expect(
+      calls.filter((call) => call.url.pathname.endsWith('/query'))
+    ).toHaveLength(4)
+  })
+
+  it('tries a different best Spotify candidate after a saved ID has only plain lyrics', async () => {
+    const { http, calls } = fakeHttp((url) =>
+      url.hostname === 'lyrics.example'
+        ? {
+            lines: [
+              {
+                words: 'words',
+                ...(url.searchParams.get('trackid') === 'alternate'
+                  ? { timeTag: '00:01.00' }
+                  : {}),
+              },
+            ],
+          }
+        : spotifyResults([
+            { id: 'known', title: 'Halo', duration: 261 },
+            { id: 'alternate', title: 'Halo', duration: 261 },
+          ])
+    )
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(query, lyricServer)
+    expect(found.lyrics).toMatchObject({ source: 'spotify', synced: true })
+    expect(found.spotifyTrackId).toBe('alternate')
+    expect(
+      calls.filter((call) => call.url.pathname.endsWith('/query'))
+    ).toHaveLength(1)
+  })
+
+  it('rejects a high-scoring Spotify alternate with a different title', async () => {
+    const { http, calls } = fakeHttp((url) =>
+      url.hostname === 'lyrics.example'
+        ? { lines: [{ words: 'Saved plain' }] }
+        : url.hostname === 'lrclib.net'
+          ? []
+          : spotifyResults([{ id: 'wrong', title: 'Blue Star', duration: 261 }])
+    )
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find({ ...query, title: 'Blue Moon' }, lyricServer)
+    expect(found.spotifyTrackId).toBe('known')
+    expect(found.lyrics?.text).toBe('Saved plain')
+    expect(
+      calls.filter((call) => call.options.host === 'lyrics-server')
+    ).toHaveLength(1)
+  })
+
+  it('still remembers an initial Spotify ID when it supplies plain lyrics', async () => {
+    const { http } = fakeHttp((url) =>
+      url.hostname === 'lyrics.example'
+        ? { lines: [{ words: 'Initial plain' }] }
+        : url.hostname === 'lrclib.net'
+          ? []
+          : spotifyResults([{ id: 'initial', title: 'Halo', duration: 261 }])
+    )
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find({ ...query, spotifyTrackId: null }, lyricServer)
+    expect(found.spotifyTrackId).toBe('initial')
+    expect(found.lyrics).toMatchObject({
+      text: 'Initial plain',
+      synced: false,
+      source: 'spotify',
+    })
+  })
+
+  it.each([
+    'plain',
+    'missing',
+    'error',
+  ])('keeps the saved Spotify ID and plain lyrics when alternate lyrics are %s', async (kind) => {
+    const { http } = fakeHttp((url) => {
+      if (url.hostname === 'lyrics.example') {
+        if (url.searchParams.get('trackid') === 'known')
+          return { lines: [{ words: 'Saved plain' }] }
+        if (kind === 'missing')
+          return new HttpError('missing', 'permanent', 404)
+        if (kind === 'error') return new Error('alternate failed')
+        return { lines: [{ words: 'Alternate plain' }] }
+      }
+      if (url.hostname === 'lrclib.net') return []
+      return spotifyResults([
+        { id: 'alternate', title: 'HALO!', duration: 261 },
+      ])
+    })
+    const found = await createLyricsFinder({
+      http,
+      catalog: fakeCatalog(null, []),
+    }).find(query, lyricServer)
+    expect(found.spotifyTrackId).toBe('known')
+    expect(found.lyrics).toMatchObject({
+      source: 'spotify',
+      synced: false,
+      text: 'Saved plain',
+    })
+    expect(found.errors).toEqual(
+      kind === 'error' ? { spotify: 'alternate failed' } : {}
+    )
+  })
+
+  it('stops Spotify variants at the first accepted candidate', async () => {
+    const { http, calls } = fakeHttp(() =>
+      spotifyResults([
+        { id: 'first', title: '相聞詩 - Soumonka', duration: 261 },
+      ])
+    )
+    expect(
+      await createSpotifyClient(http).search(
+        prepareLyricsQuery({
+          ...query,
+          title: '相聞詩 - Soumonka',
+          artistVariants: ['日本名'],
+        })
+      )
+    ).toBe('first')
+    expect(
+      calls.filter((call) => call.url.pathname.endsWith('/query'))
+    ).toHaveLength(1)
+  })
+
+  it('reports GraphQL and HTTP-200 lyric errors', async () => {
+    const graphql = fakeHttp(() => ({ errors: [{ message: 'expired' }] }))
+    await expect(
+      createSpotifyClient(graphql.http).search(prepareLyricsQuery(query))
+    ).rejects.toThrow('expired')
+    const lyrics = fakeHttp(() => ({ error: 'unauthorized' }))
+    await expect(
+      createSpotifyClient(lyrics.http).lyrics(
+        'known',
+        lyricServer.lyricsServerUrl
+      )
+    ).rejects.toThrow('unauthorized')
   })
 })
 

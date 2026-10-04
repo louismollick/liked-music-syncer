@@ -4,6 +4,68 @@ import { migrate } from '../../src/main/library/db'
 import { MIGRATIONS } from '../../src/main/library/migrations'
 
 describe('migrations', () => {
+  it('clears only exact vocal duplicates on instrumental titles and is idempotent', () => {
+    const sqlite = new Database(':memory:')
+    for (const migration of MIGRATIONS.slice(0, 4)) sqlite.exec(migration)
+    sqlite.pragma('user_version = 4')
+    const insert = sqlite.prepare(
+      `INSERT INTO tracks (id, title, lyrics_text, lyrics_status, lyrics_source, language, lyrics_checked_at, created_at, updated_at) VALUES (?, ?, ?, 'synced', 'youtube-music', 'ja', 'checked', 'now', 'now')`
+    )
+    insert.run('vocal', 'Song', '[00:01.00]Words')
+    for (const [id, title] of [
+      ['one', 'Song (Instrumental)'],
+      ['two', 'Song（Inst.）'],
+      ['three', 'Song - Off Vocal'],
+      ['four', 'Song (Karaoke)'],
+      ['five', 'Song<instrumental>'],
+    ])
+      insert.run(id, title, '[00:01.00]Words')
+    insert.run('different-timing', 'Song (Instrumental)', '[00:02.00]Words')
+    insert.run('different-text', 'Song (Instrumental)', '[00:01.00]Other words')
+    insert.run('trailing-space', 'Song (Instrumental)', '[00:01.00]Words ')
+    insert.run('plain-unmatched', 'Song (Instrumental)', 'Words')
+    insert.run('empty', 'Song (Instrumental)', '')
+    migrate(sqlite)
+    const rows = sqlite
+      .prepare(
+        'SELECT id, lyrics_status, lyrics_text, lyrics_source, language, lyrics_checked_at FROM tracks ORDER BY id'
+      )
+      .all()
+    const cleared = sqlite
+      .prepare("SELECT id FROM tracks WHERE lyrics_status = 'none' ORDER BY id")
+      .all()
+    expect(cleared).toEqual(
+      ['five', 'four', 'one', 'three', 'two'].map((id) => ({ id }))
+    )
+    for (const row of rows as {
+      id: string
+      lyrics_status: string
+      lyrics_text: string | null
+      lyrics_source: string | null
+      language: string | null
+      lyrics_checked_at: string
+    }[]) {
+      if (row.lyrics_status === 'none')
+        expect(row).toMatchObject({
+          lyrics_text: null,
+          lyrics_source: null,
+          language: null,
+          lyrics_checked_at: 'checked',
+        })
+      else expect(row.lyrics_source).toBe('youtube-music')
+    }
+    sqlite.exec(MIGRATIONS[4])
+    migrate(sqlite)
+    expect(
+      sqlite
+        .prepare(
+          'SELECT id, lyrics_status, lyrics_text, lyrics_source, language, lyrics_checked_at FROM tracks ORDER BY id'
+        )
+        .all()
+    ).toEqual(rows)
+    sqlite.close()
+  })
+
   it('keeps existing artist IDs and schedules page backfill through null checkpoints', () => {
     const sqlite = new Database(':memory:')
     for (const migration of MIGRATIONS.slice(0, 3)) sqlite.exec(migration)

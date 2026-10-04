@@ -169,6 +169,10 @@ describe('restoring the Library from files this app wrote', () => {
     expect(source.downloads.sort()).toEqual(['c1', 'c2', 'loose'])
     const h = rebuiltFrom(source)
     expect(await adopt(h)).toMatchObject({ adopted: 3, unmanaged: 0 })
+    expect(
+      h.rows().every((row) => row.lyricsCheckedAt === h.time.toISOString())
+    ).toBe(true)
+    const lyricsLookup = vi.spyOn(h.deps.lyrics, 'find')
     expect(snapshot(h)).toEqual(snapshot(source))
     expect(
       h.rows().some((row) => row.identityKey?.startsWith('adopted:'))
@@ -180,6 +184,7 @@ describe('restoring the Library from files this app wrote', () => {
     await h.start()
     expect(h.downloads).toEqual([])
     expect(h.matcher.calls).toBe(0)
+    expect(lyricsLookup).not.toHaveBeenCalled()
     expect(hashes(h)).toEqual(before)
     expect(h.rows()).toHaveLength(3)
     expect(h.rows().every((row) => row.state === 'done')).toBe(true)

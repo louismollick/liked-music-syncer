@@ -169,13 +169,16 @@ export function SettingsPage() {
         </Row>
         <Row
           label="Spotify lyrics server"
-          help="Optional. Tried first, then YouTube Music, then LRCLIB"
+          help="Optional. Then YouTube Music, LRCLIB, PetitLyrics"
         >
           <TextInput
             value={settings.lyricsServerUrl}
             placeholder="https://…"
             onCommit={(v) => void updateSettings({ lyricsServerUrl: v })}
           />
+          <Button onClick={() => void invoke('settings:recheckLyrics')}>
+            Recheck lyrics
+          </Button>
         </Row>
       </div>
     </div>

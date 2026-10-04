@@ -10,6 +10,7 @@ export type HostPolicyName =
   | 'youtube-music'
   | 'musicbrainz'
   | 'lrclib'
+  | 'petitlyrics'
   | 'spotify'
   | 'lyrics-server'
   | 'youtube'
@@ -37,6 +38,11 @@ const POLICIES: Record<HostPolicyName, HostPolicy> = {
   },
   lrclib: {
     minIntervalMs: 200,
+    timeoutMs: 15_000,
+    retryDelaysMs: METADATA_RETRIES,
+  },
+  petitlyrics: {
+    minIntervalMs: 750,
     timeoutMs: 15_000,
     retryDelaysMs: METADATA_RETRIES,
   },
