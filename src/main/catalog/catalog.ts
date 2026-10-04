@@ -4,7 +4,7 @@ import { restoreReleaseAudio } from './parsers/audio-playlist'
 import { parsePlainLyrics, parseTimedLyrics } from './parsers/lyrics'
 import { parsePlaylistPage, playlistHeaderCount } from './parsers/playlist'
 import { parseRelease } from './parsers/release'
-import { parseSearchPage } from './parsers/search'
+import { parseAlbumSearch, parseSearchPage } from './parsers/search'
 import { parseWatch } from './parsers/watch'
 import {
   type CatalogReleaseRef,
@@ -151,6 +151,16 @@ export function createYouTubeMusicCatalog(
       for (const release of all)
         if (!unique.has(release.browseId)) unique.set(release.browseId, release)
       return [...unique.values()]
+    },
+    async searchAlbums(query, signal) {
+      return parseAlbumSearch(
+        await transport.call({
+          endpoint: 'search',
+          body: { query, params: 'EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D' },
+          authenticated: false,
+          signal,
+        })
+      )
     },
     async searchSongs(query, options, signal) {
       const limit = Math.max(0, options?.limit ?? 20)

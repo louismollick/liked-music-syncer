@@ -25,9 +25,14 @@ function setup(reply: (body: Record<string, unknown>) => unknown | Response) {
           accessToken: 'signed',
           accessTokenExpirationTimestampMs: Date.now() + 3600000,
           isAnonymous: false,
+          clientId: 'web-client',
           username: 'me',
         })
       }
+      if (url.includes('clienttoken.spotify.com'))
+        return Response.json({
+          granted_token: { token: 'client-token', expires_after_seconds: 3600 },
+        })
       if (url.endsWith('/query')) {
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>
         bodies.push(body)
@@ -36,7 +41,7 @@ function setup(reply: (body: Record<string, unknown>) => unknown | Response) {
       }
       if (url.includes('bundle.js'))
         return new Response(
-          `{name:"fetchLibraryTracks",sha256Hash:"${'a'.repeat(64)}"}`
+          `x.l("fetchLibraryTracks","query","${'a'.repeat(64)}");x.l("profileAttributes","query","${'b'.repeat(64)}")`
         )
       return new Response(
         `<script id="appServerConfig" type="text/plain">${Buffer.from(JSON.stringify({ clientVersion: '1' })).toString('base64')}</script><script src="/bundle.js"></script>`
@@ -166,4 +171,81 @@ describe('Spotify library', () => {
     ).rejects.toThrow('expired')
     expect(cookies).toEqual([undefined, 'sp_dc=secret'])
   })
+})
+
+it('fails overlapping or repeated pages instead of accepting a count inflated by duplicate rows', async () => {
+  const items = fixture.data.me.library.tracks.items
+  const repeated = setup(() => page(items.slice(0, 1), 2))
+  await expect(repeated.library.likedSongs()).rejects.toThrow(
+    'repeated track while paging'
+  )
+})
+
+it('bootstraps the account with bounded client-token, 401 and profile-hash recovery', async () => {
+  let calls = 0
+  const s = setup(() =>
+    ++calls === 1
+      ? new Response('', { status: 403 })
+      : {
+          data: {
+            me: { profile: { username: 'account', name: 'Display Name' } },
+          },
+        }
+  )
+  expect(await s.library.account()).toEqual({
+    id: 'account',
+    name: 'Display Name',
+  })
+  expect(s.bodies).toHaveLength(2)
+  let expired = 0
+  const retry = setup(() =>
+    ++expired === 1
+      ? new Response('', { status: 401 })
+      : {
+          data: {
+            me: { profile: { username: 'account', displayName: 'Name' } },
+          },
+        }
+  )
+  expect((await retry.library.account()).name).toBe('Name')
+  expect(retry.tokens()).toBe(2)
+})
+
+it('refreshes the profile hash independently from the liked-library hash', async () => {
+  const s = setup((body) =>
+    (body.extensions as { persistedQuery: { sha256Hash: string } })
+      .persistedQuery.sha256Hash === 'b'.repeat(64)
+      ? {
+          data: {
+            me: { profile: { username: 'profile-account', name: 'Name' } },
+          },
+        }
+      : { errors: [{ message: 'PersistedQueryNotFound' }] }
+  )
+  expect((await s.library.account()).id).toBe('profile-account')
+  expect(s.bodies).toHaveLength(2)
+})
+
+it('validates complete mixed libraries using the eligible count and rejects repeated skipped-only pages', async () => {
+  const track = fixture.data.me.library.tracks.items[0] as {
+    addedAt: unknown
+    track: { data: Record<string, unknown> }
+  }
+  const items = Array.from({ length: 30 }, (_, i) =>
+    i < 10
+      ? {
+          ...track,
+          track: { data: { ...track.track.data, uri: `spotify:track:${i}` } },
+        }
+      : { track: { data: { uri: `spotify:local:${i}` } } }
+  )
+  const result = await setup(() => page(items, 30)).library.likedSongs()
+  expect(result.tracks).toHaveLength(10)
+  expect(result.declaredCount).toBe(10)
+  const repeated = setup(() =>
+    page([{ track: { data: { uri: 'spotify:local:one' } } }], 2)
+  )
+  await expect(repeated.library.likedSongs()).rejects.toThrow(
+    'repeated track while paging'
+  )
 })

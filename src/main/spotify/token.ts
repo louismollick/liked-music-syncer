@@ -17,29 +17,9 @@ export function record(value: unknown): Record<string, unknown> {
 export class SpotifyAuthError extends Error {
   readonly kind = 'permanent' as const
 }
-function tokenAccountId(payload: Record<string, unknown>): string | null {
-  try {
-    const body = record(
-      JSON.parse(
-        Buffer.from(
-          String(payload.accessToken).split('.')[1],
-          'base64url'
-        ).toString('utf8')
-      )
-    )
-    const value = body.sub ?? body.username
-    if (typeof value === 'string' && value) return value
-  } catch {
-    /* Opaque bearer: use the token response's username instead. */
-  }
-  return typeof payload.username === 'string' && payload.username
-    ? payload.username
-    : null
-}
 interface SpotifyToken {
   value: string
   expiresAt: number
-  accountId: string | null
   clientId: string | null
 }
 
@@ -78,7 +58,7 @@ export function createSpotifyToken(
     if (clientVersion) return clientVersion
     const html = await http.text(WEB, {
       host: 'spotify',
-      headers: { 'User-Agent': USER_AGENT },
+      headers: { 'User-Agent': options.userAgent ?? USER_AGENT },
       signal,
     })
     const encoded =
@@ -101,7 +81,7 @@ export function createSpotifyToken(
     const payload = record(
       await http.json(SECRETS, {
         host: 'spotify',
-        headers: { 'User-Agent': USER_AGENT },
+        headers: { 'User-Agent': options.userAgent ?? USER_AGENT },
         signal,
       })
     )
@@ -129,7 +109,11 @@ export function createSpotifyToken(
     const time = record(
       await http.json(`${WEB}/api/server-time`, {
         host: 'spotify',
-        headers: { Origin: WEB, Referer: `${WEB}/`, 'User-Agent': USER_AGENT },
+        headers: {
+          Origin: WEB,
+          Referer: `${WEB}/`,
+          'User-Agent': options.userAgent ?? USER_AGENT,
+        },
         signal,
       })
     ).serverTime
@@ -173,13 +157,10 @@ export function createSpotifyToken(
       typeof payload.accessToken !== 'string' ||
       typeof payload.accessTokenExpirationTimestampMs !== 'number'
     )
-      throw new Error(
-        'Spotify anonymous token response is missing access token fields'
-      )
+      throw new Error('Spotify token response is missing access token fields')
     token = {
       value: payload.accessToken,
       expiresAt: payload.accessTokenExpirationTimestampMs,
-      accountId: tokenAccountId(payload),
       clientId: typeof payload.clientId === 'string' ? payload.clientId : null,
     }
     return token

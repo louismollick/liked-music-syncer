@@ -10,6 +10,7 @@ import type {
 } from '../catalog/types'
 import { joinArtistNames } from '../domain'
 import type { HttpClient } from '../net/http'
+import type { SpotifyLikedTrack } from '../spotify/library'
 import { youtubeOriginalTitle } from './oembed'
 import {
   artistTitleIdentities,
@@ -43,7 +44,7 @@ function kindFromLabel(label: string | null): 'album' | 'single' | 'ep' | null {
 function releaseTrack(
   release: CatalogRelease,
   track: CatalogTrack,
-  sourceVideoId: string,
+  sourceVideoId: string | null,
   method: ResolutionMethod,
   lyricsBrowseId: string | null
 ): Match {
@@ -219,21 +220,12 @@ async function searchCandidate(
     }
     if (queries.length >= SEARCH_QUERY_LIMIT) break
   }
-  const candidates = new Map<string, CatalogTrack>()
-  for (const query of queries) {
-    for (const candidate of await catalog.searchSongs(
-      query,
-      { ignoreSpelling: false, limit: SEARCH_RESULT_LIMIT },
-      signal
-    )) {
-      if (candidate.videoId) candidates.set(candidate.videoId, candidate)
-    }
-  }
+  const candidates = await searchTracks(catalog, queries, signal)
   const originalDuration = primary.durationSeconds ?? song.durationSeconds
   const tolerance = (primary.videoType ?? song.videoType) === 'OMV' ? 60 : 45
   const ranked: { track: CatalogTrack; score: number[] }[] = []
   let originalLookups = 0
-  for (const candidate of candidates.values()) {
+  for (const candidate of candidates) {
     const candidateDuration = candidate.durationSeconds
     const durationDiff =
       originalDuration !== null && candidateDuration !== null
@@ -260,7 +252,11 @@ async function searchCandidate(
     }
     let [, titleScore, artistScore] = scores
     if (artistIdMatch) artistScore = 1
-    const versionMatches = versionCompatible(title, artistName, candidate)
+    const versionMatches = versionCompatible(
+      `${title} ${primary.album?.name ?? song.album?.name ?? ''}`,
+      artistName,
+      candidate
+    )
     if (
       !identityScoresMatch(titleScore, artistScore) &&
       candidate.album?.browseId &&
@@ -355,7 +351,17 @@ export async function likedContribution(
       candidate.title,
       candidate.artists
     )
-    if (track)
+    if (
+      track &&
+      versionCompatible(
+        `${primary.title} ${primary.album?.name ?? song.album?.name ?? ''}`,
+        joinArtistNames(primary.artists),
+        {
+          title: track.title,
+          album: { name: release.title, browseId: release.browseId },
+        }
+      )
+    )
       return releaseTrack(
         release,
         track,
@@ -365,4 +371,252 @@ export async function likedContribution(
       )
   }
   return standalone(song, watch.track, watch.lyricsBrowseId)
+}
+
+export class SpotifyMatchError extends Error {
+  readonly kind = 'permanent' as const
+  constructor(readonly reason: 'no_match' | 'ambiguous') {
+    super(
+      `Not found on YouTube Music (${reason === 'ambiguous' ? 'ambiguous Recording match' : 'no compatible Release Track'})`
+    )
+  }
+}
+
+/** Strip catalog/credit decorations only. Recording version text stays in every query. */
+function spotifySearchTitle(title: string): string {
+  return title
+    .replace(/\s*[([](?:feat\.?|ft\.?|featuring)\s+[^)\]]*[)\]]/giu, '')
+    .replace(
+      /\s*[([](?:\d{4}\s+)?(?:remaster(?:ed)?|deluxe(?: edition)?|explicit|clean)(?:\s+\d{4})?[)\]]/giu,
+      ''
+    )
+    .replace(
+      /\s+-\s+(?:\d{4}\s+)?(?:remaster(?:ed)?|deluxe(?: edition)?|explicit|clean)(?:\s+\d{4})?$/giu,
+      ''
+    )
+    .trim()
+}
+
+type SpotifyCandidate = { match: Match; score: number; albumScore: number }
+
+/** Hard Recording gates shared by catalog candidates and existing Library tracks. */
+export function spotifyCandidateScore(
+  source: SpotifyLikedTrack,
+  candidate: Pick<Match, 'title' | 'artists' | 'album' | 'durationSeconds'>
+): { score: number; albumScore: number } | null {
+  if (candidate.durationSeconds === null) return null
+  const delta = Math.abs(source.durationMs / 1000 - candidate.durationSeconds)
+  const titleScore = textSimilarity(
+    spotifySearchTitle(source.title),
+    spotifySearchTitle(candidate.title)
+  )
+  const artistScore = Math.max(
+    0,
+    ...candidate.artists.map((artist) =>
+      textSimilarity(source.artists[0]?.name, artist.name)
+    )
+  )
+  if (
+    delta > 5 ||
+    titleScore < 0.9 ||
+    artistScore < 0.88 ||
+    !versionCompatible(
+      `${source.title} ${source.album.name}`,
+      source.artists[0]?.name ?? '',
+      {
+        title: candidate.title,
+        album: { name: candidate.album, browseId: null },
+      }
+    )
+  )
+    return null
+  const albumScore =
+    source.album.name && candidate.album
+      ? textSimilarity(
+          spotifySearchTitle(source.album.name),
+          spotifySearchTitle(candidate.album)
+        )
+      : 0.5
+  return {
+    score:
+      0.45 * titleScore +
+      0.3 * artistScore +
+      0.15 * albumScore +
+      0.1 * Math.max(0, 1 - delta / 10),
+    albumScore,
+  }
+}
+
+/** Different Release appearances of a catalog video are one Recording for likes. */
+export function selectSpotifyCandidate(
+  candidates: SpotifyCandidate[]
+): Match | null {
+  const recordings = new Map<string, SpotifyCandidate>()
+  for (const candidate of candidates) {
+    const previous = recordings.get(candidate.match.catalogVideoId)
+    if (
+      !previous ||
+      candidate.albumScore > previous.albumScore ||
+      (candidate.albumScore === previous.albumScore &&
+        candidate.score > previous.score)
+    )
+      recordings.set(candidate.match.catalogVideoId, candidate)
+  }
+  const ranked = [...recordings.values()].sort((a, b) => b.score - a.score)
+  if (!ranked.length) return null
+  if (ranked[1] && ranked[0].score - ranked[1].score < 0.04 - Number.EPSILON)
+    throw new SpotifyMatchError('ambiguous')
+  return ranked[0].match
+}
+
+export async function spotifyContribution(
+  catalog: YouTubeMusicCatalog,
+  source: SpotifyLikedTrack,
+  albums: Map<string, Promise<CatalogRelease[]>>,
+  signal?: AbortSignal
+): Promise<Match> {
+  const primaryArtist = source.artists[0]?.name ?? ''
+  const browsed = new Map<string, Promise<CatalogRelease>>()
+  const browse = (id: string) => {
+    let promise = browsed.get(id)
+    if (!promise) {
+      promise = catalog.release(id, signal)
+      browsed.set(id, promise)
+    }
+    return promise
+  }
+  const candidate = (
+    release: CatalogRelease,
+    track: CatalogTrack,
+    method: ResolutionMethod
+  ): SpotifyCandidate | null => {
+    if (!track.videoId || !track.isAvailable || !release.browseId) return null
+    const match = releaseTrack(release, track, null, method, null)
+    const scores = spotifyCandidateScore(source, match)
+    return scores ? { match, ...scores } : null
+  }
+  let albumLookup = albums.get(source.album.id)
+  if (!albumLookup) {
+    albumLookup = (async () => {
+      const ids = new Set<string>()
+      const releases: CatalogRelease[] = []
+      for (const query of uniqueSearchQueries([
+        `${source.album.name} ${primaryArtist}`,
+        `${spotifySearchTitle(source.album.name)} ${primaryArtist}`,
+      ])) {
+        for (const album of await catalog.searchAlbums(query, signal)) {
+          if (
+            ids.has(album.browseId) ||
+            textSimilarity(
+              spotifySearchTitle(source.album.name),
+              spotifySearchTitle(album.title)
+            ) < 0.9 ||
+            Math.max(
+              0,
+              ...album.artists.map((artist) =>
+                textSimilarity(primaryArtist, artist.name)
+              )
+            ) < 0.88
+          )
+            continue
+          ids.add(album.browseId)
+          const release = await browse(album.browseId)
+          if (
+            textSimilarity(
+              spotifySearchTitle(source.album.name),
+              spotifySearchTitle(release.title)
+            ) >= 0.9 &&
+            Math.max(
+              0,
+              ...release.artists.map((artist) =>
+                textSimilarity(primaryArtist, artist.name)
+              )
+            ) >= 0.88
+          )
+            releases.push(release)
+          if (ids.size >= 3) return releases
+        }
+      }
+      return releases
+    })()
+    albums.set(source.album.id, albumLookup)
+    albumLookup.catch(() => albums.delete(source.album.id))
+  }
+  const albumCandidates = (await albumLookup).flatMap((release) =>
+    release.tracks.flatMap((track) => {
+      const found = candidate(release, track, 'spotify_album')
+      return found ? [found] : []
+    })
+  )
+  const albumMatch = selectSpotifyCandidate(albumCandidates)
+  if (albumMatch) return albumMatch
+  const queries = uniqueSearchQueries([
+    `${source.title} ${primaryArtist} ${source.album.name}`,
+    `${source.title} ${primaryArtist}`,
+    `${spotifySearchTitle(source.title)} ${primaryArtist}`,
+    ...source.artists
+      .slice(1)
+      .map((artist) => `${source.title} ${artist.name}`),
+  ])
+  const found: SpotifyCandidate[] = []
+  for (const result of await searchTracks(catalog, queries, signal)) {
+    if (!result.album?.browseId || !result.isAvailable) continue
+    // Only browse results that already pass the Recording gates.
+    if (
+      !spotifyCandidateScore(source, {
+        title: result.title,
+        artists: result.artists,
+        album: result.album.name,
+        durationSeconds: result.durationSeconds,
+      })
+    )
+      continue
+    const release = await browse(result.album.browseId)
+    const track = findReleaseTrack(
+      release,
+      [result.videoId],
+      result.title,
+      result.artists
+    )
+    if (!track) continue
+    const checked = candidate(release, track, 'spotify_search')
+    if (checked) found.push(checked)
+  }
+  const match = selectSpotifyCandidate(found)
+  if (!match) throw new SpotifyMatchError('no_match')
+  return match
+}
+
+function uniqueSearchQueries(queries: string[]): string[] {
+  const seen = new Set<string>()
+  return queries
+    .filter((query) => {
+      const key = normalizeText(query)
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, SEARCH_QUERY_LIMIT)
+}
+
+/** Source-neutral song retrieval; each matcher applies its own Recording gates. */
+async function searchTracks(
+  catalog: YouTubeMusicCatalog,
+  queries: string[],
+  signal?: AbortSignal
+): Promise<CatalogTrack[]> {
+  const candidates = new Map<string, CatalogTrack>()
+  for (const query of queries)
+    for (const candidate of await catalog.searchSongs(
+      query,
+      { ignoreSpelling: false, limit: SEARCH_RESULT_LIMIT },
+      signal
+    )) {
+      if (candidate.videoId)
+        candidates.set(
+          `${candidate.album?.browseId ?? ''}:${candidate.videoId}`,
+          candidate
+        )
+    }
+  return [...candidates.values()]
 }

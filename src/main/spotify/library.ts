@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { type HttpClient, HttpError } from '../net/http'
-import { type createSpotifyToken, record, USER_AGENT, WEB } from './token'
+import {
+  type createSpotifyToken,
+  record,
+  SpotifyAuthError,
+  USER_AGENT,
+  WEB,
+} from './token'
 
 const PATHFINDER = 'https://api-partner.spotify.com/pathfinder/v2/query'
 const LIBRARY_HASH =
@@ -44,11 +50,13 @@ export function parseLibraryPage(payload: unknown, offset: number) {
   )
     throw new SpotifyShapeError('missing library tracks or totalCount')
   const tracks: SpotifyLikedTrack[] = []
+  const itemIds: string[] = []
   for (const [index, value] of page.items.entries()) {
     const row = record(value)
     const wrapper = record(row.track ?? row.item ?? row.itemV2)
     const track = record(wrapper.data)
     const uri = track.uri ?? wrapper._uri
+    if (typeof uri === 'string') itemIds.push(uri)
     // Known non-track entries advance pagination but never become contributions.
     if (typeof uri === 'string' && /^spotify:(local|episode):/.test(uri))
       continue
@@ -108,6 +116,7 @@ export function parseLibraryPage(payload: unknown, offset: number) {
     tracks,
     rawCount: page.items.length,
     totalCount: Number(page.totalCount),
+    itemIds,
   }
 }
 
@@ -119,30 +128,34 @@ export function createSpotifyLibrary(
     deviceId?: () => Promise<string | null>
   } = {}
 ) {
-  let hash = LIBRARY_HASH
+  const hashes = {
+    fetchLibraryTracks: LIBRARY_HASH,
+    profileAttributes:
+      'b197b5adb4b761690f76ad9d9fb278c14c14e7331f357c04a56e7001af7106e0',
+  }
   let clientToken: { value: string; expiresAt: number } | null = null
   const userAgent = options.userAgent ?? USER_AGENT
   const headers = { Origin: WEB, Referer: `${WEB}/`, 'User-Agent': userAgent }
 
-  async function refreshHash(signal?: AbortSignal): Promise<void> {
+  async function refreshHash(
+    operation: keyof typeof hashes,
+    signal?: AbortSignal
+  ): Promise<void> {
     const html = await http.text(WEB, { host: 'spotify', headers, signal })
     const scripts = [...html.matchAll(/<script[^>]+src=["']([^"']+)["']/g)].map(
       (match) => new URL(match[1], WEB).href
     )
     for (const url of scripts) {
       const js = await http.text(url, { host: 'spotify', headers, signal })
-      const found =
-        /(?:["']?name["']?\s*:\s*["']fetchLibraryTracks["'][\s\S]{0,500}?["']?sha256Hash["']?\s*:\s*["']([a-f0-9]{64})["'])|(?:["']?sha256Hash["']?\s*:\s*["']([a-f0-9]{64})["'][\s\S]{0,500}?["']?name["']?\s*:\s*["']fetchLibraryTracks["'])/.exec(
-          js
-        )
+      const found = new RegExp(
+        `\\.l\\(["']${operation}["'],\\s*["'](?:query|mutation)["'],\\s*["']([a-f0-9]{64})["']`
+      ).exec(js)
       if (found) {
-        hash = found[1] ?? found[2]
+        hashes[operation] = found[1]
         return
       }
     }
-    throw new SpotifyShapeError(
-      'could not refresh fetchLibraryTracks query hash'
-    )
+    throw new SpotifyShapeError(`could not refresh ${operation} query hash`)
   }
   async function getClientToken(signal?: AbortSignal) {
     if (clientToken && clientToken.expiresAt > Date.now() + 60_000)
@@ -188,117 +201,117 @@ export function createSpotifyLibrary(
     }
     return clientToken.value
   }
-  return {
-    async account(signal?: AbortSignal) {
-      const access = await token.accessToken(signal)
-      const payload = record(
-        await http.json(PATHFINDER, {
+  function recoveryState() {
+    return { hash: new Set<string>(), token: false, client: false }
+  }
+  async function pathfinder(
+    operation: keyof typeof hashes,
+    variables: Record<string, number>,
+    signal: AbortSignal | undefined,
+    recovery = recoveryState()
+  ): Promise<unknown> {
+    for (;;) {
+      let payload: unknown
+      try {
+        payload = await http.json(PATHFINDER, {
           host: 'spotify',
           method: 'POST',
           signal,
           headers: {
             ...headers,
+            Accept: 'application/json',
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${access.value}`,
             'App-Platform': 'WebPlayer',
+            'Spotify-App-Version': await token.version(signal),
+            Authorization: `Bearer ${(await token.accessToken(signal)).value}`,
+            ...(clientToken
+              ? { 'Client-Token': await getClientToken(signal) }
+              : {}),
           },
           body: JSON.stringify({
-            operationName: 'profileAttributes',
-            variables: {},
+            operationName: operation,
+            variables,
             extensions: {
-              persistedQuery: {
-                version: 1,
-                sha256Hash:
-                  'b197b5adb4b761690f76ad9d9fb278c14c14e7331f357c04a56e7001af7106e0',
-              },
+              persistedQuery: { version: 1, sha256Hash: hashes[operation] },
             },
           }),
         })
-      )
+      } catch (error) {
+        if (
+          error instanceof HttpError &&
+          error.status === 401 &&
+          !recovery.token
+        ) {
+          recovery.token = true
+          token.invalidate()
+          continue
+        }
+        if (
+          error instanceof HttpError &&
+          error.status === 403 &&
+          !recovery.client
+        ) {
+          recovery.client = true
+          await getClientToken(signal)
+          continue
+        }
+        if (
+          error instanceof HttpError &&
+          (error.status === 401 || error.status === 403)
+        )
+          throw new SpotifyAuthError(
+            'Spotify refused the signed-in request. Sign in again.'
+          )
+        throw error
+      }
+      const errors = record(payload).errors
+      if (Array.isArray(errors) && errors.length) {
+        if (
+          errors.some((error) =>
+            JSON.stringify(error).includes('PersistedQueryNotFound')
+          ) &&
+          !recovery.hash.has(operation)
+        ) {
+          recovery.hash.add(operation)
+          await refreshHash(operation, signal)
+          continue
+        }
+        throw new SpotifyShapeError(
+          `${operation} errors: ${JSON.stringify(errors)}`
+        )
+      }
+      return payload
+    }
+  }
+  return {
+    async account(signal?: AbortSignal) {
+      const payload = record(await pathfinder('profileAttributes', {}, signal))
       const profile = record(record(record(payload.data).me).profile)
-      const accountId =
-        typeof profile.username === 'string'
-          ? profile.username
-          : access.accountId
-      if (!accountId) throw new SpotifyShapeError('missing Spotify Account ID')
+      if (typeof profile.username !== 'string' || !profile.username)
+        throw new SpotifyShapeError('missing Spotify Account ID')
       return {
-        id: accountId,
+        id: profile.username,
         name:
           typeof profile.name === 'string'
             ? profile.name
             : typeof profile.displayName === 'string'
               ? profile.displayName
-              : accountId,
+              : profile.username,
       }
     },
     async likedSongs(signal?: AbortSignal) {
       const tracks: SpotifyLikedTrack[] = []
+      const seen = new Set<string>()
+      const recovery = recoveryState()
       let offset = 0
       let total: number | null = null
-      let refreshedHash = false
-      let refreshedToken = false
-      let requestedClientToken = false
       for (;;) {
-        let payload: unknown
-        try {
-          payload = await http.json(PATHFINDER, {
-            host: 'spotify',
-            method: 'POST',
-            signal,
-            headers: {
-              ...headers,
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-              'App-Platform': 'WebPlayer',
-              'Spotify-App-Version': await token.version(signal),
-              Authorization: `Bearer ${(await token.accessToken(signal)).value}`,
-              ...(clientToken
-                ? { 'Client-Token': await getClientToken(signal) }
-                : {}),
-            },
-            body: JSON.stringify({
-              operationName: 'fetchLibraryTracks',
-              variables: { offset, limit: 50 },
-              extensions: { persistedQuery: { version: 1, sha256Hash: hash } },
-            }),
-          })
-        } catch (error) {
-          if (
-            error instanceof HttpError &&
-            error.status === 401 &&
-            !refreshedToken
-          ) {
-            refreshedToken = true
-            token.invalidate()
-            continue
-          }
-          if (
-            error instanceof HttpError &&
-            error.status === 403 &&
-            !requestedClientToken
-          ) {
-            requestedClientToken = true
-            await getClientToken(signal)
-            continue
-          }
-          throw error
-        }
-        const errors = record(payload).errors
-        if (Array.isArray(errors) && errors.length) {
-          if (
-            errors.some((error) =>
-              JSON.stringify(error).includes('PersistedQueryNotFound')
-            ) &&
-            !refreshedHash
-          ) {
-            refreshedHash = true
-            await refreshHash(signal)
-            continue
-          }
-          throw new SpotifyShapeError(
-            `fetchLibraryTracks errors: ${JSON.stringify(errors)}`
-          )
-        }
+        const payload = await pathfinder(
+          'fetchLibraryTracks',
+          { offset, limit: 50 },
+          signal,
+          recovery
+        )
         const page = parseLibraryPage(payload, offset)
         if (total !== null && total !== page.totalCount)
           throw new SpotifyShapeError(
@@ -309,9 +322,21 @@ export function createSpotifyLibrary(
           throw new SpotifyShapeError('empty page before totalCount')
         if (offset + page.rawCount > total)
           throw new SpotifyShapeError('page exceeds totalCount')
+        for (const itemId of page.itemIds) {
+          if (seen.has(itemId))
+            throw new SpotifyShapeError(
+              'repeated track while paging; try again'
+            )
+          seen.add(itemId)
+        }
         tracks.push(...page.tracks)
         offset += page.rawCount
-        if (offset >= total) return { tracks, declaredCount: total }
+        if (offset >= total)
+          return {
+            tracks,
+            // Raw completeness is checked above; snapshot validation counts only eligible tracks.
+            declaredCount: tracks.length,
+          }
       }
     },
   }

@@ -921,3 +921,19 @@ describe('Spotify reference goldens', () => {
     ])
   })
 })
+
+it('uses a liked Spotify ID without searching for an alternate when lyrics are absent', async () => {
+  const { http, calls } = fakeHttp(() => ({ lines: [] }))
+  const catalog = {
+    lyrics: async () => null,
+    watch: async () => ({ lyricsBrowseId: null, track: null }),
+  } as unknown as YouTubeMusicCatalog
+  const result = await createLyricsFinder({ http, catalog }).find(
+    { ...query, spotifyLiked: true },
+    { lyricsServerUrl: 'https://lyrics.test' }
+  )
+  expect(result.spotifyTrackId).toBe('known')
+  expect(
+    calls.some((call) => call.url.hostname === 'api-partner.spotify.com')
+  ).toBe(false)
+})

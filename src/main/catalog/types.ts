@@ -63,6 +63,12 @@ export interface CatalogReleaseRef {
   thumbnailUrl: string | null
 }
 
+export interface CatalogAlbumSearchResult {
+  browseId: string
+  title: string
+  artists: ArtistCredit[]
+}
+
 export interface CatalogRelease {
   browseId: string
   /** OLAK5uy_... audio playlist ID when present. */
@@ -138,6 +144,10 @@ export interface YouTubeMusicCatalog {
     channelId: string,
     signal?: AbortSignal
   ): Promise<CatalogReleaseRef[]>
+  searchAlbums(
+    query: string,
+    signal?: AbortSignal
+  ): Promise<CatalogAlbumSearchResult[]>
   searchSongs(
     query: string,
     options?: SearchOptions,

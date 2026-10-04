@@ -6,6 +6,7 @@ import type {
 } from '../catalog/types'
 import type { ArtistCredit, ReleaseKind } from '../domain'
 import type { HttpClient } from '../net/http'
+import type { SpotifyLikedTrack } from '../spotify/library'
 
 /**
  * Matcher: turns a Source Contribution into a Match (see CONTEXT.md).
@@ -15,6 +16,7 @@ import type { HttpClient } from '../net/http'
 
 export type MatchInput =
   | { kind: 'liked'; song: LikedSong }
+  | { kind: 'spotify'; track: SpotifyLikedTrack }
   | {
       kind: 'catalog'
       /** Full Discography artist whose Official Main Catalog produced this track. */
@@ -44,12 +46,14 @@ export type ResolutionMethod =
   | 'liked_album_exact'
   | 'search_song_exact'
   | 'watch_playlist'
+  | 'spotify_album'
+  | 'spotify_search'
   | 'standalone'
 
 export interface Match {
   version: 1
-  /** The video the user liked, or the catalog track for catalog contributions. */
-  sourceVideoId: string
+  /** The liked YouTube video or catalog track. Null for a Spotify like. */
+  sourceVideoId: string | null
   /**
    * The video to download. For Release Tracks this is the video ID listed on
    * the Release's own track list; for Standalone Tracks it equals sourceVideoId.
@@ -80,6 +84,8 @@ export const RESOLUTION_METHODS: readonly ResolutionMethod[] = [
   'liked_album_exact',
   'search_song_exact',
   'watch_playlist',
+  'spotify_album',
+  'spotify_search',
   'standalone',
 ]
 
@@ -91,6 +97,7 @@ export interface Enrichment {
 }
 
 export interface Matcher {
+  resetCache?(): void
   match(input: MatchInput, signal?: AbortSignal): Promise<Match>
   /** MusicBrainz lookup. Throws on network errors; callers record them as enrichment errors. */
   enrich(match: Match, signal?: AbortSignal): Promise<Enrichment>

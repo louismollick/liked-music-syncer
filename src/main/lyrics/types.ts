@@ -19,6 +19,8 @@ export interface LyricsQuery {
   lyricsBrowseId: string | null
   /** Spotify track ID remembered from an earlier lookup, if any. */
   spotifyTrackId: string | null
+  /** A Spotify like supplies an exact ID; never search for an alternate. */
+  spotifyLiked?: boolean
 }
 
 export interface FoundLyrics {

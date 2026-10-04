@@ -303,3 +303,32 @@ describe('catalog resolution', () => {
     })
   })
 })
+
+describe('YouTube like search fallback version gates', () => {
+  it.each([
+    'Live',
+    'Remix',
+    'Instrumental',
+    'Acoustic',
+    'Sped Up',
+    'Slowed',
+    'Karaoke',
+    'Cover',
+  ])('rejects %s in either direction, retaining the liked standalone Recording', async (version) => {
+    for (const [sourceTitle, candidateTitle] of [
+      ['Song', `Song (${version})`],
+      [`Song (${version})`, 'Song'],
+    ]) {
+      const source = liked(track('source', sourceTitle))
+      const found = track('candidate', candidateTitle, 'MPRE1')
+      const { matcher } = setup(
+        { source: { track: source, lyricsBrowseId: null } },
+        { MPRE1: release([found]) },
+        [found]
+      )
+      expect(
+        (await matcher.match({ kind: 'liked', song: source })).resolutionMethod
+      ).toBe('standalone')
+    }
+  })
+})

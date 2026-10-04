@@ -260,6 +260,7 @@ export class Reconciler {
       )
       return
     }
+    this.deps.matcher.resetCache?.()
     this.checking = true
     this.emitSoon()
     const accountId = this.deps.session.accountId()

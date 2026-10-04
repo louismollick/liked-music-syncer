@@ -1,11 +1,20 @@
+import type { CatalogRelease } from '../catalog/types'
 import { enrichMusicBrainz } from './musicbrainz'
-import { catalogContribution, likedContribution } from './resolve'
+import {
+  catalogContribution,
+  likedContribution,
+  spotifyContribution,
+} from './resolve'
 import type { Matcher, MatcherDeps } from './types'
 
 export function createMatcher(deps: MatcherDeps): Matcher {
   const genreCache = new Map<string, string[]>()
+  const albums = new Map<string, Promise<CatalogRelease[]>>()
   return {
+    resetCache: () => albums.clear(),
     async match(input, signal) {
+      if (input.kind === 'spotify')
+        return spotifyContribution(deps.catalog, input.track, albums, signal)
       if (input.kind === 'liked')
         return likedContribution(deps.catalog, deps.http, input.song, signal)
       let lyricsBrowseId: string | null = null

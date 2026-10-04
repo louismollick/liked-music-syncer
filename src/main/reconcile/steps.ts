@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
 import { fetchArtistPage } from '../artist-pages'
 import type { CatalogRelease, YouTubeMusicCatalog } from '../catalog/types'
 import type { ArtistCredit, StepKind } from '../domain'
-
 import {
   copyToStaging,
   exists,
@@ -48,6 +47,7 @@ import {
 } from '../library/schema'
 import { isInstrumentalTitle } from '../lyrics/query'
 import type { LyricsFinder } from '../lyrics/types'
+import { selectSpotifyCandidate, spotifyCandidateScore } from '../match/resolve'
 import {
   type Match,
   type Matcher,
@@ -293,6 +293,8 @@ export async function lookUpLyrics(
   run: StepRun
 ) {
   const values = lyricsForRecording(track, match)
+  const spotifyId = spotifyLikeId(deps.db, track.id)
+  values.spotifyTrackId = spotifyId ?? values.spotifyTrackId
   const errors: Record<string, string> = {}
   const settings = deps.settings()
   if (!settings.lyricsEnabled) return { values, errors }
@@ -326,6 +328,7 @@ export async function lookUpLyrics(
               : match.durationSeconds,
           lyricsBrowseId: match.lyricsBrowseId,
           spotifyTrackId: values.spotifyTrackId,
+          spotifyLiked: spotifyId !== null,
         },
         { lyricsServerUrl: settings.lyricsServerUrl.trim() || null },
         run.signal
@@ -339,7 +342,8 @@ export async function lookUpLyrics(
           ])
         )
       )
-      values.spotifyTrackId = found.spotifyTrackId ?? values.spotifyTrackId
+      values.spotifyTrackId =
+        spotifyId ?? found.spotifyTrackId ?? values.spotifyTrackId
       if (found.lyrics) {
         Object.assign(
           values,
@@ -442,15 +446,84 @@ function matchSource(db: Db, trackId: string): ContributionRow | undefined {
     .from(contributions)
     .where(eq(contributions.trackId, trackId))
     .all()
-  const active = rows.filter((row) => row.active)
-  if (active.length)
-    return (
-      active.find((row) => row.kind === 'catalog') ??
-      active.find((row) => row.kind === 'liked')
+  for (const active of [true, false])
+    for (const kind of ['catalog', 'liked', 'spotify_liked']) {
+      const found = rows.find(
+        (row) => row.active === active && row.kind === kind
+      )
+      if (found) return found
+    }
+  return undefined
+}
+
+/** A liked Spotify ID is stronger evidence than a lyrics-search guess. */
+function spotifyLikeId(db: Db, trackId: string): string | null {
+  const row = db
+    .select()
+    .from(contributions)
+    .where(
+      and(
+        eq(contributions.trackId, trackId),
+        eq(contributions.kind, 'spotify_liked')
+      )
+    )
+    .all()
+    .sort((a, b) => Number(b.active) - Number(a.active))[0]
+  return row ? (JSON.parse(row.raw) as SpotifyLikedRaw).track.trackId : null
+}
+
+function existingSpotifyMatch(
+  db: Db,
+  input: Extract<MatchInput, { kind: 'spotify' }>,
+  currentId: string
+): Match | null {
+  const candidates = db
+    .select()
+    .from(tracks)
+    .where(
+      and(
+        ne(tracks.id, currentId),
+        or(
+          eq(tracks.spotifyTrackId, input.track.trackId),
+          sql`EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = ${tracks.id} AND c.kind IN ('liked', 'spotify_liked'))`
+        )
+      )
+    )
+    .all()
+    .flatMap((track) => {
+      const match = parseMatch(track)
+      if (!match?.release || track.state === 'released' || !match.confirmed)
+        return []
+      const scores = spotifyCandidateScore(input.track, {
+        ...match,
+        durationSeconds: track.durationSeconds ?? match.durationSeconds,
+      })
+      return scores ? [{ match, ...scores }] : []
+    })
+  return selectSpotifyCandidate(candidates)
+}
+
+/** Likes join a known Recording; catalog inputs keep their exact Release Track. */
+function recordingTarget(
+  db: Db,
+  current: TrackRow,
+  match: Match
+): TrackRow | undefined {
+  if (catalogIdentities(db, current.id).length) return undefined
+  const candidates = db
+    .select()
+    .from(tracks)
+    .all()
+    .filter(
+      (track) =>
+        track.id !== current.id &&
+        track.state !== 'released' &&
+        parseMatch(track)?.catalogVideoId === match.catalogVideoId &&
+        parseMatch(track)?.confirmed
     )
   return (
-    rows.find((row) => row.kind === 'liked') ??
-    rows.find((row) => row.kind === 'catalog')
+    candidates.find((track) => track.identityKey === match.identityKey) ??
+    candidates[0]
   )
 }
 
@@ -497,7 +570,8 @@ function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
       | LikedRaw
       | CatalogRaw
       | SpotifyLikedRaw
-    if (raw.kind === 'spotify_liked') return null
+    if (raw.kind === 'spotify_liked')
+      return { kind: 'spotify', track: raw.track }
     if (raw.kind === 'liked') return { kind: 'liked', song: raw.song }
     return {
       kind: 'catalog',
@@ -512,7 +586,7 @@ function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
   return {
     kind: 'liked',
     song: {
-      videoId: match.sourceVideoId,
+      videoId: match.sourceVideoId ?? match.catalogVideoId,
       title: track.title,
       artists: JSON.parse(track.artistCredits) as ArtistCredit[],
       album: track.releaseId
@@ -948,7 +1022,18 @@ async function matchOnce(
     }
   }
   const settings = deps.settings()
-  const match = await deps.matcher.match(input, run.signal)
+  let match =
+    input.kind === 'spotify'
+      ? existingSpotifyMatch(deps.db, input, track.id)
+      : null
+  match ??= await deps.matcher.match(input, run.signal)
+  const recording =
+    input.kind === 'catalog'
+      ? undefined
+      : recordingTarget(deps.db, track, match)
+  if (recording && recording.identityKey !== match.identityKey)
+    match = parseMatch(recording)!
+
   try {
     for (const credit of [...match.artists, ...releaseCredits(match)])
       await fetchArtistPage(deps.db, deps.catalog, credit, run.signal, deps.now)
@@ -1011,18 +1096,24 @@ async function matchOnce(
   const errors: Record<string, string> = {}
   // A provider outage must never strip what the track already has.
   let enrichment = {
-    mbRecordingId: track.mbRecordingId,
-    genre: track.genre,
-    isrc: track.isrc,
+    mbRecordingId: (recording ?? track).mbRecordingId,
+    genre: (recording ?? track).genre,
+    isrc: (recording ?? track).isrc,
   }
   try {
-    enrichment = await deps.matcher.enrich(match, run.signal)
+    if (input.kind !== 'spotify')
+      enrichment = await deps.matcher.enrich(match, run.signal)
   } catch (error) {
     if (run.signal.aborted) throw error
     errors.musicbrainz = error instanceof Error ? error.message : String(error)
   }
   run.progress(0.6)
-  const lyrics = await lookUpLyrics(deps, track, match, run)
+  const lyrics = await lookUpLyrics(
+    deps,
+    recording ? { ...recording, id: track.id } : track,
+    match,
+    run
+  )
   Object.assign(errors, lyrics.errors)
   run.progress(0.8)
   let coverPath = track.coverPath
@@ -1068,6 +1159,12 @@ async function matchOnce(
     )
       return 'cancelled'
     if (matchSources(db, current.id) !== sourcesBefore) return 'stale'
+    if (
+      recording &&
+      db.select().from(tracks).where(eq(tracks.id, recording.id)).get()
+        ?.match !== recording.match
+    )
+      return 'stale'
     const artistCredits = JSON.stringify(match.artists)
     const names = canonicalTrackNames(db, { ...current, artistCredits }, match)
     if (!names) throw new RetryLaterError('Waiting for artist pages')
@@ -1127,6 +1224,8 @@ async function matchOnce(
       mergeTracks(db, current, target, at, checks, match.catalogVideoId)
       survivor = target.id
     }
+    lyrics.values.spotifyTrackId =
+      spotifyLikeId(db, survivor) ?? lyrics.values.spotifyTrackId
     const release = match.release
     db.update(tracks)
       .set({

@@ -255,7 +255,9 @@ async function checkLikes(
           )
         )
         .get()?.count ?? 0
-    const songs = result.rows
+    const songs = [
+      ...new Map(result.rows.map((row) => [row.key, row])).values(),
+    ]
     validateLikedSnapshot(
       songs,
       result.declaredCount,

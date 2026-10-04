@@ -187,21 +187,16 @@ export function versionMarkers(value: string | null | undefined): Set<string> {
 }
 export function versionCompatible(
   sourceTitle: string,
-  sourceArtist: string,
-  candidate: CatalogTrack
+  _sourceArtist: string,
+  candidate: Pick<CatalogTrack, 'title' | 'album'>
 ): boolean {
   const markers = versionMarkers(sourceTitle)
-  if (!markers.size) return true
   const found = versionMarkers(
     `${candidate.title} ${candidate.album?.name ?? ''}`
   )
-  const missing = [...markers].filter((marker) => !found.has(marker))
-  if (!missing.length) return true
   return (
-    missing.every((marker) => marker === 'cover') &&
-    candidate.artists.some(
-      (credit) => textSimilarity(credit.name, sourceArtist) >= 0.88
-    )
+    markers.size === found.size &&
+    [...markers].every((marker) => found.has(marker))
   )
 }
 export function orderedTitleSearchQueries(
