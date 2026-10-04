@@ -6,7 +6,9 @@ import { joinArtistNames } from '../domain'
 import {
   artistIdFor,
   canonicalArtist,
+  ensureArtist,
   linkTrackArtists,
+  releaseCredits,
 } from '../library/artists'
 import type { Db } from '../library/db'
 import {
@@ -393,6 +395,8 @@ export async function adoptFiles(
       continue
     }
     linkTrackArtists(deps.db, outcome, match.artists)
+    // Release-only credits need artist rows so the page backfill names them.
+    for (const credit of releaseCredits(match)) ensureArtist(deps.db, credit)
     if (read.fields.lms.sourceOrigin === CATALOG_SOURCE_ORIGIN) {
       for (const credit of match.artists)
         if (credit.channelId)

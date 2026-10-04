@@ -154,6 +154,12 @@ function mergeArtists(db: Db, survivorId: string, aliasId: string): void {
 }
 
 const fetching = new WeakMap<Db, Map<string, Promise<void>>>()
+/** Counts stamped pages per database so the backfill recomputes names only after new reads. */
+const pageReads = new WeakMap<Db, number>()
+
+function notePageRead(db: Db): void {
+  pageReads.set(db, (pageReads.get(db) ?? 0) + 1)
+}
 
 /** Cache both languages together; unavailable pages keep their credit name. */
 export async function fetchArtistPage(
@@ -198,6 +204,7 @@ export async function fetchArtistPage(
         })
         .where(eq(artists.id, artist.id))
         .run()
+      notePageRead(db)
       console.error(`[artist-pages] ${artist.id}: keeping credit name`, error)
       return
     }
@@ -258,6 +265,7 @@ export async function fetchArtistPage(
           .where(eq(artists.id, survivor.id))
           .run()
     })
+    notePageRead(db)
   }
   const promise = load()
   pending.set(artist.id, promise)
@@ -275,20 +283,27 @@ export function createArtistPages(deps: {
   onUpdated: () => void
 }) {
   let running: Promise<boolean> | null = null
+  let scanned = false
+  // -1 forces one recompute per launch to finish a pass interrupted before it.
+  let recomputedAfter = -1
   const controller = new AbortController()
   return {
     run(): Promise<boolean> {
       if (running) return running
       const work = async () => {
-        // Release-only credits may have no track_artists link yet.
-        for (const track of deps.db.select().from(tracks).all()) {
-          const match = parseMatch(track)
-          if (!match || track.state === 'released') continue
-          for (const credit of [
-            ...trackCredits(track),
-            ...releaseCredits(match),
-          ])
-            ensureArtist(deps.db, credit)
+        // Rows saved before the page backfill may have release-only credits with no
+        // artist row. Matching and adoption register new credits themselves.
+        if (!scanned) {
+          for (const track of deps.db.select().from(tracks).all()) {
+            const match = parseMatch(track)
+            if (!match || track.state === 'released') continue
+            for (const credit of [
+              ...trackCredits(track),
+              ...releaseCredits(match),
+            ])
+              ensureArtist(deps.db, credit)
+          }
+          scanned = true
         }
         const todo = deps.db
           .select()
@@ -315,7 +330,12 @@ export function createArtistPages(deps: {
             console.error(`[artist-pages] ${artist.id}`, error)
           }
         }
-        const changed = recomputeArtistNames(deps.db)
+        const reads = pageReads.get(deps.db) ?? 0
+        let changed = 0
+        if (reads !== recomputedAfter) {
+          changed = recomputeArtistNames(deps.db)
+          recomputedAfter = reads
+        }
         if (todo.length || changed) deps.onUpdated()
         return Boolean(
           deps.db
