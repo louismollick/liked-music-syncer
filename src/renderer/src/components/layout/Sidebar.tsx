@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ActivityTrackView } from '../../../../shared/ipc'
+import { hasSignedInAccount } from '../../lib/accounts'
 import { invoke } from '../../lib/api'
 import { useActivity, useAppState } from '../../lib/app-state'
 import { cx, plural, timeAgo } from '../../lib/format'
@@ -35,7 +36,7 @@ function useNow(intervalMs = 30_000): number {
 }
 
 function StatusSection() {
-  const { session } = useAppState()
+  const { session, spotify } = useAppState()
   const activity = useActivity()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const now = useNow()
@@ -45,7 +46,7 @@ function StatusSection() {
   const busy = Boolean(current) && !onActivity
   const working = Boolean(activity?.working || activity?.checking)
   const upNext = activity?.upNextCount ?? 0
-  const signedIn = session?.state === 'signed_in'
+  const signedIn = hasSignedInAccount(session, spotify)
 
   const remaining = upNext + (current ? 1 : 0)
   const checked = activity?.lastCheckedAt ?? null
@@ -181,10 +182,13 @@ export function Sidebar() {
   const router = useRouter()
   const linkSearch = useTabLinkSearch()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
-  const { session } = useAppState()
+  const { session, spotify } = useAppState()
   const activity = useActivity()
   const account =
-    session?.accounts.find((a) => a.id === session.selectedAccountId) ?? null
+    session?.accounts.find((a) => a.id === session.selectedAccountId) ??
+    (spotify?.state === 'signed_in' && spotify.account
+      ? { ...spotify.account, photoUrl: null, handle: 'Spotify' }
+      : null)
   const attention = activity?.needsAttention.length ?? 0
 
   const item = (

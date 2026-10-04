@@ -1,4 +1,5 @@
 import { FolderOpen, LogIn } from 'lucide-react'
+import { hasSignedInAccount } from '../lib/accounts'
 import { invoke } from '../lib/api'
 import { useAppState } from '../lib/app-state'
 import { Button } from './ui/Button'
@@ -7,17 +8,14 @@ import { Button } from './ui/Button'
 export function useSetupNeeded(): boolean {
   const { session, spotify, settings } = useAppState()
   if (!session || !settings) return false
-  return (
-    (session.state !== 'signed_in' && spotify?.state !== 'signed_in') ||
-    !settings.libraryFolder
-  )
+  return !hasSignedInAccount(session, spotify) || !settings.libraryFolder
 }
 
 export function SetupEmptyState() {
   const { session, spotify, settings, updateSettings } = useAppState()
   const youtubeSignedIn = session?.state === 'signed_in'
   const spotifySignedIn = spotify?.state === 'signed_in'
-  const signedIn = youtubeSignedIn || spotifySignedIn
+  const signedIn = hasSignedInAccount(session, spotify)
   const hasFolder = Boolean(settings?.libraryFolder)
   return (
     <div className="h-full flex items-center justify-center">
