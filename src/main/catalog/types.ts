@@ -78,6 +78,7 @@ export interface CatalogRelease {
 
 export interface CatalogArtist {
   channelId: string
+  primaryChannelId: string
   name: string
   thumbnailUrl: string | null
   /** Releases shown directly on the artist page (may be truncated). */
@@ -127,7 +128,11 @@ export interface YouTubeMusicCatalog {
   /** Every item of the signed-in account's Liked Music playlist (VLLM), all pages. */
   likedSongs(signal?: AbortSignal): Promise<LikedSongsResult>
   release(browseId: string, signal?: AbortSignal): Promise<CatalogRelease>
-  artist(channelId: string, signal?: AbortSignal): Promise<CatalogArtist>
+  artist(
+    channelId: string,
+    signal?: AbortSignal,
+    language?: string
+  ): Promise<CatalogArtist>
   /** Full album + single/EP lists for an artist, following "more" links and continuations. */
   artistReleases(
     channelId: string,
@@ -150,6 +155,7 @@ export interface InnertubeRequest {
   body: Record<string, unknown>
   /** Send the Google Session's cookies and SAPISIDHASH. Only for personal reads. */
   authenticated: boolean
+  language?: string
   client?: InnertubeClientName
   signal?: AbortSignal
 }

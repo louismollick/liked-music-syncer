@@ -49,6 +49,23 @@ function transportAnswering(
 }
 
 describe('Innertube transport sessions', () => {
+  it('overrides the language for one page without changing later calls', async () => {
+    const languages: string[] = []
+    const http = createHttpClient(async (_url, init) => {
+      languages.push(JSON.parse(String(init?.body)).context.client.hl)
+      return Response.json({})
+    })
+    const transport = createInnertubeTransport({ http, auth: null })
+    for (const language of [undefined, 'ja', undefined])
+      await transport.call({
+        endpoint: 'browse',
+        body: {},
+        authenticated: false,
+        language,
+      })
+    expect(languages).toEqual(['en', 'ja', 'en'])
+  })
+
   it('reads official audio playlists from regular YouTube without session headers', async () => {
     let calls = 0
     const http = createHttpClient(async (url, init) => {

@@ -189,4 +189,12 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE tombstones ADD COLUMN replacement_track_id TEXT;
   ALTER TABLE tombstones ADD COLUMN expected_sha256 TEXT;
   `,
+  // 4: channel-page names and Official Artist Channel aliases. Null checks resume the backfill.
+  `
+  ALTER TABLE artists ADD COLUMN native_name TEXT;
+  ALTER TABLE artists ADD COLUMN primary_channel_id TEXT;
+  ALTER TABLE artists ADD COLUMN page_checked_at TEXT;
+  ALTER TABLE artists ADD COLUMN alias_of TEXT;
+  CREATE INDEX artists_primary_channel ON artists(primary_channel_id);
+  `,
 ]

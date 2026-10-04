@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createYouTubeMusicCatalog } from '../../src/main/catalog/catalog'
+import { parseArtist } from '../../src/main/catalog/parsers/artist'
 import { restoreReleaseAudio } from '../../src/main/catalog/parsers/audio-playlist'
 import { nav } from '../../src/main/catalog/parsers/nav'
 import { releaseTitlesMatch } from '../../src/main/catalog/release-match'
@@ -56,6 +57,35 @@ function findArray(value: unknown, key: string): unknown[] | null {
 }
 
 describe('YouTube Music catalog', () => {
+  it('reads the page name and Official Artist Channel, with safe header fallbacks', async () => {
+    const page = fixture('artist-primary-channel') as {
+      header: {
+        musicImmersiveHeaderRenderer?: {
+          title: unknown
+          subscriptionButton?: unknown
+        }
+        musicVisualHeaderRenderer?: { title: unknown }
+      }
+    }
+    expect(parseArtist(page, 'UCwfLQKQ4kTpMLkCpIOYb0oQ')).toMatchObject({
+      name: 'Sokoninaru',
+      primaryChannelId: 'UC0Whg8Zz7TT1VSpWeCjghKg',
+    })
+    delete page.header.musicImmersiveHeaderRenderer!.subscriptionButton
+    expect(parseArtist(page, 'requested').primaryChannelId).toBe('requested')
+    page.header.musicVisualHeaderRenderer = {
+      title: page.header.musicImmersiveHeaderRenderer!.title,
+    }
+    delete page.header.musicImmersiveHeaderRenderer
+    expect(parseArtist(page, 'requested')).toMatchObject({
+      name: 'Sokoninaru',
+      primaryChannelId: 'requested',
+    })
+    const { catalog, calls } = fake(() => fixture('artist-primary-channel'))
+    await catalog.artist('requested', undefined, 'ja')
+    expect(calls[0].language).toBe('ja')
+  })
+
   it('preserves an OMV and its duration when the audio playlist uses the same video', async () => {
     const { release, audio } = fixture('gate-audio-title') as {
       release: CatalogRelease

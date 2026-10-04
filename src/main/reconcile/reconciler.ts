@@ -28,6 +28,7 @@ import {
   recoverOperations,
 } from '../inventory/inventory'
 import { sidecarPath } from '../inventory/layout'
+import { canonicalArtist } from '../library/artists'
 import type { Db } from '../library/db'
 import {
   artists,
@@ -295,6 +296,7 @@ export class Reconciler {
         )
       })
       for (const artist of due) {
+        if (canonicalArtist(this.db, artist.id)?.id !== artist.id) continue
         try {
           await checkArtistCatalog({
             db: this.db,
@@ -303,6 +305,9 @@ export class Reconciler {
             channelId: artist.channelId!,
             now: this.deps.now,
           })
+          const survivor = canonicalArtist(this.db, artist.id)
+          if (survivor && survivor.id !== artist.id)
+            void this.check({ catalogs: [survivor.id] })
           this.sourceErrors.delete(`catalog:${artist.id}`)
         } catch (error) {
           this.sourceErrors.set(
@@ -339,6 +344,7 @@ export class Reconciler {
   }
 
   setFullDiscography(artistId: string, enabled: boolean): void {
+    artistId = canonicalArtist(this.db, artistId)?.id ?? artistId
     this.db
       .update(artists)
       .set({

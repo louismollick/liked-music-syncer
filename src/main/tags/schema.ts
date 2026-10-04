@@ -18,7 +18,7 @@ import { type ArtistCredit, normalizeArtistCredits } from '../domain'
  * exactly what the writer put there.
  */
 
-export const LMS_TAG_SCHEMA_VERSION = 6
+export const LMS_TAG_SCHEMA_VERSION = 7
 const ITUNES = 'com.apple.iTunes'
 
 export interface LmsFields {
@@ -32,6 +32,7 @@ export interface LmsFields {
   releaseTitle: string | null
   releaseKind: string | null
   artistCredits: ArtistCredit[]
+  releaseArtistCredits: ArtistCredit[]
   /**
    * True when this app wrote the file from a Match it looked up itself. Only
    * such files are restored when the database is rebuilt; a schema version
@@ -78,7 +79,10 @@ export interface ReadResult {
 export const CATALOG_SOURCE_ORIGIN = 'favorite_artist_release'
 
 const LMS_KEYS: Record<
-  Exclude<keyof LmsFields, 'artistCredits' | 'matchConfirmed'>,
+  Exclude<
+    keyof LmsFields,
+    'artistCredits' | 'releaseArtistCredits' | 'matchConfirmed'
+  >,
   string
 > = {
   schemaVersion: 'LMS_TAG_SCHEMA_VERSION',
@@ -92,6 +96,7 @@ const LMS_KEYS: Record<
   releaseKind: 'LMS_CATALOG_RELEASE_KIND',
 }
 const LMS_CREDITS_KEY = 'LMS_ARTIST_CREDITS'
+const LMS_RELEASE_CREDITS_KEY = 'LMS_RELEASE_ARTIST_CREDITS'
 const LMS_MATCH_CONFIRMED_KEY = 'LMS_MATCH_CONFIRMED'
 /** Freeform atoms v5 wrote that the app no longer writes; removed on rewrite. */
 const RETIRED_KEYS = [
@@ -153,6 +158,7 @@ export function emptyLmsFields(): LmsFields {
     releaseTitle: null,
     releaseKind: null,
     artistCredits: [],
+    releaseArtistCredits: [],
     matchConfirmed: false,
   }
 }
@@ -190,6 +196,9 @@ export function readTags(path: string): ReadResult {
       lms.releaseTitle = freeform(apple, LMS_KEYS.releaseTitle)
       lms.releaseKind = freeform(apple, LMS_KEYS.releaseKind)
       lms.artistCredits = parseCredits(freeform(apple, LMS_CREDITS_KEY))
+      lms.releaseArtistCredits = parseCredits(
+        freeform(apple, LMS_RELEASE_CREDITS_KEY)
+      )
       lms.matchConfirmed = freeform(apple, LMS_MATCH_CONFIRMED_KEY) === '1'
       date = blank(apple.getFirstQuickTimeString(Mpeg4BoxType.DAY))
       language = freeform(apple, 'LANGUAGE')
@@ -286,18 +295,23 @@ export function writeTags(
     setFreeform(apple, LMS_KEYS.releaseBrowseId, lms.releaseBrowseId)
     setFreeform(apple, LMS_KEYS.releaseTitle, lms.releaseTitle)
     setFreeform(apple, LMS_KEYS.releaseKind, lms.releaseKind)
-    setFreeform(
-      apple,
-      LMS_CREDITS_KEY,
-      lms.artistCredits.length
-        ? JSON.stringify(
-            lms.artistCredits.map((credit) => ({
-              name: credit.name,
-              channel_id: credit.channelId,
-            }))
-          )
-        : null
-    )
+    for (const [key, credits] of [
+      [LMS_CREDITS_KEY, lms.artistCredits],
+      [LMS_RELEASE_CREDITS_KEY, lms.releaseArtistCredits],
+    ] as const) {
+      setFreeform(
+        apple,
+        key,
+        credits.length
+          ? JSON.stringify(
+              credits.map((credit) => ({
+                name: credit.name,
+                channel_id: credit.channelId,
+              }))
+            )
+          : null
+      )
+    }
     setFreeform(apple, LMS_MATCH_CONFIRMED_KEY, lms.matchConfirmed ? '1' : null)
 
     if (cover) {

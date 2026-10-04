@@ -66,12 +66,14 @@ export function parseArtist(
   response: unknown,
   channelId: string
 ): CatalogArtist {
-  const header = requiredObject(
-    response,
-    ['header', 'musicImmersiveHeaderRenderer'],
-    'artist header'
-  )
-  const name = firstRun(header.title)
+  const header =
+    nav(response, ['header', 'musicImmersiveHeaderRenderer']) ??
+    requiredObject(
+      response,
+      ['header', 'musicVisualHeaderRenderer'],
+      'artist header'
+    )
+  const name = firstRun(nav(header, ['title']))
   if (!name) throw new CatalogShapeError('Missing artist name')
   const sections = requiredArray(
     response,
@@ -89,8 +91,16 @@ export function parseArtist(
   )
   const result: CatalogArtist = {
     channelId,
+    primaryChannelId:
+      at(response, [
+        'header',
+        'musicImmersiveHeaderRenderer',
+        'subscriptionButton',
+        'subscribeButtonRenderer',
+        'channelId',
+      ]) ?? channelId,
     name,
-    thumbnailUrl: thumbnail(header.thumbnail),
+    thumbnailUrl: thumbnail(nav(header, ['thumbnail'])),
     albums: [],
     singles: [],
     albumsMore: null,

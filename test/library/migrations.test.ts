@@ -4,6 +4,34 @@ import { migrate } from '../../src/main/library/db'
 import { MIGRATIONS } from '../../src/main/library/migrations'
 
 describe('migrations', () => {
+  it('keeps existing artist IDs and schedules page backfill through null checkpoints', () => {
+    const sqlite = new Database(':memory:')
+    for (const migration of MIGRATIONS.slice(0, 3)) sqlite.exec(migration)
+    sqlite.pragma('user_version = 3')
+    sqlite
+      .prepare(
+        "INSERT INTO artists (id, name, channel_id, full_discography) VALUES ('channel:topic', 'Credit', 'topic', 1)"
+      )
+      .run()
+    migrate(sqlite)
+    expect(
+      sqlite
+        .prepare(
+          'SELECT id, name, full_discography, native_name, primary_channel_id, page_checked_at, alias_of FROM artists'
+        )
+        .get()
+    ).toEqual({
+      id: 'channel:topic',
+      name: 'Credit',
+      full_discography: 1,
+      native_name: null,
+      primary_channel_id: null,
+      page_checked_at: null,
+      alias_of: null,
+    })
+    sqlite.close()
+  })
+
   it('keeps Favorite Artists as Full Discography artists', () => {
     const sqlite = new Database(':memory:')
     sqlite.exec(MIGRATIONS[0])

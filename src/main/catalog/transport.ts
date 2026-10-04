@@ -100,7 +100,7 @@ export function createInnertubeTransport(
       }
       const body = {
         context: {
-          client: { ...clientContext(client), hl, gl },
+          client: { ...clientContext(client), hl: request.language ?? hl, gl },
           user: {},
         },
         ...request.body,

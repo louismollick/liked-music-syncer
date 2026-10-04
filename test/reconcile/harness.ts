@@ -4,7 +4,9 @@ import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import ffmpegPath from 'ffmpeg-static'
 import type { AudioDownloader } from '../../src/main/acquire/audio'
+import { createArtistPages } from '../../src/main/artist-pages'
 import {
+  type CatalogArtist,
   type CatalogRelease,
   type CatalogReleaseRef,
   CatalogShapeError,
@@ -96,10 +98,39 @@ export class FakeCatalog implements YouTubeMusicCatalog {
     if (!item) throw new CatalogShapeError(`Missing release ${id}`)
     return item
   }
-  async artist(): Promise<never> {
-    throw new Error('not used')
+  pages = new Map<string, CatalogArtist>()
+  artistCalls: { channelId: string; language: string }[] = []
+  artistError: Error | null = null
+  async artist(
+    channelId: string,
+    _signal?: AbortSignal,
+    language = 'en'
+  ): Promise<CatalogArtist> {
+    this.artistCalls.push({ channelId, language })
+    if (this.artistError) throw this.artistError
+    const page =
+      this.pages.get(`${channelId}:${language}`) ?? this.pages.get(channelId)
+    if (page) return page
+    const known = [
+      ...this.likes.flatMap((item) => item.artists),
+      ...[...this.releases.values()].flatMap((item) => [
+        ...item.artists,
+        ...item.tracks.flatMap((track) => track.artists),
+      ]),
+    ]
+    return {
+      channelId,
+      primaryChannelId: channelId,
+      name:
+        known.find((item) => item.channelId === channelId)?.name ?? credit.name,
+      thumbnailUrl: null,
+      albums: [],
+      singles: [],
+      albumsMore: null,
+      singlesMore: null,
+    }
   }
-  async artistReleases() {
+  async artistReleases(_channelId: string) {
     return this.refs
   }
   async searchSongs() {
@@ -282,6 +313,11 @@ export class Harness {
     this.settings.selectedAccountId = account
   }
   async start() {
+    await createArtistPages({
+      db: this.db,
+      catalog: this.deps.catalog,
+      onUpdated: () => this.reconciler.markDirty(),
+    }).run()
     await this.reconciler.start()
     await this.idle()
   }

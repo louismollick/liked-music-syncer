@@ -38,6 +38,9 @@ function sampleFields(overrides: Partial<TagFields> = {}): TagFields {
       releaseBrowseId: 'MPREb_xG4dJ4ZbIcJ',
       releaseTitle: '10',
       releaseKind: 'album',
+      releaseArtistCredits: [
+        { name: 'tricot', channelId: 'UC5zlgZh4XYI0z2NAXAji-5A' },
+      ],
       artistCredits: [
         { name: 'tricot', channelId: 'UC5zlgZh4XYI0z2NAXAji-5A' },
         { name: 'ゲスト', channelId: null },

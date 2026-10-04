@@ -3,6 +3,13 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
 import { joinArtistNames } from '../domain'
+import {
+  artistIdFor,
+  canonicalArtist,
+  ensureArtist,
+  linkTrackArtists,
+  releaseCredits,
+} from '../library/artists'
 import type { Db } from '../library/db'
 import {
   artists,
@@ -113,7 +120,13 @@ export function matchFromTags(fields: TagFields): Match | null {
         browseId: releaseId,
         title: lms.releaseTitle ?? fields.album ?? '',
         kind: releaseKindFromTag(lms.releaseKind),
-        artists: credits,
+        // Older tags lack release credits. Preserve a distinct ALBUMARTIST as text.
+        artists: lms.releaseArtistCredits?.length
+          ? lms.releaseArtistCredits
+          : fields.albumArtist &&
+              fields.albumArtist !== joinArtistNames(credits)
+            ? [{ name: fields.albumArtist, channelId: null }]
+            : credits,
         year: yearFromDate(fields.date),
         date: fields.date,
         trackNumber: fields.trackNumber,
@@ -381,10 +394,13 @@ export async function adoptFiles(
       unmanaged += sidecarInfo ? 2 : 1
       continue
     }
-    linkAdoptedArtists(deps.db, outcome, match.artists)
+    linkTrackArtists(deps.db, outcome, match.artists)
+    // Release-only credits need artist rows so the page backfill names them.
+    for (const credit of releaseCredits(match)) ensureArtist(deps.db, credit)
     if (read.fields.lms.sourceOrigin === CATALOG_SOURCE_ORIGIN) {
       for (const credit of match.artists)
-        if (credit.channelId) suggested.add(`channel:${credit.channelId}`)
+        if (credit.channelId)
+          suggested.add(canonicalArtist(deps.db, artistIdFor(credit))!.id)
     }
     adopted += 1
   }
@@ -397,25 +413,6 @@ export async function adoptFiles(
   }
   onProgress?.(entries.length, entries.length)
   return { adopted, unmanaged, suggestedArtists: suggested.size }
-}
-
-function linkAdoptedArtists(
-  db: Db,
-  trackId: string,
-  credits: Match['artists']
-): void {
-  credits.forEach((credit, position) => {
-    const id = credit.channelId
-      ? `channel:${credit.channelId}`
-      : `name:${credit.name.normalize('NFKC').toLowerCase().trim()}`
-    db.insert(artists)
-      .values({ id, name: credit.name, channelId: credit.channelId })
-      .onConflictDoNothing()
-      .run()
-    db.run(
-      sql`INSERT OR IGNORE INTO track_artists (track_id, artist_id, position) VALUES (${trackId}, ${id}, ${position})`
-    )
-  })
 }
 
 export interface OutsideEditReport {
