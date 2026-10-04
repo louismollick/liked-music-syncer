@@ -16,6 +16,9 @@ export const settingsSchema = z.object({
 })
 export type Settings = z.infer<typeof settingsSchema>
 
+/** Visible Activity stage for a Track Step. */
+export type ActivityStage = 'matching' | 'lyrics' | 'downloading' | 'uploading'
+
 export interface AccountView {
   id: string
   name: string
@@ -30,8 +33,6 @@ export interface SessionView {
   selectedAccountId: string | null
   message: string | null
 }
-
-export type ActivityStage = 'matching' | 'downloading' | 'uploading'
 
 export interface ActivityTrackView {
   id: string
@@ -241,6 +242,7 @@ export interface LibraryCounts {
 export interface InvokeMap {
   'settings:get': [void, Settings]
   'settings:update': [Partial<Settings>, Settings]
+  'settings:recheckLyrics': [void, void]
   'settings:chooseFolder': [void, string | null]
   'session:get': [void, SessionView]
   'session:signIn': [void, SessionView]

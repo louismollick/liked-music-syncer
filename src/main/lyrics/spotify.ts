@@ -1,7 +1,12 @@
 import { createHmac } from 'node:crypto'
 import { type HttpClient, HttpError } from '../net/http'
 import { formatLrcLine, isZeroTimestampOnlyLrc } from './lrc'
-import type { LyricsQuery } from './types'
+import {
+  durationMatches,
+  type LyricsLookup,
+  sameVersion,
+  titleMatches,
+} from './query'
 
 const WEB = 'https://open.spotify.com'
 const SECRETS =
@@ -189,99 +194,122 @@ export function createSpotifyClient(http: HttpClient) {
   }
 
   async function search(
-    query: LyricsQuery,
-    signal?: AbortSignal
+    query: LyricsLookup,
+    signal?: AbortSignal,
+    excludeId: string | null = null
   ): Promise<string | null> {
     const clientVersion = await version(signal)
-    const queryText = [
-      query.title,
-      query.artists.map((artist) => artist.name).join(', '),
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .trim()
-    if (!queryText) return null
-    const body = JSON.stringify({
-      operationName: 'searchDesktop',
-      variables: {
-        searchTerm: queryText,
-        offset: 0,
-        limit: 10,
-        numberOfTopResults: 5,
-        includeAudiobooks: false,
-        includeArtistHasConcertsField: true,
-        includePreReleases: true,
-        includeLocalConcertsField: false,
-        includeAuthors: true,
-      },
-      extensions: { persistedQuery: { version: 1, sha256Hash: SEARCH_HASH } },
-    })
-    async function send(): Promise<Response> {
-      const access = await accessToken(signal)
-      return http.request(PATHFINDER, {
-        host: 'spotify',
-        method: 'POST',
-        retryable: true,
-        body,
-        signal,
-        headers: {
-          Accept: 'application/json',
-          'Accept-Language': 'en',
-          'App-Platform': 'WebPlayer',
-          Authorization: `Bearer ${access}`,
-          'Content-Type': 'application/json;charset=UTF-8',
-          Origin: WEB,
-          Referer: `${WEB}/`,
-          'Spotify-App-Version': clientVersion,
-          'User-Agent': USER_AGENT,
-        },
-      })
-    }
-    let response: Response
-    try {
-      response = await send()
-    } catch (error) {
-      if (
-        !(
-          error &&
-          typeof error === 'object' &&
-          'status' in error &&
-          error.status === 401
-        )
-      )
-        throw error
-      token = null
-      response = await send()
-    }
-    const payload = record(await response.json())
-    const items = record(record(record(payload.data).searchV2).tracksV2).items
-    if (!Array.isArray(items)) return null
-    let bestId: string | null = null
-    let bestScore = 0
-    const source = {
-      title: query.title,
-      artist: query.artists.map((artist) => artist.name).join(', '),
-      durationSeconds: query.durationSeconds,
-    }
-    for (const item of items) {
-      const track = record(record(record(item).item).data)
-      const uri = track.uri
-      if (typeof uri !== 'string' || !uri.startsWith('spotify:track:')) continue
-      const name = track.name
-      const artists = record(track.artists).items
-      if (typeof name !== 'string' || !name || !Array.isArray(artists)) continue
-      const names = artists
-        .map((artist) => record(record(artist).profile).name)
-        .filter((value): value is string => typeof value === 'string')
-      if (!names.length) continue
-      const durationMs = Number(record(track.duration).totalMilliseconds) || 0
-      const score = candidateScore(source, { name, artists: names, durationMs })
-      if (score > bestScore) {
-        bestScore = score
-        bestId = uri.split(':').at(-1) ?? null
+    for (const title of query.titles) {
+      for (const artist of query.artistNames) {
+        const queryText = `${title} ${artist}`.trim()
+        if (!queryText) continue
+        const body = JSON.stringify({
+          operationName: 'searchDesktop',
+          variables: {
+            searchTerm: queryText,
+            offset: 0,
+            limit: 10,
+            numberOfTopResults: 5,
+            includeAudiobooks: false,
+            includeArtistHasConcertsField: true,
+            includePreReleases: true,
+            includeLocalConcertsField: false,
+            includeAuthors: true,
+          },
+          extensions: {
+            persistedQuery: { version: 1, sha256Hash: SEARCH_HASH },
+          },
+        })
+        async function send(): Promise<Response> {
+          const access = await accessToken(signal)
+          return http.request(PATHFINDER, {
+            host: 'spotify',
+            method: 'POST',
+            retryable: true,
+            body,
+            signal,
+            headers: {
+              Accept: 'application/json',
+              'Accept-Language': 'en',
+              'App-Platform': 'WebPlayer',
+              Authorization: `Bearer ${access}`,
+              'Content-Type': 'application/json;charset=UTF-8',
+              Origin: WEB,
+              Referer: `${WEB}/`,
+              'Spotify-App-Version': clientVersion,
+              'User-Agent': USER_AGENT,
+            },
+          })
+        }
+        let response: Response
+        try {
+          response = await send()
+        } catch (error) {
+          if (
+            !(
+              error &&
+              typeof error === 'object' &&
+              'status' in error &&
+              error.status === 401
+            )
+          )
+            throw error
+          token = null
+          response = await send()
+        }
+        const payload = record(await response.json())
+        if (Array.isArray(payload.errors) && payload.errors.length)
+          throw new Error(
+            `Spotify search errors: ${JSON.stringify(payload.errors)}`
+          )
+        const items = record(
+          record(record(payload.data).searchV2).tracksV2
+        ).items
+        if (!Array.isArray(items))
+          throw new Error('Spotify search response is missing tracks')
+        let bestId: string | null = null
+        let bestScore = 0
+        const source = {
+          title,
+          artist,
+          durationSeconds: query.durationSeconds,
+        }
+        for (const item of items) {
+          const track = record(record(record(item).item).data)
+          const uri = track.uri
+          if (typeof uri !== 'string' || !uri.startsWith('spotify:track:'))
+            continue
+          const name = track.name
+          const artists = record(track.artists).items
+          if (typeof name !== 'string' || !name || !Array.isArray(artists))
+            continue
+          const names = artists
+            .map((artist) => record(record(artist).profile).name)
+            .filter((value): value is string => typeof value === 'string')
+          if (!names.length) continue
+          const durationMs =
+            Number(record(track.duration).totalMilliseconds) || 0
+          if (
+            uri.split(':').at(-1) === excludeId ||
+            (excludeId !== null && !titleMatches(query, name)) ||
+            !sameVersion(query, name) ||
+            !durationMatches(query, durationMs / 1000)
+          )
+            continue
+          const score = candidateScore(source, {
+            name,
+            artists: names,
+            durationMs,
+          })
+          if (score > bestScore) {
+            bestScore = score
+            bestId = uri.split(':').at(-1) ?? null
+          }
+        }
+        if (bestScore >= 0.6 && bestId) return bestId
       }
     }
-    return bestScore >= 0.6 ? bestId : null
+    return null
   }
 
   async function lyrics(
@@ -301,7 +329,10 @@ export function createSpotifyClient(http: HttpClient) {
       if (error instanceof HttpError && error.status === 404) return null
       throw error
     }
-    if (!Array.isArray(payload.lines)) return null
+    if (payload.error || payload.errors || payload.success === false)
+      throw new Error(`Spotify lyrics error: ${JSON.stringify(payload)}`)
+    if (!Array.isArray(payload.lines))
+      throw new Error('Spotify lyrics response is missing lines')
     const synced: string[] = []
     const plain: string[] = []
     for (const raw of payload.lines) {

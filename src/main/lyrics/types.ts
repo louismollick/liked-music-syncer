@@ -2,11 +2,17 @@ import type { YouTubeMusicCatalog } from '../catalog/types'
 import type { ArtistCredit } from '../domain'
 import type { HttpClient } from '../net/http'
 
-export type LyricsSource = 'spotify' | 'youtube-music' | 'lrclib'
+export type LyricsSource =
+  | 'spotify'
+  | 'youtube-music'
+  | 'lrclib'
+  | 'petitlyrics'
 
 export interface LyricsQuery {
   title: string
   artists: ArtistCredit[]
+  /** Canonical and native channel-page names, alongside the original credits. */
+  artistVariants?: string[]
   album: string | null
   durationSeconds: number | null
   /** MPLY... browse ID from the Match, when known. */

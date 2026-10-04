@@ -234,6 +234,7 @@ async function main() {
       }
       return next
     },
+    'settings:recheckLyrics': () => reconciler.recheckLyrics(),
     'settings:chooseFolder': () => chooseFolder(),
     'session:get': () => session.view(),
     'session:signIn': async () => {

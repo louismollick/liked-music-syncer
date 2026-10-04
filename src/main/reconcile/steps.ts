@@ -7,7 +7,8 @@ import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
 import { fetchArtistPage } from '../artist-pages'
 import type { CatalogRelease, YouTubeMusicCatalog } from '../catalog/types'
-import type { ArtistCredit } from '../domain'
+import type { ArtistCredit, StepKind } from '../domain'
+
 import {
   copyToStaging,
   exists,
@@ -22,6 +23,8 @@ import {
 import { readableDirectory } from '../inventory/inventory'
 import { pathKey, resolveCollision, sidecarPath } from '../inventory/layout'
 import {
+  artistIdFor,
+  canonicalArtist,
   canonicalTrackNames,
   linkTrackArtists,
   releaseCredits,
@@ -43,6 +46,7 @@ import {
   unmanagedFiles,
   uploads,
 } from '../library/schema'
+import { isInstrumentalTitle } from '../lyrics/query'
 import type { LyricsFinder } from '../lyrics/types'
 import {
   type Match,
@@ -70,6 +74,8 @@ import {
 } from './desired'
 import { type CatalogRaw, checkArtistCatalog, type LikedRaw } from './sources'
 
+export type { StepKind } from '../domain'
+
 export interface StepDeps {
   db: Db
   tools: ToolPaths
@@ -88,8 +94,6 @@ export interface StepRun {
   /** Progress within the current step, 0..1. */
   progress: (fraction: number) => void
 }
-
-export type StepKind = 'match' | 'acquire' | 'retag' | 'move' | 'upload'
 
 /** Fields that do not justify rewriting a file on their own. */
 const IMMATERIAL_FIELDS = new Set(['lms.schemaVersion'])
@@ -200,6 +204,7 @@ export function nextStep(
   ) {
     return 'acquire'
   }
+  if (settings.lyricsEnabled && track.lyricsCheckedAt === null) return 'lyrics'
   const desired = desiredFieldsFor(db, track)
   const sidecar = desiredSidecar(track)
   const sidecarSha = sidecar ? sha256(sidecar) : null
@@ -235,6 +240,158 @@ function isSuffixedVariant(actual: string, preferred: string): boolean {
   const base = pathKey(preferred.replace(/\.m4a$/i, ''))
   const key = pathKey(actual)
   return key.startsWith(`${base} [`) && key.endsWith('.m4a')
+}
+
+type LyricsValues = Pick<
+  TrackRow,
+  | 'lyricsText'
+  | 'lyricsStatus'
+  | 'lyricsSource'
+  | 'language'
+  | 'spotifyTrackId'
+  | 'lyricsCheckedAt'
+>
+
+function lyricsForRecording(track: TrackRow, match: Match): LyricsValues {
+  const changed = parseMatch(track)?.catalogVideoId !== match.catalogVideoId
+  return {
+    lyricsText: changed ? null : track.lyricsText,
+    lyricsStatus: changed ? 'none' : track.lyricsStatus,
+    lyricsSource: changed ? null : track.lyricsSource,
+    language: changed ? null : track.language,
+    spotifyTrackId: changed ? null : track.spotifyTrackId,
+    lyricsCheckedAt: changed ? null : track.lyricsCheckedAt,
+  }
+}
+
+/** Compare with the current survivor, since matching may merge into another track. */
+function betterLyrics(
+  stored: LyricsValues,
+  lookedUp: LyricsValues
+): LyricsValues {
+  const rank = (status: string) =>
+    status === 'synced' ? 2 : status === 'plain' ? 1 : 0
+  const selected =
+    rank(stored.lyricsStatus) > rank(lookedUp.lyricsStatus) ? stored : lookedUp
+  return {
+    ...selected,
+    spotifyTrackId: lookedUp.spotifyTrackId ?? stored.spotifyTrackId,
+    lyricsCheckedAt: lookedUp.lyricsCheckedAt ?? stored.lyricsCheckedAt,
+  }
+}
+
+/** Shared by matching and lyrics-only work; provider failures still complete the lookup. */
+export async function lookUpLyrics(
+  deps: StepDeps,
+  track: TrackRow,
+  match: Match,
+  run: StepRun
+) {
+  const values = lyricsForRecording(track, match)
+  const errors: Record<string, string> = {}
+  const settings = deps.settings()
+  if (!settings.lyricsEnabled) return { values, errors }
+  try {
+    if (!isInstrumentalTitle(match.title)) {
+      const original = match.artists.map((credit) => credit.name).join(', ')
+      const pages = match.artists.map((credit) =>
+        canonicalArtist(deps.db, artistIdFor(credit))
+      )
+      const canonical = match.artists
+        .map((credit, index) => {
+          const row = pages[index]
+          return row?.name ?? credit.name
+        })
+        .join(', ')
+      const native = match.artists
+        .map((credit, index) => {
+          const row = pages[index]
+          return row?.nativeName ?? row?.name ?? credit.name
+        })
+        .join(', ')
+      const found = await deps.lyrics.find(
+        {
+          title: match.title,
+          artists: match.artists,
+          artistVariants: [...new Set([canonical, original, native])],
+          album: match.release?.title ?? null,
+          durationSeconds:
+            parseMatch(track)?.catalogVideoId === match.catalogVideoId
+              ? (track.durationSeconds ?? match.durationSeconds)
+              : match.durationSeconds,
+          lyricsBrowseId: match.lyricsBrowseId,
+          spotifyTrackId: values.spotifyTrackId,
+        },
+        { lyricsServerUrl: settings.lyricsServerUrl.trim() || null },
+        run.signal
+      )
+      Object.assign(
+        errors,
+        Object.fromEntries(
+          Object.entries(found.errors).map(([key, value]) => [
+            `lyrics:${key}`,
+            value,
+          ])
+        )
+      )
+      values.spotifyTrackId = found.spotifyTrackId ?? values.spotifyTrackId
+      if (found.lyrics) {
+        Object.assign(
+          values,
+          betterLyrics(values, {
+            ...values,
+            lyricsText: found.lyrics.text,
+            lyricsStatus: found.lyrics.synced ? 'synced' : 'plain',
+            lyricsSource: found.lyrics.source,
+            language: found.lyrics.language,
+          })
+        )
+      }
+    }
+  } catch (error) {
+    if (run.signal.aborted) throw error
+    errors['lyrics:lookup'] =
+      error instanceof Error ? error.message : String(error)
+  }
+  values.lyricsCheckedAt = iso(deps)
+  return { values, errors }
+}
+
+export async function runLyrics(
+  deps: StepDeps,
+  track: TrackRow,
+  run: StepRun
+): Promise<void> {
+  const match = parseMatch(track)
+  if (!match) return
+  const lookup = await lookUpLyrics(deps, track, match, run)
+  run.signal.throwIfAborted()
+  const current = deps.db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, track.id))
+    .get()
+  if (
+    !current ||
+    current.state === 'released' ||
+    current.state === 'no_longer_wanted' ||
+    current.match !== track.match
+  )
+    return
+  const errors = JSON.parse(current.enrichmentErrors) as Record<string, string>
+  for (const key of Object.keys(errors))
+    if (key.startsWith('lyrics:')) delete errors[key]
+  Object.assign(errors, lookup.errors)
+  deps.db
+    .update(tracks)
+    .set({
+      ...betterLyrics(lyricsForRecording(current, match), lookup.values),
+      enrichmentErrors: JSON.stringify(errors),
+      updatedAt: iso(deps),
+    })
+    .where(eq(tracks.id, track.id))
+    .run()
+  run.progress(1)
 }
 
 // ---------------------------------------------------------------- match
@@ -856,45 +1013,8 @@ async function matchOnce(
     errors.musicbrainz = error instanceof Error ? error.message : String(error)
   }
   run.progress(0.6)
-  // Keep existing lyrics when lookups are off or every provider that could answer failed.
-  let lyricsText: string | null = track.lyricsText
-  let lyricsStatus = track.lyricsStatus as 'synced' | 'plain' | 'none'
-  let lyricsSource: string | null = track.lyricsSource
-  let language: string | null = track.language
-  let spotifyTrackId = track.spotifyTrackId
-  if (settings.lyricsEnabled) {
-    const found = await deps.lyrics.find(
-      {
-        title: match.title,
-        artists: match.artists,
-        album: match.release?.title ?? null,
-        durationSeconds: match.durationSeconds,
-        lyricsBrowseId: match.lyricsBrowseId,
-        spotifyTrackId,
-      },
-      { lyricsServerUrl: settings.lyricsServerUrl.trim() || null },
-      run.signal
-    )
-    Object.assign(
-      errors,
-      Object.fromEntries(
-        Object.entries(found.errors).map(([k, v]) => [`lyrics:${k}`, v])
-      )
-    )
-    spotifyTrackId = found.spotifyTrackId ?? spotifyTrackId
-    if (found.lyrics) {
-      lyricsText = found.lyrics.text
-      lyricsStatus = found.lyrics.synced ? 'synced' : 'plain'
-      lyricsSource = found.lyrics.source
-      language = found.lyrics.language
-    } else if (Object.keys(found.errors).length === 0) {
-      // Every provider answered and none has lyrics: the track has none.
-      lyricsText = null
-      lyricsStatus = 'none'
-      lyricsSource = null
-      language = null
-    }
-  }
+  const lyrics = await lookUpLyrics(deps, track, match, run)
+  Object.assign(errors, lyrics.errors)
   run.progress(0.8)
   let coverPath = track.coverPath
   try {
@@ -1016,16 +1136,17 @@ async function matchOnce(
         discTotal: release?.discTotal ?? null,
         date: release?.date ?? null,
         year: release?.year ?? null,
-        durationSeconds: match.durationSeconds,
+        durationSeconds:
+          parseMatch(target ?? current)?.catalogVideoId === match.catalogVideoId
+            ? ((target ?? current).durationSeconds ?? match.durationSeconds)
+            : match.durationSeconds,
         genre: enrichment.genre,
         isrc: enrichment.isrc,
         mbRecordingId: enrichment.mbRecordingId,
-        lyricsText,
-        lyricsStatus,
-        lyricsSource,
-        language,
-        lyricsCheckedAt: settings.lyricsEnabled ? at : null,
-        spotifyTrackId,
+        ...betterLyrics(
+          lyricsForRecording(target ?? current, match),
+          lyrics.values
+        ),
         coverUrl: match.coverUrl,
         coverPath,
         match: JSON.stringify({ ...match, confirmed: true } satisfies Match),

@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { type BetterSQLite3Database, drizzle } from 'drizzle-orm/better-sqlite3'
+import { isInstrumentalTitle } from '../lyrics/query'
 import { MIGRATIONS } from './migrations'
 import * as schema from './schema'
 
@@ -17,6 +18,9 @@ export function openDatabase(file: string): Db {
 }
 
 export function migrate(sqlite: Database.Database): void {
+  sqlite.function('lyrics_instrumental', (title: string) =>
+    Number(isInstrumentalTitle(title))
+  )
   const current = sqlite.pragma('user_version', { simple: true }) as number
   if (current > MIGRATIONS.length) {
     throw new Error(

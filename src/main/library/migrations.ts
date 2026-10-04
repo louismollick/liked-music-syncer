@@ -197,4 +197,13 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE artists ADD COLUMN alias_of TEXT;
   CREATE INDEX artists_primary_channel ON artists(primary_channel_id);
   `,
+  // 5: exact vocal duplicates on instrumental titles. Normal reconciliation removes stale tags/sidecars.
+  `
+  UPDATE tracks SET lyrics_text = NULL, lyrics_status = 'none', lyrics_source = NULL, language = NULL
+  WHERE lyrics_text IS NOT NULL AND lyrics_text != '' AND lyrics_instrumental(title) = 1
+    AND EXISTS (
+      SELECT 1 FROM tracks AS vocal
+      WHERE lyrics_instrumental(vocal.title) = 0 AND vocal.lyrics_text = tracks.lyrics_text
+    );
+  `,
 ]

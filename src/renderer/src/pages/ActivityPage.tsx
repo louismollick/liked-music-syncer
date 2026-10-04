@@ -12,11 +12,13 @@ import { dayLabel, formatTime, plural } from '../lib/format'
 
 const STAGE_LABEL = {
   matching: 'Matching',
+  lyrics: 'Finding lyrics',
   downloading: 'Downloading',
   uploading: 'Uploading',
 } as const
 const STAGES = {
   matching: [0, 0.15],
+  lyrics: [0.15, 0.7],
   downloading: [0.15, 0.7],
   uploading: [0.85, 0.15],
 } as const
