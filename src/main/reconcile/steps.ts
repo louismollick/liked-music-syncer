@@ -5,8 +5,9 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
+import { fetchArtistPage } from '../artist-pages'
 import type { CatalogRelease, YouTubeMusicCatalog } from '../catalog/types'
-import { type ArtistCredit, joinArtistNames } from '../domain'
+import type { ArtistCredit } from '../domain'
 import {
   copyToStaging,
   exists,
@@ -20,6 +21,11 @@ import {
 } from '../inventory/files'
 import { readableDirectory } from '../inventory/inventory'
 import { pathKey, resolveCollision, sidecarPath } from '../inventory/layout'
+import {
+  canonicalTrackNames,
+  linkTrackArtists,
+  releaseCredits,
+} from '../library/artists'
 import type { Db } from '../library/db'
 import {
   artists,
@@ -182,6 +188,11 @@ export function nextStep(
 ): StepKind | null {
   const match = parseMatch(track)
   if (!match || track.refreshRequested) return 'match'
+  const names = canonicalTrackNames(db, track, match)
+  if (!names) return null
+  // A backfill page read may finish before its batch recomputes saved tag names.
+  if (track.artist !== names.artist || track.albumArtist !== names.albumArtist)
+    return null
   if (file?.outsideEdit) return null
   if (
     !file ||
@@ -353,37 +364,7 @@ function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
   }
 }
 
-function artistIdFor(credit: ArtistCredit): string {
-  return credit.channelId
-    ? `channel:${credit.channelId}`
-    : `name:${credit.name.normalize('NFKC').toLowerCase().trim()}`
-}
-
-export function linkTrackArtists(
-  db: Db,
-  trackId: string,
-  credits: ArtistCredit[]
-): void {
-  db.delete(trackArtists).where(eq(trackArtists.trackId, trackId)).run()
-  credits.forEach((credit, position) => {
-    const id = artistIdFor(credit)
-    const existing = db.select().from(artists).where(eq(artists.id, id)).get()
-    if (!existing) {
-      db.insert(artists)
-        .values({ id, name: credit.name, channelId: credit.channelId })
-        .run()
-    } else if (existing.name !== credit.name && credit.channelId) {
-      db.update(artists)
-        .set({ name: credit.name })
-        .where(eq(artists.id, id))
-        .run()
-    }
-    db.insert(trackArtists)
-      .values({ trackId, artistId: id, position })
-      .onConflictDoNothing()
-      .run()
-  })
-}
+export { linkTrackArtists } from '../library/artists'
 
 async function processCover(
   deps: StepDeps,
@@ -802,6 +783,15 @@ async function matchOnce(
   }
   const settings = deps.settings()
   const match = await deps.matcher.match(input, run.signal)
+  try {
+    for (const credit of [...match.artists, ...releaseCredits(match)])
+      await fetchArtistPage(deps.db, deps.catalog, credit, run.signal, deps.now)
+  } catch (error) {
+    if (run.signal.aborted) throw error
+    throw new RetryLaterError(
+      `Waiting for artist pages: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
   const conflictingArtists = deps.db
     .select({
       artistId: contributions.artistId,
@@ -949,6 +939,9 @@ async function matchOnce(
     )
       return 'cancelled'
     if (matchSources(db, current.id) !== sourcesBefore) return 'stale'
+    const artistCredits = JSON.stringify(match.artists)
+    const names = canonicalTrackNames(db, { ...current, artistCredits }, match)
+    if (!names) throw new RetryLaterError('Waiting for artist pages')
     const previousIdentityKey = current.identityKey
     let target = db
       .select()
@@ -1011,10 +1004,10 @@ async function matchOnce(
         identityKey: match.identityKey,
         adopted: false,
         title: match.title,
-        artistCredits: JSON.stringify(match.artists),
-        artist: joinArtistNames(match.artists),
+        artistCredits,
+        artist: names.artist,
         album: match.album,
-        albumArtist: match.albumArtist,
+        albumArtist: names.albumArtist,
         releaseId: release?.browseId ?? null,
         releaseKind: release?.kind ?? null,
         trackNumber: release?.trackNumber ?? null,

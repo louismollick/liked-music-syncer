@@ -5,6 +5,7 @@ import { createAudioDownloader } from './acquire/audio'
 import { createPotProvider } from './acquire/pot-provider'
 import { createYtDlpBinary } from './acquire/ytdlp-binary'
 import { createArtistImages } from './artist-images'
+import { createArtistPages } from './artist-pages'
 import { createYouTubeMusicCatalog } from './catalog/catalog'
 import { broadcast, chooseFolder, registerIpc, showInFinder } from './ipc'
 import { openDatabase } from './library/db'
@@ -131,6 +132,32 @@ async function main() {
   const queries = new LibraryQueries(db, coverUrlFor, artistImageUrlFor, () =>
     settings.get()
   )
+  const artistPages = createArtistPages({
+    db,
+    catalog,
+    onUpdated: () => {
+      reconcilerRef?.markDirty()
+      broadcast('library:changed', { trackIds: null })
+    },
+  })
+  let pagesTimer: NodeJS.Timeout | null = null
+  let stoppingPages = false
+  const scheduleArtistPages = (delay = 3_000) => {
+    if (stoppingPages) return
+    if (pagesTimer) clearTimeout(pagesTimer)
+    pagesTimer = setTimeout(() => {
+      pagesTimer = null
+      void artistPages
+        .run()
+        .then((pending) => {
+          if (pending) scheduleArtistPages(60_000)
+        })
+        .catch((error) => {
+          console.error('[artist-pages] backfill failed', error)
+          scheduleArtistPages(60_000)
+        })
+    }, delay)
+  }
   const artistImages = createArtistImages({
     db,
     catalog,
@@ -168,6 +195,7 @@ async function main() {
     onLibraryChanged: (trackIds) => {
       broadcast('library:changed', { trackIds })
       scheduleArtistImages()
+      scheduleArtistPages()
     },
   })
 
@@ -273,7 +301,13 @@ async function main() {
     quitting = true
     event.preventDefault()
     void (async () => {
-      await reconciler.stop().catch(() => undefined)
+      stoppingPages = true
+      if (pagesTimer) clearTimeout(pagesTimer)
+      if (imagesTimer) clearTimeout(imagesTimer)
+      await Promise.all([
+        artistPages.stop().catch(() => undefined),
+        reconciler.stop().catch(() => undefined),
+      ])
       pot.dispose()
       killAllChildren()
       db.$client.close()
@@ -284,6 +318,7 @@ async function main() {
   await session.init()
   await reconciler.start()
   void artistImages.run()
+  scheduleArtistPages(0)
 }
 
 app.on('window-all-closed', () => {

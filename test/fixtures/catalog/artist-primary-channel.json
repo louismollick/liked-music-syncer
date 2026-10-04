@@ -1,0 +1,15 @@
+{
+  "header": {
+    "musicImmersiveHeaderRenderer": {
+      "title": { "runs": [{ "text": "Sokoninaru" }] },
+      "subscriptionButton": {
+        "subscribeButtonRenderer": { "channelId": "UC0Whg8Zz7TT1VSpWeCjghKg" }
+      }
+    }
+  },
+  "contents": {
+    "singleColumnBrowseResultsRenderer": {
+      "tabs": [{ "tabRenderer": { "content": { "sectionListRenderer": { "contents": [] } } } }]
+    }
+  }
+}

@@ -25,7 +25,11 @@ export function createArtistImages(deps: {
           .select()
           .from(artists)
           .where(
-            and(isNotNull(artists.channelId), isNull(artists.imageCheckedAt))
+            and(
+              isNotNull(artists.channelId),
+              isNull(artists.imageCheckedAt),
+              isNull(artists.aliasOf)
+            )
           )
           .limit(limit)
           .all()

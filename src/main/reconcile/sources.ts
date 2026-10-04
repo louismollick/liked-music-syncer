@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import {
   releaseTitlesMatch,
   sameReleasePosition,
@@ -13,6 +13,7 @@ import type {
 } from '../catalog/types'
 import { CatalogShapeError } from '../catalog/types'
 import { joinArtistNames } from '../domain'
+import { canonicalArtist } from '../library/artists'
 import type { Db } from '../library/db'
 import {
   artists,
@@ -291,6 +292,19 @@ function populatedShelves(db: Db, artistId: string): Set<ReleaseShelf> {
   return shelves
 }
 
+/** Distinct timestamps let merged catalogs reject older in-flight snapshots. */
+function catalogCheckStartedAt(db: Db, now: () => Date): string {
+  const previous = db
+    .select({ startedAt: sourceSnapshots.startedAt })
+    .from(sourceSnapshots)
+    .where(sql`${sourceSnapshots.source} LIKE 'catalog:%'`)
+    .orderBy(desc(sourceSnapshots.startedAt))
+    .limit(1)
+    .get()
+  const last = Date.parse(previous?.startedAt ?? '') || 0
+  return new Date(Math.max(now().getTime(), last + 1)).toISOString()
+}
+
 /** Fetches one full-discography artist's Official Main Catalog and commits it. */
 export async function checkArtistCatalog(options: {
   db: Db
@@ -300,31 +314,44 @@ export async function checkArtistCatalog(options: {
   now?: () => Date
   signal?: AbortSignal
 }): Promise<{ total: number }> {
-  const { db, catalog, artistId } = options
+  const { db, catalog } = options
+  const artistId = canonicalArtist(db, options.artistId)?.id ?? options.artistId
   const now = options.now ?? (() => new Date())
   const source = catalogSnapshotSource(artistId)
-  const startedAt = nowIso(now)
+  const startedAt = catalogCheckStartedAt(db, now)
   markSnapshot(
     db,
     source,
     { status: 'running', startedAt, error: null },
     startedAt
   )
+  const stillCurrent = () =>
+    (canonicalArtist(db, options.artistId)?.id ?? options.artistId) ===
+      artistId &&
+    db
+      .select({ startedAt: sourceSnapshots.startedAt })
+      .from(sourceSnapshots)
+      .where(eq(sourceSnapshots.source, source))
+      .get()?.startedAt === startedAt
   try {
     // Every release on the Albums and Singles & EPs shelves is Official Main Catalog.
     const refs = await catalog.artistReleases(options.channelId, options.signal)
+    if (!stillCurrent()) return { total: 0 }
     if (refs.length === 0) {
       throw new CatalogShapeError(
         'The artist page listed no albums or singles.'
       )
     }
     const shelves = new Set(refs.map((ref) => ref.shelf))
-    for (const shelf of populatedShelves(db, artistId)) {
-      if (!shelves.has(shelf))
-        throw new SuspiciousSnapshotError(
-          `The artist page no longer lists any ${shelf === 'albums' ? 'albums' : 'singles or EPs'}; keeping the previous catalog. If that is right, turn Full Discography off and on again.`
-        )
+    const validateShelves = () => {
+      for (const shelf of populatedShelves(db, artistId)) {
+        if (!shelves.has(shelf))
+          throw new SuspiciousSnapshotError(
+            `The artist page no longer lists any ${shelf === 'albums' ? 'albums' : 'singles or EPs'}; keeping the previous catalog. If that is right, turn Full Discography off and on again.`
+          )
+      }
     }
+    validateShelves()
     const staged: CatalogRaw[] = []
     for (const ref of refs) {
       const release = await catalog.release(ref.browseId, options.signal)
@@ -345,6 +372,8 @@ export async function checkArtistCatalog(options: {
         })
       }
     }
+    if (!stillCurrent()) return { total: 0 }
+    validateShelves()
     const previousActive =
       db
         .select({ count: sql<number>`count(*)` })
@@ -591,6 +620,7 @@ export async function checkArtistCatalog(options: {
     })
     return { total: staged.length }
   } catch (error) {
+    if (!stillCurrent()) return { total: 0 }
     const message = error instanceof Error ? error.message : String(error)
     markSnapshot(
       db,

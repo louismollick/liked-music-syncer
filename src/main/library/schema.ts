@@ -132,19 +132,29 @@ export const unmanagedFiles = sqliteTable('unmanaged_files', {
   released: integer('released', { mode: 'boolean' }).notNull().default(false),
 })
 
-export const artists = sqliteTable('artists', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  channelId: text('channel_id'),
-  imagePath: text('image_path'),
-  imageCheckedAt: text('image_checked_at'),
-  fullDiscography: integer('full_discography', { mode: 'boolean' })
-    .notNull()
-    .default(false),
-  suggested: integer('suggested', { mode: 'boolean' }).notNull().default(false),
-  fullDiscographyAt: text('full_discography_at'),
-  catalogCheckedAt: text('catalog_checked_at'),
-})
+export const artists = sqliteTable(
+  'artists',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    channelId: text('channel_id'),
+    nativeName: text('native_name'),
+    primaryChannelId: text('primary_channel_id'),
+    pageCheckedAt: text('page_checked_at'),
+    aliasOf: text('alias_of'),
+    imagePath: text('image_path'),
+    imageCheckedAt: text('image_checked_at'),
+    fullDiscography: integer('full_discography', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    suggested: integer('suggested', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    fullDiscographyAt: text('full_discography_at'),
+    catalogCheckedAt: text('catalog_checked_at'),
+  },
+  (table) => [index('artists_primary_channel').on(table.primaryChannelId)]
+)
 
 export const trackArtists = sqliteTable(
   'track_artists',

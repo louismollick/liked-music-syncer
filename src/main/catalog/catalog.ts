@@ -23,11 +23,13 @@ export function createYouTubeMusicCatalog(
 ): YouTubeMusicCatalog {
   const readArtist: YouTubeMusicCatalog['artist'] = async (
     channelId,
-    signal
+    signal,
+    language
   ) => {
     const response = await transport.call({
       endpoint: 'browse',
       body: { browseId: channelId },
+      language,
       authenticated: false,
       signal,
     })

@@ -66,6 +66,7 @@ export function desiredTagFields(
       releaseTitle: release?.title ?? null,
       releaseKind: release?.kind ?? null,
       artistCredits: credits,
+      releaseArtistCredits: release?.artists ?? [],
       matchConfirmed: match?.confirmed === true,
     },
   }
