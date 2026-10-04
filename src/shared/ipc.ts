@@ -34,6 +34,12 @@ export interface SessionView {
   message: string | null
 }
 
+export interface SpotifySessionView {
+  state: SessionView['state']
+  account: { id: string; name: string; likedCount: number | null } | null
+  message: string | null
+}
+
 export interface ActivityTrackView {
   id: string
   title: string

@@ -24,6 +24,7 @@ import { resolveToolPaths } from './platform/tools'
 import { Reconciler } from './reconcile/reconciler'
 import { createRclone } from './remote/rclone'
 import { GoogleSession } from './session/google-session'
+import { SpotifySession } from './session/spotify-session'
 import { SettingsStore } from './settings'
 import { runSmokeTest } from './smoke'
 
@@ -119,6 +120,7 @@ async function main() {
     onChange: (view) => broadcast('session:changed', view),
     onRecovered: () => void reconcilerRef?.check(),
   })
+  const spotifySession = new SpotifySession({ http, onChange: () => {} })
   const catalog = createYouTubeMusicCatalog(session.transport)
   const matcher = createMatcher({ catalog, http })
   const lyrics = createLyricsFinder({ http, catalog })
@@ -189,6 +191,15 @@ async function main() {
       generation: () => session.generation(),
       likedCountChanged: (accountId, count) =>
         session.setLikedCount(accountId, count),
+    },
+    spotify: {
+      library: spotifySession.library,
+      session: {
+        accountId: () => spotifySession.accountId(),
+        generation: () => spotifySession.generation(),
+        likedCountChanged: (id, count) =>
+          spotifySession.setLikedCount(id, count),
+      },
     },
     coverUrl: coverUrlFor,
     onActivity: (view) => broadcast('activity:changed', view),
@@ -317,6 +328,7 @@ async function main() {
   })
 
   await session.init()
+  await spotifySession.refresh()
   await reconciler.start()
   void artistImages.run()
   scheduleArtistPages(0)

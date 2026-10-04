@@ -72,7 +72,12 @@ import {
   desiredTagFields,
   parseMatch,
 } from './desired'
-import { type CatalogRaw, checkArtistCatalog, type LikedRaw } from './sources'
+import {
+  type CatalogRaw,
+  checkArtistCatalog,
+  type LikedRaw,
+  type SpotifyLikedRaw,
+} from './sources'
 
 export type { StepKind } from '../domain'
 
@@ -482,13 +487,17 @@ function catalogIdentities(db: Db, trackId: string): string[] {
       )
     )
     .all()
-    .map((row) => releaseIdentityKey(row.releaseId ?? '', row.videoId))
+    .map((row) => releaseIdentityKey(row.releaseId ?? '', row.videoId ?? ''))
 }
 
 function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
   const chosen = matchSource(db, track.id)
   if (chosen) {
-    const raw = JSON.parse(chosen.raw) as LikedRaw | CatalogRaw
+    const raw = JSON.parse(chosen.raw) as
+      | LikedRaw
+      | CatalogRaw
+      | SpotifyLikedRaw
+    if (raw.kind === 'spotify_liked') return null
     if (raw.kind === 'liked') return { kind: 'liked', song: raw.song }
     return {
       kind: 'catalog',
@@ -966,7 +975,7 @@ async function matchOnce(
     .all()
     .filter(
       (source) =>
-        releaseIdentityKey(source.releaseId ?? '', source.videoId) !==
+        releaseIdentityKey(source.releaseId ?? '', source.videoId ?? '') !==
         match.identityKey
     )
     .map((source) => source.artistId)

@@ -40,14 +40,17 @@ import {
   uploads,
 } from '../library/schema'
 import { errorKindOf } from '../net/http'
+import type { SpotifyLibrary } from '../spotify/library'
 import { readTags, sha256 } from '../tags/schema'
 import {
   checkArtistCatalog,
   checkLikedSongs,
+  checkSpotifyLikedSongs,
   claimAdoptedFiles,
   deactivateArtistCatalog,
   likedSnapshotSource,
   linkContributions,
+  spotifyLikedSnapshotSource,
   updateWantedStates,
 } from './sources'
 import {
@@ -95,6 +98,7 @@ export interface SessionInfo {
 
 export interface ReconcilerDeps extends StepDeps {
   session: SessionInfo
+  spotify?: { session: SessionInfo; library: SpotifyLibrary }
   coverUrl: (coverPath: string | null, fallback: string | null) => string | null
   onActivity: (view: ActivityView) => void
   onLibraryChanged: (trackIds: string[] | null) => void
@@ -279,6 +283,28 @@ export class Reconciler {
           )
         }
       }
+      const spotify = this.deps.spotify
+      const spotifyAccountId = spotify?.session.accountId()
+      if (spotify && spotifyAccountId) {
+        const spotifyGeneration = spotify.session.generation()
+        try {
+          const liked = await checkSpotifyLikedSongs({
+            db: this.db,
+            library: spotify.library,
+            accountId: spotifyAccountId,
+            stillCurrent: () =>
+              spotify.session.generation() === spotifyGeneration,
+            now: this.deps.now,
+          })
+          spotify.session.likedCountChanged?.(spotifyAccountId, liked.total)
+          this.sourceErrors.delete(spotifyLikedSnapshotSource(spotifyAccountId))
+        } catch (error) {
+          this.sourceErrors.set(
+            spotifyLikedSnapshotSource(spotifyAccountId),
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+      }
       const fullDiscography = this.db
         .select()
         .from(artists)
@@ -339,6 +365,7 @@ export class Reconciler {
       .filter((artist) => artist.channelId)
     updateWantedStates(this.db, {
       accountId: this.deps.session.accountId(),
+      spotifyAccountId: this.deps.spotify?.session.accountId(),
       fullDiscographyArtistIds: fullDiscography.map((artist) => artist.id),
     })
   }

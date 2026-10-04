@@ -1,5 +1,12 @@
-import { createHmac } from 'node:crypto'
 import { type HttpClient, HttpError } from '../net/http'
+import { createSpotifyToken, record, USER_AGENT, WEB } from '../spotify/token'
+
+export { generateTotp } from '../spotify/token'
+
+const PATHFINDER = 'https://api-partner.spotify.com/pathfinder/v2/query'
+const SEARCH_HASH =
+  'd9f785900f0710b31c07818d617f4f7600c1e21217e80f5b043d1e78d74e6026'
+
 import { formatLrcLine, isZeroTimestampOnlyLrc } from './lrc'
 import {
   durationMatches,
@@ -7,34 +14,6 @@ import {
   sameVersion,
   titleMatches,
 } from './query'
-
-const WEB = 'https://open.spotify.com'
-const SECRETS =
-  'https://raw.githubusercontent.com/xyloflake/spot-secrets-go/refs/heads/main/secrets/secretDict.json'
-const PATHFINDER = 'https://api-partner.spotify.com/pathfinder/v2/query'
-const SEARCH_HASH =
-  'd9f785900f0710b31c07818d617f4f7600c1e21217e80f5b043d1e78d74e6026'
-const USER_AGENT =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
-const SECRET_TTL_MS = 60 * 60 * 1000
-
-export function generateTotp(
-  timestampSeconds: number,
-  secretBytes: number[]
-): string {
-  const secret = Buffer.from(
-    secretBytes
-      .map((value, index) => String(value ^ ((index % 33) + 9)))
-      .join(''),
-    'utf8'
-  )
-  const counter = Buffer.alloc(8)
-  counter.writeBigUInt64BE(BigInt(Math.floor(timestampSeconds / 30)))
-  const digest = createHmac('sha1', secret).update(counter).digest()
-  const offset = digest[digest.length - 1] & 0x0f
-  const code = (digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000
-  return String(code).padStart(6, '0')
-}
 
 function tokenize(value: string): Set<string> {
   return new Set(
@@ -79,126 +58,14 @@ export function candidateScore(
   )
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
 export function createSpotifyClient(http: HttpClient) {
-  let clientVersion: string | null = null
-  let secret: { version: string; bytes: number[]; fetchedAt: number } | null =
-    null
-  let token: { value: string; expiresAt: number } | null = null
-
-  async function version(signal?: AbortSignal): Promise<string> {
-    if (clientVersion) return clientVersion
-    const html = await http.text(WEB, {
-      host: 'spotify',
-      headers: { 'User-Agent': USER_AGENT },
-      signal,
-    })
-    const encoded =
-      /<script id="appServerConfig" type="text\/plain">([^<]+)<\/script>/.exec(
-        html
-      )?.[1]
-    if (!encoded)
-      throw new Error('Spotify web bootstrap is missing appServerConfig')
-    const value = record(
-      JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'))
-    ).clientVersion
-    if (typeof value !== 'string' || !value)
-      throw new Error('Spotify web bootstrap is missing clientVersion')
-    clientVersion = value
-    return value
-  }
-
-  async function latestSecret(signal?: AbortSignal) {
-    if (secret && Date.now() - secret.fetchedAt < SECRET_TTL_MS) return secret
-    const payload = record(
-      await http.json(SECRETS, {
-        host: 'spotify',
-        headers: { 'User-Agent': USER_AGENT },
-        signal,
-      })
-    )
-    const version = Object.keys(payload)
-      .filter((key) => /^\d+$/.test(key))
-      .sort((a, b) => Number(b) - Number(a))[0]
-    const bytes = payload[version]
-    if (
-      !version ||
-      !Array.isArray(bytes) ||
-      !bytes.length ||
-      !bytes.every((value) => Number.isInteger(value))
-    ) {
-      throw new Error(
-        'Spotify secret response did not contain any valid versions'
-      )
-    }
-    secret = { version, bytes: bytes as number[], fetchedAt: Date.now() }
-    return secret
-  }
-
-  async function accessToken(signal?: AbortSignal): Promise<string> {
-    if (token && token.expiresAt - Date.now() > 60_000) return token.value
-    const currentSecret = await latestSecret(signal)
-    const time = record(
-      await http.json(`${WEB}/api/server-time`, {
-        host: 'spotify',
-        headers: { Origin: WEB, Referer: `${WEB}/`, 'User-Agent': USER_AGENT },
-        signal,
-      })
-    ).serverTime
-    if (
-      !(typeof time === 'number' || typeof time === 'string') ||
-      !/^\d+$/.test(String(time))
-    )
-      throw new Error(
-        'Spotify server time response did not include a numeric serverTime'
-      )
-    const totp = generateTotp(Number(time), currentSecret.bytes)
-    const url = new URL(`${WEB}/api/token`)
-    for (const [key, value] of Object.entries({
-      reason: 'init',
-      productType: 'web-player',
-      totp,
-      totpServer: totp,
-      totpVer: currentSecret.version,
-    }))
-      url.searchParams.set(key, value)
-    const payload = record(
-      await http.json(url.toString(), {
-        host: 'spotify',
-        headers: {
-          Accept: 'application/json',
-          Origin: WEB,
-          Referer: `${WEB}/`,
-          'User-Agent': USER_AGENT,
-        },
-        signal,
-      })
-    )
-    if (
-      typeof payload.accessToken !== 'string' ||
-      typeof payload.accessTokenExpirationTimestampMs !== 'number'
-    )
-      throw new Error(
-        'Spotify anonymous token response is missing access token fields'
-      )
-    token = {
-      value: payload.accessToken,
-      expiresAt: payload.accessTokenExpirationTimestampMs,
-    }
-    return token.value
-  }
-
+  const token = createSpotifyToken(http)
   async function search(
     query: LyricsLookup,
     signal?: AbortSignal,
     excludeId: string | null = null
   ): Promise<string | null> {
-    const clientVersion = await version(signal)
+    const clientVersion = await token.version(signal)
     for (const title of query.titles) {
       for (const artist of query.artistNames) {
         const queryText = `${title} ${artist}`.trim()
@@ -221,7 +88,7 @@ export function createSpotifyClient(http: HttpClient) {
           },
         })
         async function send(): Promise<Response> {
-          const access = await accessToken(signal)
+          const access = (await token.accessToken(signal)).value
           return http.request(PATHFINDER, {
             host: 'spotify',
             method: 'POST',
@@ -254,7 +121,7 @@ export function createSpotifyClient(http: HttpClient) {
             )
           )
             throw error
-          token = null
+          token.invalidate()
           response = await send()
         }
         const payload = record(await response.json())
