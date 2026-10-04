@@ -120,7 +120,13 @@ async function main() {
     onChange: (view) => broadcast('session:changed', view),
     onRecovered: () => void reconcilerRef?.check(),
   })
-  const spotifySession = new SpotifySession({ http, onChange: () => {} })
+  const spotifySession = new SpotifySession({
+    http,
+    onChange: (view) => {
+      broadcast('spotify:changed', view)
+      reconcilerRef?.markDirty()
+    },
+  })
   const catalog = createYouTubeMusicCatalog(session.transport)
   const matcher = createMatcher({ catalog, http })
   const lyrics = createLyricsFinder({ http, catalog })
@@ -197,6 +203,8 @@ async function main() {
       session: {
         accountId: () => spotifySession.accountId(),
         generation: () => spotifySession.generation(),
+        message: () => spotifySession.view().message,
+        refresh: () => spotifySession.refresh(),
         likedCountChanged: (id, count) =>
           spotifySession.setLikedCount(id, count),
       },
@@ -247,6 +255,17 @@ async function main() {
     },
     'settings:recheckLyrics': () => reconciler.recheckLyrics(),
     'settings:chooseFolder': () => chooseFolder(),
+    'spotify:get': () => spotifySession.view(),
+    'spotify:signIn': async () => {
+      const view = await spotifySession.openSignIn()
+      void reconciler.check()
+      return view
+    },
+    'spotify:signOut': async () => {
+      const view = await spotifySession.signOut()
+      void reconciler.check()
+      return view
+    },
     'session:get': () => session.view(),
     'session:signIn': async () => {
       const view = await session.openSignIn()

@@ -12,10 +12,12 @@ import type {
   LibraryCounts,
   SessionView,
   Settings,
+  SpotifySessionView,
 } from '../../../shared/ipc'
 import { invoke, useEvent } from './api'
 
 interface AppState {
+  spotify: SpotifySessionView | null
   session: SessionView | null
   settings: Settings | null
   counts: LibraryCounts | null
@@ -33,6 +35,7 @@ interface AppState {
 const Context = createContext<AppState | null>(null)
 
 export function AppStateProvider({ children }: { children: React.ReactNode }) {
+  const [spotify, setSpotify] = useState<SpotifySessionView | null>(null)
   const [session, setSession] = useState<SessionView | null>(null)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [counts, setCounts] = useState<LibraryCounts | null>(null)
@@ -45,10 +48,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     []
   )
   useEffect(() => {
+    void invoke('spotify:get').then(setSpotify)
     void invoke('session:get').then(setSession)
     void invoke('settings:get').then(setSettings)
     loadCounts()
   }, [loadCounts])
+  useEvent('spotify:changed', setSpotify)
   useEvent('session:changed', setSession)
   useEvent('settings:changed', setSettings)
   const countsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -64,6 +69,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<AppState>(
     () => ({
       session,
+      spotify,
       settings,
       counts,
       updateSettings,
@@ -77,6 +83,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     }),
     [
       session,
+      spotify,
       settings,
       counts,
       updateSettings,

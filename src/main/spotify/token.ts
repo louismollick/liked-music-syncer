@@ -54,6 +54,7 @@ export function createSpotifyToken(
   let secret: { version: string; bytes: number[]; fetchedAt: number } | null =
     null
   let token: SpotifyToken | null = null
+  let tokenGeneration = 0
   async function version(signal?: AbortSignal): Promise<string> {
     if (clientVersion) return clientVersion
     const html = await http.text(WEB, {
@@ -104,6 +105,7 @@ export function createSpotifyToken(
   }
 
   async function accessToken(signal?: AbortSignal): Promise<SpotifyToken> {
+    const generation = tokenGeneration
     if (token && token.expiresAt - Date.now() > 60_000) return token
     const currentSecret = await latestSecret(signal)
     const time = record(
@@ -147,6 +149,8 @@ export function createSpotifyToken(
         signal,
       })
     )
+    if (generation !== tokenGeneration)
+      throw new Error('Spotify Account changed during token request')
     if (options.cookies && payload.isAnonymous !== false) {
       options.onExpired?.()
       throw new SpotifyAuthError(
@@ -171,6 +175,7 @@ export function createSpotifyToken(
     version,
     invalidate: () => {
       token = null
+      tokenGeneration += 1
     },
   }
 }

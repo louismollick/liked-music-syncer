@@ -109,6 +109,7 @@ const songsRoute = createRoute({
   path: '/songs',
   validateSearch: (search: Record<string, unknown>): SongsSearch =>
     pick<SongsSearch>(search, [
+      'likedOn',
       'lyrics',
       'remote',
       'state',

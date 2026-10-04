@@ -90,6 +90,8 @@ const STAGE_WEIGHTS: Record<ActivityStage, [number, number]> = {
 export interface SessionInfo {
   /** Selected YouTube Music Account ID, or null when signed out. */
   accountId(): string | null
+  message?(): string | null
+  refresh?(): Promise<unknown>
   /** Bumped on every account switch or sign-out. */
   generation(): number
   /** Called with the account's liked-song count after each successful check. */
@@ -285,8 +287,10 @@ export class Reconciler {
         }
       }
       const spotify = this.deps.spotify
+      if (spotify?.session.refresh) await spotify.session.refresh()
       const spotifyAccountId = spotify?.session.accountId()
       if (spotify && spotifyAccountId) {
+        this.sourceErrors.delete('spotify-session')
         const spotifyGeneration = spotify.session.generation()
         try {
           const liked = await checkSpotifyLikedSongs({
@@ -305,6 +309,29 @@ export class Reconciler {
             error instanceof Error ? error.message : String(error)
           )
         }
+      }
+      if (spotify)
+        for (const key of this.sourceErrors.keys()) {
+          if (
+            key.startsWith('spotify-liked:') &&
+            key !==
+              (spotifyAccountId
+                ? spotifyLikedSnapshotSource(spotifyAccountId)
+                : null)
+          )
+            this.sourceErrors.delete(key)
+        }
+      if (spotify && !spotifyAccountId) {
+        const previous = this.db.get<{ n: number }>(
+          sql`SELECT COUNT(*) AS n FROM contributions WHERE kind = 'spotify_liked'`
+        )
+        const message =
+          spotify.session.message?.() ??
+          (previous?.n
+            ? 'Not signed in to Spotify. Sign in to check liked songs.'
+            : null)
+        if (message) this.sourceErrors.set('spotify-session', message)
+        else this.sourceErrors.delete('spotify-session')
       }
       const fullDiscography = this.db
         .select()
@@ -1053,22 +1080,34 @@ export class Reconciler {
       ([source, message]) => ({
         id: source,
         kind: 'source' as const,
-        title: source.startsWith('liked:')
-          ? 'Liked songs check'
-          : 'Full Discography catalog',
+        title: source.startsWith('spotify')
+          ? 'Spotify liked songs check'
+          : source.startsWith('liked:')
+            ? 'Liked songs check'
+            : 'Full Discography catalog',
         subtitle: null,
         reason: message,
         coverUrl: null,
       })
     )
     const accountId = this.deps.session.accountId()
-    const lastChecked = accountId
-      ? (this.db
-          .select()
-          .from(sourceSnapshots)
-          .where(eq(sourceSnapshots.source, likedSnapshotSource(accountId)))
-          .get()?.lastSuccessAt ?? null)
-      : null
+    const sourceIds = [
+      ...(accountId ? [likedSnapshotSource(accountId)] : []),
+      ...(this.deps.spotify?.session.accountId()
+        ? [spotifyLikedSnapshotSource(this.deps.spotify.session.accountId()!)]
+        : []),
+    ]
+    const successes = sourceIds
+      .map(
+        (source) =>
+          this.db
+            .select()
+            .from(sourceSnapshots)
+            .where(eq(sourceSnapshots.source, source))
+            .get()?.lastSuccessAt
+      )
+      .filter((at): at is string => Boolean(at))
+    const lastChecked = successes.sort().at(-1) ?? null
     return {
       working: Boolean(current) || upNextCount > 0,
       checking: this.checking,
@@ -1108,10 +1147,10 @@ function queueOrder() {
         AND (f.audio_video_id IS NULL OR f.audio_video_id = json_extract(${tracks.match}, '$.catalogVideoId')))
       THEN 1 ELSE 0 END`),
     desc(
-      sql`(SELECT MAX(c.first_seen_at) FROM contributions c WHERE c.track_id = tracks.id AND c.kind = 'liked' AND c.active = 1)`
+      sql`(SELECT MIN(c.first_seen_at) FROM contributions c WHERE c.track_id = tracks.id AND c.kind IN ('liked', 'spotify_liked') AND c.active = 1)`
     ),
     asc(
-      sql`(SELECT MIN(c.liked_position) FROM contributions c WHERE c.track_id = tracks.id AND c.kind = 'liked' AND c.active = 1)`
+      sql`(SELECT MIN(c.liked_position) FROM contributions c WHERE c.track_id = tracks.id AND c.kind IN ('liked', 'spotify_liked') AND c.active = 1)`
     ),
     desc(tracks.year),
     asc(tracks.createdAt),

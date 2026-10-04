@@ -249,3 +249,56 @@ it('validates complete mixed libraries using the eligible count and rejects repe
     'repeated track while paging'
   )
 })
+
+it.each([
+  false,
+  true,
+])('rejects stale token completions after invalidation without overwriting the next account or expiring it, anonymous: %s', async (anonymous) => {
+  let finishOld!: (response: Response) => void
+  let started!: () => void
+  const oldStarted = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  let calls = 0
+  let expired = 0
+  const http = createHttpClient(
+    async (url) => {
+      if (url.includes('secretDict')) return Response.json({ 1: [12] })
+      if (url.includes('server-time'))
+        return Response.json({ serverTime: 1800000000 })
+      if (++calls === 1) {
+        started()
+        return new Promise<Response>((resolve) => {
+          finishOld = resolve
+        })
+      }
+      return Response.json({
+        accessToken: 'account-b',
+        accessTokenExpirationTimestampMs: Date.now() + 3600000,
+        isAnonymous: false,
+      })
+    },
+    Date.now,
+    async () => {}
+  )
+  const token = createSpotifyToken(http, {
+    cookies: async () => 'sp_dc=account',
+    onExpired: () => {
+      expired++
+    },
+  })
+  const old = token.accessToken()
+  await oldStarted
+  token.invalidate()
+  expect((await token.accessToken()).value).toBe('account-b')
+  finishOld(
+    Response.json({
+      accessToken: 'account-a',
+      accessTokenExpirationTimestampMs: Date.now() + 3600000,
+      isAnonymous: anonymous,
+    })
+  )
+  await expect(old).rejects.toThrow('Account changed')
+  expect(expired).toBe(0)
+  expect((await token.accessToken()).value).toBe('account-b')
+})

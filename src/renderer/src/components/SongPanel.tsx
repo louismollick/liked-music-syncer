@@ -181,7 +181,7 @@ export function SongPanel() {
                 )}
               </div>
             )}
-            <Row title="Why it's here">
+            <Row title="Source Contributions">
               {detail.contributions.length === 0 ? (
                 <div className="text-zinc-400">
                   No longer in any Liked Music Library or Full Discography

@@ -80,9 +80,12 @@ export class SpotifySession {
   async refresh(): Promise<SpotifySessionView> {
     const generation = this.gen
     try {
-      if (
-        !(await this.partition.cookies.get({ url: WEB, name: 'sp_dc' })).length
-      ) {
+      const cookies = await this.partition.cookies.get({
+        url: WEB,
+        name: 'sp_dc',
+      })
+      if (generation !== this.gen) return this.view()
+      if (!cookies.length) {
         this.current = { state: 'signed_out', account: null, message: null }
       } else {
         const account = await this.library.account()
@@ -128,7 +131,8 @@ export class SpotifySession {
         },
       })
       this.signInWindow = win
-      const finish = async () => {
+      const finish = async (url: string) => {
+        if (new URL(url).host !== 'open.spotify.com') return
         if (
           (await this.partition.cookies.get({ url: WEB, name: 'sp_dc' }))
             .length &&
@@ -136,9 +140,16 @@ export class SpotifySession {
         )
           win.close()
       }
-      win.webContents.on('did-navigate', () => void finish())
-      win.webContents.on('did-navigate-in-page', () => void finish())
+      win.webContents.on('did-navigate', (_event, url) => void finish(url))
+      win.webContents.on(
+        'did-navigate-in-page',
+        (_event, url) => void finish(url)
+      )
       win.on('closed', () => {
+        if (this.signInWindow !== win) {
+          resolve(this.view())
+          return
+        }
         this.signInWindow = null
         this.gen += 1
         this.token.invalidate()
@@ -152,9 +163,11 @@ export class SpotifySession {
   async signOut(): Promise<SpotifySessionView> {
     this.gen += 1
     this.token.invalidate()
-    this.signInWindow?.close()
-    await this.partition.clearStorageData()
     this.current = { state: 'signed_out', account: null, message: null }
+    const win = this.signInWindow
+    this.signInWindow = null
+    win?.close()
+    await this.partition.clearStorageData()
     return this.emit()
   }
 }

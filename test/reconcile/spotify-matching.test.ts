@@ -217,3 +217,57 @@ it('Spotify-only Refresh looks up its Match again instead of accepting its own s
   expect(h.matcher.calls).toBe(before + 1)
   expect(h.rows()[0].identityKey).toBe('replacement:new-audio')
 })
+
+it('an inactive Spotify contribution does not force its old ID onto a refreshed catalog Recording', async () => {
+  const h = harness()
+  h.account = null
+  const original = release('original', song('old-audio', 'A Song'))
+  h.matcher.matches.set('spotify', {
+    ...releaseMatch(song('source', 'A Song'), original, 'old-audio'),
+    sourceVideoId: null,
+  })
+  await addSpotify(h)
+  await h.start()
+  await h.stop()
+  const track = h.rows()[0]
+  h.db
+    .update(contributions)
+    .set({ active: false })
+    .where(eq(contributions.kind, 'spotify_liked'))
+    .run()
+  const replacement = release(
+    'new-release',
+    song('new-audio', 'Another Recording')
+  )
+  h.catalog.releases.set(replacement.browseId, replacement)
+  h.db
+    .insert(contributions)
+    .values({
+      id: 'catalog',
+      sourceKey: 'catalog:artist:new-release:new-audio',
+      kind: 'catalog',
+      trackId: track.id,
+      sourceVideoId: 'new-audio',
+      releaseId: replacement.browseId,
+      firstSeenAt: 'now',
+      lastSeenAt: 'now',
+      raw: JSON.stringify({
+        kind: 'catalog',
+        artistId: 'artist',
+        release: replacement,
+        track: replacement.tracks[0],
+      }),
+    })
+    .run()
+  const lyrics = vi.spyOn(h.deps.lyrics, 'find').mockResolvedValue({
+    lyrics: null,
+    spotifyTrackId: 'new-lyrics-guess',
+    errors: {},
+  })
+  await runMatch(h.deps, h.rows()[0], run())
+  expect(lyrics.mock.calls[0][0]).toMatchObject({
+    spotifyTrackId: null,
+    spotifyLiked: false,
+  })
+  expect(h.rows()[0].spotifyTrackId).toBe('new-lyrics-guess')
+})

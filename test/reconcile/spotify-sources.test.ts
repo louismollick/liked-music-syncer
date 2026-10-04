@@ -101,3 +101,52 @@ it('requires every configured liked source before marking tracks No Longer Wante
   })
   expect(h.db.select().from(tracks).get()?.state).toBe('pending')
 })
+
+it('shows Spotify source errors in Activity while keeping its last-seen contributions active after sign-out', async () => {
+  const h = harness()
+  let accountId: string | null = 'spotify-account'
+  let failure: Error | null = null
+  h.deps.spotify = {
+    session: { accountId: () => accountId, generation: () => 0 },
+    library: {
+      likedSongs: async () => {
+        if (failure) throw failure
+        return { tracks: [spotifyTrack()], declaredCount: 1 }
+      },
+    },
+  }
+  await h.reconciler.check()
+  const checkedAt = h.reconciler.activity().lastCheckedAt
+  expect(checkedAt).toBeTruthy()
+  failure = new Error('Spotify changed its API: missing library tracks')
+  await h.reconciler.check()
+  expect(h.reconciler.activity().needsAttention).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        title: 'Spotify liked songs check',
+        reason: failure.message,
+      }),
+    ])
+  )
+  expect(
+    h.contributions().find((row) => row.kind === 'spotify_liked')?.active
+  ).toBe(true)
+  accountId = null
+  await h.reconciler.check()
+  const errors = h.reconciler
+    .activity()
+    .needsAttention.filter((item) => item.kind === 'source')
+  expect(errors).toHaveLength(1)
+  expect(errors[0].reason).toContain('Not signed in to Spotify')
+  expect(
+    h.contributions().find((row) => row.kind === 'spotify_liked')?.active
+  ).toBe(true)
+  accountId = 'spotify-account'
+  failure = null
+  await h.reconciler.check()
+  expect(
+    h.reconciler
+      .activity()
+      .needsAttention.filter((item) => item.kind === 'source')
+  ).toEqual([])
+})

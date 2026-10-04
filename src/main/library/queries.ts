@@ -74,8 +74,8 @@ const SONG_SELECT = `
     t.last_error_step,
     (f.track_id IS NOT NULL) AS has_file,
     ${REMOTE_STATE_SQL} AS remote_state,
-    (SELECT MIN(c.first_seen_at) FROM contributions c WHERE c.track_id = t.id AND c.kind = 'liked' AND c.active = 1) AS liked_at,
-    (SELECT MIN(c.liked_position) FROM contributions c WHERE c.track_id = t.id AND c.kind = 'liked' AND c.active = 1) AS liked_pos,
+    (SELECT MIN(c.first_seen_at) FROM contributions c WHERE c.track_id = t.id AND c.kind IN ('liked', 'spotify_liked') AND c.active = 1) AS liked_at,
+    (SELECT MIN(c.liked_position) FROM contributions c WHERE c.track_id = t.id AND c.kind IN ('liked', 'spotify_liked') AND c.active = 1) AS liked_pos,
     EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = t.id AND c.kind = 'catalog' AND c.active = 1) AS has_catalog,
     (SELECT ta.artist_id FROM track_artists ta WHERE ta.track_id = t.id ORDER BY ta.position LIMIT 1) AS artist_id
   FROM tracks t
@@ -172,6 +172,12 @@ export class LibraryQueries {
         `(${REMOTE_STATE_SQL}) = ? AND NOT (t.state = 'no_longer_wanted' AND u.track_id IS NULL)`
       )
       params.push(f.remote)
+    }
+    if (f.likedOn) {
+      where.push(
+        `EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = t.id AND c.kind = ? AND c.active = 1)`
+      )
+      params.push(f.likedOn === 'spotify' ? 'spotify_liked' : 'liked')
     }
     if (f.fullDiscography) {
       where.push(
@@ -280,7 +286,7 @@ export class LibraryQueries {
            SUM(IFNULL(t.duration_seconds, 0)) AS duration,
            (SELECT t2.cover_path FROM tracks t2 WHERE t2.album = t.album AND t2.album_artist = t.album_artist AND t2.cover_path IS NOT NULL LIMIT 1) AS cover_path,
            (SELECT t2.cover_url FROM tracks t2 WHERE t2.album = t.album AND t2.album_artist = t.album_artist AND t2.cover_url IS NOT NULL LIMIT 1) AS cover_url,
-           MAX((SELECT MIN(c.first_seen_at) FROM contributions c WHERE c.track_id = t.id AND c.kind = 'liked' AND c.active = 1)) AS liked_at,
+           MAX((SELECT MIN(c.first_seen_at) FROM contributions c WHERE c.track_id = t.id AND c.kind IN ('liked', 'spotify_liked') AND c.active = 1)) AS liked_at,
            (SELECT ta.artist_id FROM track_artists ta JOIN tracks t3 ON t3.id = ta.track_id WHERE t3.album = t.album AND t3.album_artist = t.album_artist ORDER BY ta.position LIMIT 1) AS artist_id
          FROM tracks t
          LEFT JOIN files f ON f.track_id = t.id
@@ -382,7 +388,7 @@ export class LibraryQueries {
          LEFT JOIN artists a ON a.id = c.artist_id WHERE c.track_id = ? AND c.active = 1 ORDER BY c.first_seen_at`
       )
       .all(id) as Array<{
-      kind: 'liked' | 'catalog'
+      kind: 'liked' | 'spotify_liked' | 'catalog'
       first_seen_at: string
       artist_name: string | null
     }>
@@ -420,8 +426,10 @@ export class LibraryQueries {
         label:
           c.kind === 'liked'
             ? 'Liked on YouTube Music'
-            : `In ${c.artist_name ?? 'an artist'}'s Full Discography`,
-        at: c.kind === 'liked' ? c.first_seen_at : null,
+            : c.kind === 'spotify_liked'
+              ? 'Liked on Spotify'
+              : `In ${c.artist_name ?? 'an artist'}'s Full Discography`,
+        at: c.kind !== 'catalog' ? c.first_seen_at : null,
       })),
       match: {
         catalogVideoId: match?.catalogVideoId ?? null,

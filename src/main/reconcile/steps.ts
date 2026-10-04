@@ -492,11 +492,11 @@ function spotifyLikeId(db: Db, trackId: string): string | null {
     .where(
       and(
         eq(contributions.trackId, trackId),
-        eq(contributions.kind, 'spotify_liked')
+        eq(contributions.kind, 'spotify_liked'),
+        eq(contributions.active, true)
       )
     )
-    .all()
-    .sort((a, b) => Number(b.active) - Number(a.active))[0]
+    .get()
   return row ? (JSON.parse(row.raw) as SpotifyLikedRaw).track.trackId : null
 }
 
@@ -513,7 +513,7 @@ function existingSpotifyMatch(
         ne(tracks.id, currentId),
         or(
           eq(tracks.spotifyTrackId, input.track.trackId),
-          sql`EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = ${tracks.id} AND c.kind IN ('liked', 'spotify_liked'))`
+          sql`EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = ${tracks.id} AND c.kind IN ('liked', 'spotify_liked') AND c.active = 1)`
         )
       )
     )
