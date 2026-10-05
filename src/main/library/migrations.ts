@@ -206,4 +206,18 @@ export const MIGRATIONS: string[] = [
       WHERE lyrics_instrumental(vocal.title) = 0 AND vocal.lyrics_text = tracks.lyrics_text
     );
   `,
+  // 6: Spotify contributions have a track ID in raw, never a YouTube video ID.
+  `
+  CREATE TABLE contributions_new (
+    id TEXT PRIMARY KEY, source_key TEXT NOT NULL, kind TEXT NOT NULL,
+    account_id TEXT, artist_id TEXT, track_id TEXT, source_video_id TEXT,
+    release_id TEXT, liked_position INTEGER, first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, raw TEXT NOT NULL DEFAULT '{}'
+  );
+  INSERT INTO contributions_new SELECT * FROM contributions;
+  DROP TABLE contributions;
+  ALTER TABLE contributions_new RENAME TO contributions;
+  CREATE UNIQUE INDEX contributions_source_key ON contributions(source_key);
+  CREATE INDEX contributions_track ON contributions(track_id);
+  `,
 ]

@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import type { Settings } from '../../shared/ipc'
 import type { AudioDownloader } from '../acquire/audio'
 import { makeSquareCover } from '../acquire/cover'
 import { fetchArtistPage } from '../artist-pages'
 import type { CatalogRelease, YouTubeMusicCatalog } from '../catalog/types'
 import type { ArtistCredit, StepKind } from '../domain'
-
 import {
   copyToStaging,
   exists,
@@ -49,6 +48,11 @@ import {
 import { isInstrumentalTitle } from '../lyrics/query'
 import type { LyricsFinder } from '../lyrics/types'
 import {
+  SpotifyMatchError,
+  selectSpotifyCandidate,
+  spotifyCandidateScore,
+} from '../match/resolve'
+import {
   type Match,
   type Matcher,
   type MatchInput,
@@ -58,13 +62,16 @@ import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
 import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
 import {
+  BOTH_LIKED_SOURCE_ORIGIN,
   CATALOG_SOURCE_ORIGIN,
   changedTagParts,
   fieldDiff,
   readTags,
+  SPOTIFY_LIKED_SOURCE_ORIGIN,
   sha256,
   type TagFields,
   writeTags,
+  YOUTUBE_LIKED_SOURCE_ORIGIN,
 } from '../tags/schema'
 import {
   desiredPath,
@@ -72,7 +79,12 @@ import {
   desiredTagFields,
   parseMatch,
 } from './desired'
-import { type CatalogRaw, checkArtistCatalog, type LikedRaw } from './sources'
+import {
+  type CatalogRaw,
+  checkArtistCatalog,
+  type LikedRaw,
+  type SpotifyLikedRaw,
+} from './sources'
 
 export type { StepKind } from '../domain'
 
@@ -152,9 +164,15 @@ export function sourceOriginFor(
     )
     .all()
   if (rows.length === 0) return undefined
-  return rows.every((row) => row.kind === 'catalog')
-    ? CATALOG_SOURCE_ORIGIN
-    : null
+  const youtube = rows.some((row) => row.kind === 'liked')
+  const spotify = rows.some((row) => row.kind === 'spotify_liked')
+  return youtube && spotify
+    ? BOTH_LIKED_SOURCE_ORIGIN
+    : youtube
+      ? YOUTUBE_LIKED_SOURCE_ORIGIN
+      : spotify
+        ? SPOTIFY_LIKED_SOURCE_ORIGIN
+        : CATALOG_SOURCE_ORIGIN
 }
 
 export function desiredFieldsFor(db: Db, track: TrackRow): TagFields {
@@ -169,7 +187,26 @@ export function desiredFieldsFor(db: Db, track: TrackRow): TagFields {
       .get()
     origin = file ? (parseFields(file).lms?.sourceOrigin ?? null) : null
   }
-  return desiredTagFields(track, coverShaFromPath(track.coverPath), origin)
+  const fields = desiredTagFields(
+    track,
+    coverShaFromPath(track.coverPath),
+    origin
+  )
+  const sources = db
+    .select()
+    .from(contributions)
+    .where(
+      and(eq(contributions.trackId, track.id), eq(contributions.active, true))
+    )
+    .all()
+  const youtube = sources.find((source) => source.kind === 'liked')
+  const spotify = sources.find((source) => source.kind === 'spotify_liked')
+  if (youtube) fields.lms.sourceVideoId = youtube.sourceVideoId
+  if (spotify)
+    fields.lms.spotifyTrackId = (
+      JSON.parse(spotify.raw) as SpotifyLikedRaw
+    ).track.trackId
+  return fields
 }
 
 export function materialDiff(written: TagFields, desired: TagFields): string[] {
@@ -288,6 +325,8 @@ export async function lookUpLyrics(
   run: StepRun
 ) {
   const values = lyricsForRecording(track, match)
+  const spotifyId = spotifyLikeId(deps.db, track.id)
+  values.spotifyTrackId = spotifyId ?? values.spotifyTrackId
   const errors: Record<string, string> = {}
   const settings = deps.settings()
   if (!settings.lyricsEnabled) return { values, errors }
@@ -321,6 +360,7 @@ export async function lookUpLyrics(
               : match.durationSeconds,
           lyricsBrowseId: match.lyricsBrowseId,
           spotifyTrackId: values.spotifyTrackId,
+          spotifyLiked: spotifyId !== null,
         },
         { lyricsServerUrl: settings.lyricsServerUrl.trim() || null },
         run.signal
@@ -334,7 +374,8 @@ export async function lookUpLyrics(
           ])
         )
       )
-      values.spotifyTrackId = found.spotifyTrackId ?? values.spotifyTrackId
+      values.spotifyTrackId =
+        spotifyId ?? found.spotifyTrackId ?? values.spotifyTrackId
       if (found.lyrics) {
         Object.assign(
           values,
@@ -437,15 +478,107 @@ function matchSource(db: Db, trackId: string): ContributionRow | undefined {
     .from(contributions)
     .where(eq(contributions.trackId, trackId))
     .all()
-  const active = rows.filter((row) => row.active)
-  if (active.length)
-    return (
-      active.find((row) => row.kind === 'catalog') ??
-      active.find((row) => row.kind === 'liked')
+  for (const active of [true, false])
+    for (const kind of ['catalog', 'liked', 'spotify_liked']) {
+      const found = rows.find(
+        (row) => row.active === active && row.kind === kind
+      )
+      if (found) return found
+    }
+  return undefined
+}
+
+/** A liked Spotify ID is stronger evidence than a lyrics-search guess. */
+function spotifyLikeId(db: Db, trackId: string): string | null {
+  const row = db
+    .select()
+    .from(contributions)
+    .where(
+      and(
+        eq(contributions.trackId, trackId),
+        eq(contributions.kind, 'spotify_liked'),
+        eq(contributions.active, true)
+      )
     )
+    .get()
+  return row ? (JSON.parse(row.raw) as SpotifyLikedRaw).track.trackId : null
+}
+
+function existingSpotifyMatch(
+  db: Db,
+  input: Extract<MatchInput, { kind: 'spotify' }>,
+  currentId: string
+): Match | null {
+  const nativeNames = new Map(
+    db
+      .select({ channel: artists.channelId, native: artists.nativeName })
+      .from(artists)
+      .all()
+      .flatMap((artist) =>
+        artist.channel ? [[artist.channel, artist.native] as const] : []
+      )
+  )
+  const existing = db
+    .select()
+    .from(tracks)
+    .where(
+      and(
+        ne(tracks.id, currentId),
+        or(
+          eq(tracks.spotifyTrackId, input.track.trackId),
+          sql`EXISTS (SELECT 1 FROM contributions c WHERE c.track_id = ${tracks.id} AND c.kind IN ('liked', 'spotify_liked') AND c.active = 1)`
+        )
+      )
+    )
+    .all()
+  const score = (relaxed: boolean) =>
+    existing.flatMap((track) => {
+      const match = parseMatch(track)
+      if (!match?.release || track.state === 'released' || !match.confirmed)
+        return []
+      const scores = spotifyCandidateScore(
+        input.track,
+        {
+          ...match,
+          durationSeconds: track.durationSeconds ?? match.durationSeconds,
+        },
+        relaxed ? { nativeNames } : undefined
+      )
+      return scores?.exactTitle ? [{ match, ...scores }] : []
+    })
+  let candidates = score(false)
+  if (!candidates.length) candidates = score(true)
+  try {
+    return selectSpotifyCandidate(candidates)
+  } catch (error) {
+    if (error instanceof SpotifyMatchError && error.reason === 'ambiguous')
+      return null
+    throw error
+  }
+}
+
+/** Likes join a known Recording; catalog inputs keep their exact Release Track. */
+function recordingTarget(
+  db: Db,
+  current: TrackRow,
+  match: Match
+): TrackRow | undefined {
+  if (catalogIdentities(db, current.id).length) return undefined
+  const candidates = db
+    .select()
+    .from(tracks)
+    .where(
+      and(
+        ne(tracks.id, current.id),
+        ne(tracks.state, 'released'),
+        sql`json_extract(${tracks.match}, '$.catalogVideoId') = ${match.catalogVideoId}`,
+        sql`json_extract(${tracks.match}, '$.confirmed') = 1`
+      )
+    )
+    .all()
   return (
-    rows.find((row) => row.kind === 'liked') ??
-    rows.find((row) => row.kind === 'catalog')
+    candidates.find((track) => track.identityKey === match.identityKey) ??
+    candidates[0]
   )
 }
 
@@ -482,13 +615,18 @@ function catalogIdentities(db: Db, trackId: string): string[] {
       )
     )
     .all()
-    .map((row) => releaseIdentityKey(row.releaseId ?? '', row.videoId))
+    .map((row) => releaseIdentityKey(row.releaseId ?? '', row.videoId ?? ''))
 }
 
 function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
   const chosen = matchSource(db, track.id)
   if (chosen) {
-    const raw = JSON.parse(chosen.raw) as LikedRaw | CatalogRaw
+    const raw = JSON.parse(chosen.raw) as
+      | LikedRaw
+      | CatalogRaw
+      | SpotifyLikedRaw
+    if (raw.kind === 'spotify_liked')
+      return { kind: 'spotify', track: raw.track }
     if (raw.kind === 'liked') return { kind: 'liked', song: raw.song }
     return {
       kind: 'catalog',
@@ -503,7 +641,7 @@ function matchInputFor(db: Db, track: TrackRow): MatchInput | null {
   return {
     kind: 'liked',
     song: {
-      videoId: match.sourceVideoId,
+      videoId: match.sourceVideoId ?? match.catalogVideoId,
       title: track.title,
       artists: JSON.parse(track.artistCredits) as ArtistCredit[],
       album: track.releaseId
@@ -939,7 +1077,24 @@ async function matchOnce(
     }
   }
   const settings = deps.settings()
-  const match = await deps.matcher.match(input, run.signal)
+  let match =
+    input.kind === 'spotify'
+      ? existingSpotifyMatch(deps.db, input, track.id)
+      : null
+  match ??= await deps.matcher.match(input, run.signal)
+  const recording =
+    input.kind === 'catalog'
+      ? undefined
+      : recordingTarget(deps.db, track, match)
+  const recordingMatch = recording ? parseMatch(recording) : null
+  // Keep a proven Release Track when its Recording used to be Standalone.
+  if (
+    recordingMatch &&
+    recordingMatch.identityKey !== match.identityKey &&
+    (recordingMatch.release || !match.release)
+  )
+    match = recordingMatch
+
   try {
     for (const credit of [...match.artists, ...releaseCredits(match)])
       await fetchArtistPage(deps.db, deps.catalog, credit, run.signal, deps.now)
@@ -966,7 +1121,7 @@ async function matchOnce(
     .all()
     .filter(
       (source) =>
-        releaseIdentityKey(source.releaseId ?? '', source.videoId) !==
+        releaseIdentityKey(source.releaseId ?? '', source.videoId ?? '') !==
         match.identityKey
     )
     .map((source) => source.artistId)
@@ -1002,9 +1157,9 @@ async function matchOnce(
   const errors: Record<string, string> = {}
   // A provider outage must never strip what the track already has.
   let enrichment = {
-    mbRecordingId: track.mbRecordingId,
-    genre: track.genre,
-    isrc: track.isrc,
+    mbRecordingId: (recording ?? track).mbRecordingId,
+    genre: (recording ?? track).genre,
+    isrc: (recording ?? track).isrc,
   }
   try {
     enrichment = await deps.matcher.enrich(match, run.signal)
@@ -1013,7 +1168,12 @@ async function matchOnce(
     errors.musicbrainz = error instanceof Error ? error.message : String(error)
   }
   run.progress(0.6)
-  const lyrics = await lookUpLyrics(deps, track, match, run)
+  const lyrics = await lookUpLyrics(
+    deps,
+    recording ? { ...recording, id: track.id } : track,
+    match,
+    run
+  )
   Object.assign(errors, lyrics.errors)
   run.progress(0.8)
   let coverPath = track.coverPath
@@ -1028,11 +1188,16 @@ async function matchOnce(
 
   const at = iso(deps)
   let survivor = track.id
-  let candidate = deps.db
-    .select()
-    .from(tracks)
-    .where(eq(tracks.identityKey, match.identityKey))
-    .get()
+  const findTarget = (db: Db) =>
+    db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.identityKey, match.identityKey))
+      .get() ??
+    (recording
+      ? db.select().from(tracks).where(eq(tracks.id, recording.id)).get()
+      : undefined)
+  let candidate = findTarget(deps.db)
   if (candidate?.id === track.id) candidate = undefined
   const fileOf = (trackId: string) =>
     deps.db.select().from(files).where(eq(files.trackId, trackId)).get()
@@ -1059,15 +1224,17 @@ async function matchOnce(
     )
       return 'cancelled'
     if (matchSources(db, current.id) !== sourcesBefore) return 'stale'
+    if (
+      recording &&
+      db.select().from(tracks).where(eq(tracks.id, recording.id)).get()
+        ?.match !== recording.match
+    )
+      return 'stale'
     const artistCredits = JSON.stringify(match.artists)
     const names = canonicalTrackNames(db, { ...current, artistCredits }, match)
     if (!names) throw new RetryLaterError('Waiting for artist pages')
     const previousIdentityKey = current.identityKey
-    let target = db
-      .select()
-      .from(tracks)
-      .where(eq(tracks.identityKey, match.identityKey))
-      .get()
+    let target = findTarget(db)
     if (target?.id === current.id) target = undefined
     // A catalog contribution only ever belongs to its own Release Track.
     const required = [
@@ -1118,6 +1285,8 @@ async function matchOnce(
       mergeTracks(db, current, target, at, checks, match.catalogVideoId)
       survivor = target.id
     }
+    lyrics.values.spotifyTrackId =
+      spotifyLikeId(db, survivor) ?? lyrics.values.spotifyTrackId
     const release = match.release
     db.update(tracks)
       .set({

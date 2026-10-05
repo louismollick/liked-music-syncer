@@ -34,6 +34,12 @@ export interface SessionView {
   message: string | null
 }
 
+export interface SpotifySessionView {
+  state: SessionView['state']
+  account: { id: string; name: string; likedCount: number | null } | null
+  message: string | null
+}
+
 export interface ActivityTrackView {
   id: string
   title: string
@@ -83,6 +89,7 @@ export const songFiltersSchema = z.object({
   language: z.string().optional(),
   state: z.enum(['needs_attention', 'no_longer_wanted']).optional(),
   fullDiscography: z.boolean().optional(),
+  likedOn: z.enum(['youtube_music', 'spotify']).optional(),
 })
 export type SongFilters = z.infer<typeof songFiltersSchema>
 
@@ -171,7 +178,7 @@ export interface TrackDetailView {
   song: SongRowView
   artists: Array<{ id: string; name: string }>
   contributions: Array<{
-    kind: 'liked' | 'catalog'
+    kind: 'liked' | 'spotify_liked' | 'catalog'
     label: string
     at: string | null
   }>
@@ -244,6 +251,9 @@ export interface InvokeMap {
   'settings:update': [Partial<Settings>, Settings]
   'settings:recheckLyrics': [void, void]
   'settings:chooseFolder': [void, string | null]
+  'spotify:get': [void, SpotifySessionView]
+  'spotify:signIn': [void, SpotifySessionView]
+  'spotify:signOut': [void, SpotifySessionView]
   'session:get': [void, SessionView]
   'session:signIn': [void, SessionView]
   'session:signOut': [void, SessionView]
@@ -279,6 +289,7 @@ export type InvokeChannel = keyof InvokeMap
 export interface EventMap {
   'activity:changed': ActivityView
   'library:changed': { trackIds: string[] | null }
+  'spotify:changed': SpotifySessionView
   'session:changed': SessionView
   'settings:changed': Settings
 }

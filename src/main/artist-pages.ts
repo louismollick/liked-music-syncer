@@ -72,7 +72,11 @@ function mergeArtists(db: Db, survivorId: string, aliasId: string): void {
     }
     const key =
       row.kind === 'catalog'
-        ? catalogSourceKey(survivorId, row.releaseId ?? '', row.sourceVideoId)
+        ? catalogSourceKey(
+            survivorId,
+            row.releaseId ?? '',
+            row.sourceVideoId ?? ''
+          )
         : row.sourceKey
     const duplicate = db
       .select()

@@ -4,6 +4,39 @@ import { migrate } from '../../src/main/library/db'
 import { MIGRATIONS } from '../../src/main/library/migrations'
 
 describe('migrations', () => {
+  it('preserves contributions and indexes while permitting Spotify rows without a video ID', () => {
+    const sqlite = new Database(':memory:')
+    for (const migration of MIGRATIONS.slice(0, 4)) sqlite.exec(migration)
+    sqlite.pragma('user_version = 4')
+    sqlite.exec(
+      "INSERT INTO contributions (id, source_key, kind, source_video_id, first_seen_at, last_seen_at) VALUES ('youtube', 'ytm-liked:a:v', 'liked', 'v', 'now', 'now')"
+    )
+    migrate(sqlite)
+    sqlite.exec(
+      "INSERT INTO contributions (id, source_key, kind, source_video_id, first_seen_at, last_seen_at) VALUES ('spotify', 'spotify-liked:a:s', 'spotify_liked', NULL, 'now', 'now')"
+    )
+    expect(
+      sqlite
+        .prepare('SELECT id, source_video_id FROM contributions ORDER BY id')
+        .all()
+    ).toEqual([
+      { id: 'spotify', source_video_id: null },
+      { id: 'youtube', source_video_id: 'v' },
+    ])
+    expect(() =>
+      sqlite.exec(
+        "UPDATE contributions SET source_key = 'ytm-liked:a:v' WHERE id = 'spotify'"
+      )
+    ).toThrow('UNIQUE')
+    expect(
+      sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'contributions_track'"
+        )
+        .get()
+    ).toBeTruthy()
+    sqlite.close()
+  })
   it('clears only exact vocal duplicates on instrumental titles and is idempotent', () => {
     const sqlite = new Database(':memory:')
     for (const migration of MIGRATIONS.slice(0, 4)) sqlite.exec(migration)

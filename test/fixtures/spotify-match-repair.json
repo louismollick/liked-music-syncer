@@ -1,0 +1,4988 @@
+[
+  {
+    "source": {
+      "trackId": "1Ek1oOZaKFPYsa4ri0yu4u",
+      "title": "ノーボーイ・ノークライ",
+      "artists": [
+        {
+          "id": "5Grq5bIeD9Vw6JyBiobSdA",
+          "name": "STANCE PUNKS"
+        }
+      ],
+      "album": {
+        "id": "2JKl9ToS8OrZ6bcMZq13gs",
+        "name": "ノーボーイ・ノークライ"
+      },
+      "trackNumber": 1,
+      "durationMs": 214066,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "ノーボーイ・ノークライ STANCE PUNKS": [
+        {
+          "browseId": "MPREb_Vt7P9b42bha",
+          "title": "No Boy No Cry",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_pib4MlQ53c9",
+          "title": "NO BOY NO CRY Karaoke No Guide melody Originally Performed By STANCE PUNKS",
+          "artists": [
+            {
+              "name": "歌っちゃ王",
+              "channelId": "UCe5l9PrFAu0BrlN76f9Nxyg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_8PY6B0hzvUZ",
+          "title": "NO BOY NO CRY KARAOKE Original by STANCE PUNKS",
+          "artists": [
+            {
+              "name": "歌っちゃ王",
+              "channelId": "UCe5l9PrFAu0BrlN76f9Nxyg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_0uNl2F1Aodh",
+          "title": "HOWLING IDOL - Sinenakata Dengekiyarou",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "ノーボーイ・ノークライ STANCE PUNKS ノーボーイ・ノークライ": [
+        {
+          "videoId": "Ssw44LPpEmE",
+          "title": "ノーボーイ・ノークライ - No Boy No Cry",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "No Boy No Cry",
+            "browseId": "MPREb_Vt7P9b42bha"
+          },
+          "durationSeconds": 215,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "q0WxvWWFEi4",
+          "title": "ノーボーイ・ノークライ（アルバム･ヴァージョン） - No Boy No Cry",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "HOWLING IDOL - Sinenakata Dengekiyarou",
+            "browseId": "MPREb_0uNl2F1Aodh"
+          },
+          "durationSeconds": 214,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "czzvS_xAIsU",
+          "title": "あの娘は部屋でパンクを聴いてる - Punk Girl in the Room",
+          "artists": [
+            {
+              "name": "STANCE PUNKS",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "STANCE PUNKS MANIA 2 2010-2023",
+            "browseId": "MPREb_DMhUxH4pfkj"
+          },
+          "durationSeconds": 219,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "WUSS4x1A3DA",
+          "title": "Doors",
+          "artists": [
+            {
+              "name": "STANCE PUNKS",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "changes",
+            "browseId": "MPREb_abeFBjiTZQp"
+          },
+          "durationSeconds": 216,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "0evYwiyDM9E",
+          "title": "プラスチック新世界 - Yoakewa Suicide",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "PEACE&DESTROY",
+            "browseId": "MPREb_rwAhSj7oBZm"
+          },
+          "durationSeconds": 215,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "8V3B8lAyEiw",
+          "title": "コックニーナイト - Cockny'sNight",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "HOWLING IDOL - Sinenakata Dengekiyarou",
+            "browseId": "MPREb_0uNl2F1Aodh"
+          },
+          "durationSeconds": 211,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "ノーボーイ・ノークライ STANCE PUNKS": [
+        {
+          "videoId": "Ssw44LPpEmE",
+          "title": "ノーボーイ・ノークライ - No Boy No Cry",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "No Boy No Cry",
+            "browseId": "MPREb_Vt7P9b42bha"
+          },
+          "durationSeconds": 215,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "q0WxvWWFEi4",
+          "title": "ノーボーイ・ノークライ（アルバム･ヴァージョン） - No Boy No Cry",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "HOWLING IDOL - Sinenakata Dengekiyarou",
+            "browseId": "MPREb_0uNl2F1Aodh"
+          },
+          "durationSeconds": 214,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "WUSS4x1A3DA",
+          "title": "Doors",
+          "artists": [
+            {
+              "name": "STANCE PUNKS",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "changes",
+            "browseId": "MPREb_abeFBjiTZQp"
+          },
+          "durationSeconds": 216,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "8V3B8lAyEiw",
+          "title": "コックニーナイト - Cockny'sNight",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "HOWLING IDOL - Sinenakata Dengekiyarou",
+            "browseId": "MPREb_0uNl2F1Aodh"
+          },
+          "durationSeconds": 211,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "0evYwiyDM9E",
+          "title": "プラスチック新世界 - Yoakewa Suicide",
+          "artists": [
+            {
+              "name": "Stance Punks",
+              "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+            }
+          ],
+          "album": {
+            "name": "PEACE&DESTROY",
+            "browseId": "MPREb_rwAhSj7oBZm"
+          },
+          "durationSeconds": 215,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_Vt7P9b42bha",
+        "title": "No Boy No Cry",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Stance Punks",
+            "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+          }
+        ],
+        "year": 2005,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lamnawiZhVaVu5gZIfV75zuwKXS_6gqz8",
+        "trackCount": 3,
+        "tracks": [
+          {
+            "videoId": "Ssw44LPpEmE",
+            "title": "ノーボーイ・ノークライ - No Boy No Cry",
+            "artists": [
+              {
+                "name": "Stance Punks",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_Vt7P9b42bha",
+              "name": "No Boy No Cry"
+            },
+            "durationSeconds": 215,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_0uNl2F1Aodh",
+        "title": "HOWLING IDOL - Sinenakata Dengekiyarou",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Stance Punks",
+            "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+          }
+        ],
+        "year": 2005,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_l3QAFpUoh3eFgactMjo8AZstTBE9rD6u0",
+        "trackCount": 11,
+        "tracks": [
+          {
+            "videoId": "q0WxvWWFEi4",
+            "title": "ノーボーイ・ノークライ（アルバム･ヴァージョン） - No Boy No Cry",
+            "artists": [
+              {
+                "name": "Stance Punks",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_0uNl2F1Aodh",
+              "name": "HOWLING IDOL - Sinenakata Dengekiyarou"
+            },
+            "durationSeconds": 214,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "8V3B8lAyEiw",
+            "title": "コックニーナイト - Cockny'sNight",
+            "artists": [
+              {
+                "name": "Stance Punks",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_0uNl2F1Aodh",
+              "name": "HOWLING IDOL - Sinenakata Dengekiyarou"
+            },
+            "durationSeconds": 211,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 11,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_DMhUxH4pfkj",
+        "title": "STANCE PUNKS MANIA 2 2010-2023",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "STANCE PUNKS",
+            "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+          }
+        ],
+        "year": 2023,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m-ITqKYXmiVr7m2OgWWRLjWyudrZ6pwsw",
+        "trackCount": 17,
+        "tracks": [
+          {
+            "videoId": "czzvS_xAIsU",
+            "title": "あの娘は部屋でパンクを聴いてる - Punk Girl in the Room",
+            "artists": [
+              {
+                "name": "STANCE PUNKS",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_DMhUxH4pfkj",
+              "name": "STANCE PUNKS MANIA 2 2010-2023"
+            },
+            "durationSeconds": 219,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "pITzqdHbi8w",
+            "title": "Doors",
+            "artists": [
+              {
+                "name": "STANCE PUNKS",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_DMhUxH4pfkj",
+              "name": "STANCE PUNKS MANIA 2 2010-2023"
+            },
+            "durationSeconds": 216,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 15,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_abeFBjiTZQp",
+        "title": "changes",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "STANCE PUNKS",
+            "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mv1UFfad_tNQblAePgwuyuBF-TyqWX89I",
+        "trackCount": 8,
+        "tracks": [
+          {
+            "videoId": "WUSS4x1A3DA",
+            "title": "Doors",
+            "artists": [
+              {
+                "name": "STANCE PUNKS",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_abeFBjiTZQp",
+              "name": "changes"
+            },
+            "durationSeconds": 216,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 8,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_rwAhSj7oBZm",
+        "title": "PEACE&DESTROY",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Stance Punks",
+            "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+          }
+        ],
+        "year": 2008,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_liFBlQlpa4yOe9zuldtjb2DFPfo8d_Jys",
+        "trackCount": 12,
+        "tracks": [
+          {
+            "videoId": "3acz3Y5y7wQ",
+            "title": "真夜中に咲く花 - Mayonaka Ni Saku Hana",
+            "artists": [
+              {
+                "name": "Stance Punks",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_rwAhSj7oBZm",
+              "name": "PEACE&DESTROY"
+            },
+            "durationSeconds": 213,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 8,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "0evYwiyDM9E",
+            "title": "プラスチック新世界 - Yoakewa Suicide",
+            "artists": [
+              {
+                "name": "Stance Punks",
+                "channelId": "UCxaEs_1XMnScfjbz6juImMg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_rwAhSj7oBZm",
+              "name": "PEACE&DESTROY"
+            },
+            "durationSeconds": 215,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "Ssw44LPpEmE"
+    }
+  },
+  {
+    "source": {
+      "trackId": "1BymrzeFs03QuOyC8nO3w7",
+      "title": "flower",
+      "artists": [
+        {
+          "id": "6jTjjAjvYvMYfaqi837p5x",
+          "name": "L'Arc-en-Ciel"
+        }
+      ],
+      "album": {
+        "id": "1GnrW9Luba7DskLyeEqhqS",
+        "name": "True"
+      },
+      "trackNumber": 4,
+      "durationMs": 298266,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "True L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_NMjvylLaBaG",
+          "title": "True",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_CmqG0lVHTS5",
+          "title": "True (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_MqZDYQxqLMc",
+          "title": "The Best of L'Arc-en-Ciel 1994-1998",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_nNf7pmqiqCn",
+          "title": "TWENITY 1991-1996",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_HTDylsyzUDp",
+          "title": "The true life",
+          "artists": [
+            {
+              "name": "Zini Gang",
+              "channelId": "UCaxbAe3jgkvpnerUfZeK6GA"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_rafnCgVEIDB",
+          "title": "pure soul",
+          "artists": [
+            {
+              "name": "GLAY",
+              "channelId": "UCXRmrNzERQzfA_2XI1OzJ9A"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_rHoqQUuLBGe",
+          "title": "Shine",
+          "artists": [
+            {
+              "name": "LUNA SEA",
+              "channelId": "UCkiFOnAxKfoe-yLxSqJ3Qlw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_mx4ZOPFUlca",
+          "title": "Presenting Judy Garland",
+          "artists": [
+            {
+              "name": "Judy Garland",
+              "channelId": "UCtMO_MopGOBYyMpnadNkxfg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_nF9PN435EKw",
+          "title": "IMAGE",
+          "artists": [
+            {
+              "name": "LUNA SEA",
+              "channelId": "UCkiFOnAxKfoe-yLxSqJ3Qlw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_gPA6PcDFPGG",
+          "title": "Salon de jazz sexuel: Guitare del mar, Piano et saxo sexy, Musique de détente douce et sensuelle pour les massages ou faire l'amour, Musique de fond instrumentale pour les moments intimes",
+          "artists": [
+            {
+              "name": "Jazz douce musique d'ambiance",
+              "channelId": "UC4FeqMfsMtk00G9acDCyXJw"
+            },
+            {
+              "name": "Instrumental Jazz Musique D'ambiance",
+              "channelId": "UCRtW29fzIxhKQVyL7xUsHzA"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_LfBhhbnWyrK",
+          "title": "Still Got The Blues",
+          "artists": [
+            {
+              "name": "Gary Moore",
+              "channelId": "UCYDccdJz3j2KVsM8NMebIMw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_HQE4KrdOQ6G",
+          "title": "Friendship is Magic: Songs of Harmony (Music From the Original TV Series) [Italian Version]",
+          "artists": [
+            {
+              "name": "My Little Pony",
+              "channelId": "UCGQB1kmb5HHmT3SaRA7w1WA"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_o0ZH9afo6cA",
+          "title": "Style",
+          "artists": [
+            {
+              "name": "LUNA SEA",
+              "channelId": "UCkiFOnAxKfoe-yLxSqJ3Qlw"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_NMjvylLaBaG",
+        "title": "True",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 1996,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_kOdI7aOUbeQnvf4VOq9BNoZsfn8PUPpJ4",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "JbOJmNIQJMI",
+            "title": "Fare Well",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_NMjvylLaBaG",
+              "name": "True"
+            },
+            "durationSeconds": 298,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "_0Yr5qrMoDw",
+            "title": "flower",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_NMjvylLaBaG",
+              "name": "True"
+            },
+            "durationSeconds": 299,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 4,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "7zfWtqF0_9A",
+            "title": "\"good-morning Hide\"",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_NMjvylLaBaG",
+              "name": "True"
+            },
+            "durationSeconds": 303,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_CmqG0lVHTS5",
+        "title": "True (Remastered 2022)",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lhKlhFUQqhSrT_tkQKY_tWNjjl7HS071k",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "vBBTCvvXsnE",
+            "title": "Fare Well (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_CmqG0lVHTS5",
+              "name": "True (Remastered 2022)"
+            },
+            "durationSeconds": 298,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "O4n0vlYoV_s",
+            "title": "flower (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_CmqG0lVHTS5",
+              "name": "True (Remastered 2022)"
+            },
+            "durationSeconds": 299,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 4,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "atONMf0eyPY",
+            "title": "\"good-morning Hide\" (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_CmqG0lVHTS5",
+              "name": "True (Remastered 2022)"
+            },
+            "durationSeconds": 303,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "_0Yr5qrMoDw"
+    }
+  },
+  {
+    "source": {
+      "trackId": "4BFWM87zjensjLlOjnlNqE",
+      "title": "HONEY - Remastered 2022",
+      "artists": [
+        {
+          "id": "6jTjjAjvYvMYfaqi837p5x",
+          "name": "L'Arc-en-Ciel"
+        }
+      ],
+      "album": {
+        "id": "6Km0eJ6M9NL89fzpHb26iq",
+        "name": "ray (Remastered 2022)"
+      },
+      "trackNumber": 3,
+      "durationMs": 228708,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "ray (Remastered 2022) L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_91WpberEHOv",
+          "title": "ray (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        }
+      ],
+      "ray L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_tnx9pXsT2GR",
+          "title": "ray",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_91WpberEHOv",
+          "title": "ray (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_zzmgRyympyB",
+          "title": "ark",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_WSAfeDqPDhT",
+          "title": "TWENITY 1997-1999",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_N7URPNmbCq4",
+          "title": "Boîte de nuit (Mono Version)",
+          "artists": [
+            {
+              "name": "Ray Tchicoray et son orchestre, Georges Jouvin, Dominique",
+              "channelId": "UCJv6PSDAj0qXS-oBrY-tY8w"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_jkpC3HyVrKu",
+          "title": "Erayzistible",
+          "artists": [
+            {
+              "name": "E-ray",
+              "channelId": "UCKP1_fFh9S0UYpcHVAJG1XQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_o0ZH9afo6cA",
+          "title": "Style",
+          "artists": [
+            {
+              "name": "LUNA SEA",
+              "channelId": "UCkiFOnAxKfoe-yLxSqJ3Qlw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_qz8YLfsWaGm",
+          "title": "ANOTHER STORY",
+          "artists": [
+            {
+              "name": "Janne Da Arc",
+              "channelId": "UCyZtd2oGwHwHsLHSbySX-Xw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_0PQveLeP7aT",
+          "title": "Lunacy",
+          "artists": [
+            {
+              "name": "LUNA SEA",
+              "channelId": "UCkiFOnAxKfoe-yLxSqJ3Qlw"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_91WpberEHOv",
+        "title": "ray (Remastered 2022)",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_kK9Bfv_gHAv5wjLIkryanPJx8VgyFJ_Ag",
+        "trackCount": 11,
+        "tracks": [
+          {
+            "videoId": "Lbq3gklWvIc",
+            "title": "HONEY (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_91WpberEHOv",
+              "name": "ray (Remastered 2022)"
+            },
+            "durationSeconds": 229,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 3,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "BdchUR274uI",
+            "title": "trick (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_91WpberEHOv",
+              "name": "ray (Remastered 2022)"
+            },
+            "durationSeconds": 228,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 9,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_tnx9pXsT2GR",
+        "title": "ray",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 1999,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_l5bz4pXQuFHUk9y5OlBl8D5bBTCRYUiMw",
+        "trackCount": 11,
+        "tracks": [
+          {
+            "videoId": "9S3aqvWKETM",
+            "title": "HONEY",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_tnx9pXsT2GR",
+              "name": "ray"
+            },
+            "durationSeconds": 229,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 3,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "g8pfv9bJ2ys",
+            "title": "trick",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_tnx9pXsT2GR",
+              "name": "ray"
+            },
+            "durationSeconds": 228,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 9,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "Lbq3gklWvIc"
+    }
+  },
+  {
+    "source": {
+      "trackId": "18Z9odGzO4WPtF4FUJzre9",
+      "title": "READY STEADY GO - Remastered 2022",
+      "artists": [
+        {
+          "id": "6jTjjAjvYvMYfaqi837p5x",
+          "name": "L'Arc-en-Ciel"
+        }
+      ],
+      "album": {
+        "id": "57On4WC4VZAEp62QGLeqI3",
+        "name": "SMILE (Remastered 2022)"
+      },
+      "trackNumber": 2,
+      "durationMs": 225356,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "SMILE (Remastered 2022) L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_GjNpOrExiMg",
+          "title": "SMILE (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        }
+      ],
+      "SMILE L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_mvqpUCT8in6",
+          "title": "SMILE",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_GjNpOrExiMg",
+          "title": "SMILE (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_ow7dhr2Lue0",
+          "title": "FACE",
+          "artists": [
+            {
+              "name": "Justin DL",
+              "channelId": "UCwDVjjGF8E_J3fQZfiHu87Q"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_tUIVJu1c8Fg",
+          "title": "Haute couleur",
+          "artists": [
+            {
+              "name": "Pierre Ladouceur",
+              "channelId": "UCk1xfCzjz3xEJgMi52bKYqQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_zs9R3CpJYjk",
+          "title": "Le Sourire de Dieu — The Smile of God",
+          "artists": [
+            {
+              "name": "Les Petits Rêveurs",
+              "channelId": "UCuskTUjxIxjzAz6_Y4avijg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_UTdVudZkYM3",
+          "title": "Background Jazz Combo",
+          "artists": []
+        },
+        {
+          "browseId": "MPREb_Fb6oLtq2vEC",
+          "title": "Amour et Passion",
+          "artists": [
+            {
+              "name": "Daniel Simard",
+              "channelId": "UCFiddgtQ3xeaqAHKvRwwxgA"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_Dbr0vBxsz21",
+          "title": "Time goes on",
+          "artists": [
+            {
+              "name": "Rosalia gox",
+              "channelId": "UCCo2w9oQLJAXKrtZOZxCI_Q"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_X8awhcczSLZ",
+          "title": "Time goes on.",
+          "artists": [
+            {
+              "name": "Aruku Shika",
+              "channelId": "UCuf-n1C0MNVmWrDuNhh8InQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_Cm6SjqIp6sb",
+          "title": "ARCADIA",
+          "artists": [
+            {
+              "name": "Janne Da Arc",
+              "channelId": "UCyZtd2oGwHwHsLHSbySX-Xw"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_GjNpOrExiMg",
+        "title": "SMILE (Remastered 2022)",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mAyj5ZjrRACzoqWMzniR1n8ytx__AA0hs",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "scohx9trwrw",
+            "title": "READY STEADY GO (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_GjNpOrExiMg",
+              "name": "SMILE (Remastered 2022)"
+            },
+            "durationSeconds": 226,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "t6CX9hHUv_c",
+            "title": "Spirit dreams inside (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_GjNpOrExiMg",
+              "name": "SMILE (Remastered 2022)"
+            },
+            "durationSeconds": 225,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_mvqpUCT8in6",
+        "title": "SMILE",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 2004,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_nHYJwG_nqczElo_xtvby3kMF_Zy4XEktU",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "8gE7LxbxvZY",
+            "title": "READY STEADY GO",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_mvqpUCT8in6",
+              "name": "SMILE"
+            },
+            "durationSeconds": 226,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "KaXubz431cY",
+            "title": "Spirit dreams inside",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_mvqpUCT8in6",
+              "name": "SMILE"
+            },
+            "durationSeconds": 224,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "scohx9trwrw"
+    }
+  },
+  {
+    "source": {
+      "trackId": "4eL14qmwVFFgXoOqy9fWOt",
+      "title": "Driver's High - Remastered 2022",
+      "artists": [
+        {
+          "id": "6jTjjAjvYvMYfaqi837p5x",
+          "name": "L'Arc-en-Ciel"
+        }
+      ],
+      "album": {
+        "id": "1yswv9nJISyhKOisp0buDe",
+        "name": "ark (Remastered 2022)"
+      },
+      "trackNumber": 3,
+      "durationMs": 250615,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "ark (Remastered 2022) L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_zzmgRyympyB",
+          "title": "ark",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_yUH9lgKVSqJ",
+          "title": "ark (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_91WpberEHOv",
+          "title": "ray (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        }
+      ],
+      "ark L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_yUH9lgKVSqJ",
+          "title": "ark (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_91WpberEHOv",
+          "title": "ray (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_SNOS4DAm2iJ",
+          "title": "The Fourth Avenue Cafe",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_WSAfeDqPDhT",
+          "title": "TWENITY 1997-1999",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_tnx9pXsT2GR",
+          "title": "ray",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_zzmgRyympyB",
+        "title": "ark",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 1999,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lFNnFv3BsghQJAuB6o52wBSd7y20Up1Go",
+        "trackCount": 11,
+        "tracks": [
+          {
+            "videoId": "sTi-9tFG-6g",
+            "title": "Driver's High",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_zzmgRyympyB",
+              "name": "ark"
+            },
+            "durationSeconds": 251,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 3,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "D4LtCHJ4inw",
+            "title": "What is love",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_zzmgRyympyB",
+              "name": "ark"
+            },
+            "durationSeconds": 254,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_yUH9lgKVSqJ",
+        "title": "ark (Remastered 2022)",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mWNB1IDLw_X7iOd7h-Mt4d1rYEzarUnXs",
+        "trackCount": 11,
+        "tracks": [
+          {
+            "videoId": "P3fNZ2wwLGw",
+            "title": "Driver's High (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_yUH9lgKVSqJ",
+              "name": "ark (Remastered 2022)"
+            },
+            "durationSeconds": 251,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 3,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "d-1nAzE_qPY",
+            "title": "What is love (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_yUH9lgKVSqJ",
+              "name": "ark (Remastered 2022)"
+            },
+            "durationSeconds": 254,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "P3fNZ2wwLGw"
+    }
+  },
+  {
+    "source": {
+      "trackId": "4vWp6itxmwGH9Igtu4lmrX",
+      "title": "Blurry Eyes",
+      "artists": [
+        {
+          "id": "6jTjjAjvYvMYfaqi837p5x",
+          "name": "L'Arc-en-Ciel"
+        }
+      ],
+      "album": {
+        "id": "1oNCb4ZEXESRiq6Xjor5LR",
+        "name": "Tierra"
+      },
+      "trackNumber": 5,
+      "durationMs": 260372,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "Tierra L'Arc-en-Ciel": [
+        {
+          "browseId": "MPREb_GpSLabIyjug",
+          "title": "Tierra",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_7dA05sYiTev",
+          "title": "Tierra (Remastered 2022)",
+          "artists": [
+            {
+              "name": "L'Arc-en-Ciel",
+              "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_GpSLabIyjug",
+        "title": "Tierra",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 1994,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m-1UDRwk8XopYV3gpZhQUNvrwuzIO1Rco",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "J7gAF13LHGg",
+            "title": "All Dead",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_GpSLabIyjug",
+              "name": "Tierra"
+            },
+            "durationSeconds": 258,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "ZWUof4OK7Sw",
+            "title": "Blurry Eyes",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_GpSLabIyjug",
+              "name": "Tierra"
+            },
+            "durationSeconds": 261,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_7dA05sYiTev",
+        "title": "Tierra (Remastered 2022)",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "L'Arc-en-Ciel",
+            "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mqn9Ax-qtv1tH4yVNhzgs5B72PVg3FK3g",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "_oiEWlBxa1U",
+            "title": "All Dead (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_7dA05sYiTev",
+              "name": "Tierra (Remastered 2022)"
+            },
+            "durationSeconds": 258,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "lLy3Hc31gRY",
+            "title": "Blurry Eyes (Remastered 2022)",
+            "artists": [
+              {
+                "name": "L'Arc-en-Ciel",
+                "channelId": "UClOht5v6uPtEgoG_VBP_OIQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_7dA05sYiTev",
+              "name": "Tierra (Remastered 2022)"
+            },
+            "durationSeconds": 261,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "ZWUof4OK7Sw"
+    }
+  },
+  {
+    "source": {
+      "trackId": "0cesSX2mhN0IqJgI5P7C2S",
+      "title": "拍動",
+      "artists": [
+        {
+          "id": "6YLLR3VbmuoGtBLW2YfICn",
+          "name": "水中スピカ"
+        }
+      ],
+      "album": {
+        "id": "0Oef4TAwnpxIPx0YMkjI3q",
+        "name": "拍動"
+      },
+      "trackNumber": 1,
+      "durationMs": 210709,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "拍動 水中スピカ": [
+        {
+          "browseId": "MPREb_qI9caGJXYCz",
+          "title": "Lux",
+          "artists": [
+            {
+              "name": "Suichu Spica",
+              "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "拍動 水中スピカ 拍動": [
+        {
+          "videoId": "C1MEaBZUzmA",
+          "title": "拍動 - Pulsation",
+          "artists": [
+            {
+              "name": "Suichu Spica",
+              "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+            }
+          ],
+          "album": {
+            "name": "Lux",
+            "browseId": "MPREb_qI9caGJXYCz"
+          },
+          "durationSeconds": 212,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "拍動 水中スピカ": [
+        {
+          "videoId": "C1MEaBZUzmA",
+          "title": "拍動 - Pulsation",
+          "artists": [
+            {
+              "name": "Suichu Spica",
+              "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+            }
+          ],
+          "album": {
+            "name": "Lux",
+            "browseId": "MPREb_qI9caGJXYCz"
+          },
+          "durationSeconds": 212,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_qI9caGJXYCz",
+        "title": "Lux",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Suichu Spica",
+            "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+          }
+        ],
+        "year": 2025,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lXux_EW-t3E33LjYnxc6sH9VR2w3sLAzw",
+        "trackCount": 8,
+        "tracks": [
+          {
+            "videoId": "C1MEaBZUzmA",
+            "title": "拍動 - Pulsation",
+            "artists": [
+              {
+                "name": "Suichu Spica",
+                "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_qI9caGJXYCz",
+              "name": "Lux"
+            },
+            "durationSeconds": 212,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UCXRk2GUOlsHwdYTrnU7jtlQ": "水中スピカ"
+    },
+    "originalTitles": {},
+    "expected": {
+      "videoId": "C1MEaBZUzmA"
+    }
+  },
+  {
+    "source": {
+      "trackId": "02mueWjD3ivPqJvzYIOMXm",
+      "title": "Reverb",
+      "artists": [
+        {
+          "id": "6YLLR3VbmuoGtBLW2YfICn",
+          "name": "水中スピカ"
+        }
+      ],
+      "album": {
+        "id": "4FLL8gUESInbt5tKEYzkNS",
+        "name": "Osm"
+      },
+      "trackNumber": 5,
+      "durationMs": 282109,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "Osm 水中スピカ": [
+        {
+          "browseId": "MPREb_JWtEd11l2Ea",
+          "title": "Osm",
+          "artists": [
+            {
+              "name": "Suichu Spica",
+              "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "Reverb 水中スピカ Osm": [
+        {
+          "videoId": "_FfCWvM9_Eo",
+          "title": "Reverb",
+          "artists": [
+            {
+              "name": "Suichu Spica",
+              "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+            }
+          ],
+          "album": {
+            "name": "Osm",
+            "browseId": "MPREb_JWtEd11l2Ea"
+          },
+          "durationSeconds": 283,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "Reverb 水中スピカ": [
+        {
+          "videoId": "_FfCWvM9_Eo",
+          "title": "Reverb",
+          "artists": [
+            {
+              "name": "Suichu Spica",
+              "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+            }
+          ],
+          "album": {
+            "name": "Osm",
+            "browseId": "MPREb_JWtEd11l2Ea"
+          },
+          "durationSeconds": 283,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_JWtEd11l2Ea",
+        "title": "Osm",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Suichu Spica",
+            "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mSvMG4uW-oG1j72Ym7rMBgP8E5oio5W28",
+        "trackCount": 7,
+        "tracks": [
+          {
+            "videoId": "_FfCWvM9_Eo",
+            "title": "Reverb",
+            "artists": [
+              {
+                "name": "Suichu Spica",
+                "channelId": "UCXRk2GUOlsHwdYTrnU7jtlQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_JWtEd11l2Ea",
+              "name": "Osm"
+            },
+            "durationSeconds": 283,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UCXRk2GUOlsHwdYTrnU7jtlQ": "水中スピカ"
+    },
+    "originalTitles": {},
+    "expected": {
+      "videoId": "_FfCWvM9_Eo"
+    }
+  },
+  {
+    "source": {
+      "trackId": "0AvE5QD7mc4nQjzfdPrVVr",
+      "title": "メイズ参上！",
+      "artists": [
+        {
+          "id": "6cjZn2lzLMZNlpW9e86ikA",
+          "name": "メイズ(矢澤りえか・小見川千明・悠木碧・白石涼子)"
+        }
+      ],
+      "album": {
+        "id": "5JtQsZJ4TJMhpS97BzGw9G",
+        "name": "「それでも町は廻っている」エンディングテーマ　メイズ参上！"
+      },
+      "trackNumber": 1,
+      "durationMs": 268052,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "「それでも町は廻っている」エンディングテーマ　メイズ参上！ メイズ(矢澤りえか・小見川千明・悠木碧・白石涼子)": [
+        {
+          "browseId": "MPREb_OHqPEM1JjD3",
+          "title": "And Yet The Town Moves Ending Theme \"Maids Sanjo!\"",
+          "artists": [
+            {
+              "name": "Maids(Rieka Yazawa, Chiaki Omigawa, Aoi Yuki, Ryoko Shiraishi)",
+              "channelId": "UCxG_1NftrZtCtctqbS-aOUg"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "メイズ参上！ メイズ(矢澤りえか・小見川千明・悠木碧・白石涼子) 「それでも町は廻っている」エンディングテーマ　メイズ参上！": [
+        {
+          "videoId": "Xu3ew8Z5660",
+          "title": "メイズ参上！ - Maids Sanjo!",
+          "artists": [
+            {
+              "name": "Maids (Rieka Yazawa, Chiaki Omigawa, Aoi Yuki, Ryoko Shiraishi)",
+              "channelId": "UCxG_1NftrZtCtctqbS-aOUg"
+            }
+          ],
+          "album": {
+            "name": "And Yet The Town Moves Ending Theme \"Maids Sanjo!\"",
+            "browseId": "MPREb_OHqPEM1JjD3"
+          },
+          "durationSeconds": 269,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "B29DjPbPO0Y",
+          "title": "メイズ",
+          "artists": [
+            {
+              "name": "駒形友梨",
+              "channelId": "UCHcNXnXzwM_dobyPf--uEAg"
+            }
+          ],
+          "album": {
+            "name": "〔CORE〕",
+            "browseId": "MPREb_hMD3xdzIox2"
+          },
+          "durationSeconds": 266,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "メイズ参上！ メイズ(矢澤りえか・小見川千明・悠木碧・白石涼子)": [
+        {
+          "videoId": "Xu3ew8Z5660",
+          "title": "メイズ参上！ - Maids Sanjo!",
+          "artists": [
+            {
+              "name": "Maids (Rieka Yazawa, Chiaki Omigawa, Aoi Yuki, Ryoko Shiraishi)",
+              "channelId": "UCxG_1NftrZtCtctqbS-aOUg"
+            }
+          ],
+          "album": {
+            "name": "And Yet The Town Moves Ending Theme \"Maids Sanjo!\"",
+            "browseId": "MPREb_OHqPEM1JjD3"
+          },
+          "durationSeconds": 269,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_OHqPEM1JjD3",
+        "title": "And Yet The Town Moves Ending Theme \"Maids Sanjo!\"",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Maids(Rieka Yazawa, Chiaki Omigawa, Aoi Yuki, Ryoko Shiraishi)",
+            "channelId": "UCxG_1NftrZtCtctqbS-aOUg"
+          }
+        ],
+        "year": 2010,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m7AuZIDFN6mjPwFvMNh3fM6exohqkGXC4",
+        "trackCount": 2,
+        "tracks": [
+          {
+            "videoId": "Xu3ew8Z5660",
+            "title": "メイズ参上！ - Maids Sanjo!",
+            "artists": [
+              {
+                "name": "Maids(Rieka Yazawa, Chiaki Omigawa, Aoi Yuki, Ryoko Shiraishi)",
+                "channelId": "UCxG_1NftrZtCtctqbS-aOUg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_OHqPEM1JjD3",
+              "name": "And Yet The Town Moves Ending Theme \"Maids Sanjo!\""
+            },
+            "durationSeconds": 269,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_hMD3xdzIox2",
+        "title": "〔CORE〕",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "駒形友梨",
+            "channelId": "UCHcNXnXzwM_dobyPf--uEAg"
+          }
+        ],
+        "year": 2018,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mdf9kzCvwVffKJsk7wm-PxZrPAJMkQupw",
+        "trackCount": 7,
+        "tracks": [
+          {
+            "videoId": "B29DjPbPO0Y",
+            "title": "メイズ",
+            "artists": [
+              {
+                "name": "駒形友梨",
+                "channelId": "UCHcNXnXzwM_dobyPf--uEAg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_hMD3xdzIox2",
+              "name": "〔CORE〕"
+            },
+            "durationSeconds": 266,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "e4CayvusKME",
+            "title": "Talk 2 Night",
+            "artists": [
+              {
+                "name": "駒形友梨",
+                "channelId": "UCHcNXnXzwM_dobyPf--uEAg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_hMD3xdzIox2",
+              "name": "〔CORE〕"
+            },
+            "durationSeconds": 266,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 7,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UCxG_1NftrZtCtctqbS-aOUg": "メイズ（矢澤りえか・小見川千明・悠木碧・白石涼子）",
+      "UCHcNXnXzwM_dobyPf--uEAg": "駒形友梨"
+    },
+    "originalTitles": {},
+    "expected": {
+      "videoId": "Xu3ew8Z5660"
+    }
+  },
+  {
+    "source": {
+      "trackId": "1UQkdcHjg13HiAXeVfOjmk",
+      "title": "Party!!",
+      "artists": [
+        {
+          "id": "4SJ7qRgJYNXB9Yttzs4aSa",
+          "name": "Ryokuoushoku Shakai"
+        }
+      ],
+      "album": {
+        "id": "0BzdZCI8stoC86McgK9GWZ",
+        "name": "Party!!"
+      },
+      "trackNumber": 1,
+      "durationMs": 258413,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "Party!! Ryokuoushoku Shakai": [
+        {
+          "browseId": "MPREb_CGGVs4KUFxU",
+          "title": "Party!!",
+          "artists": [
+            {
+              "name": "Ryokuoushoku Shakai",
+              "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_3F1XrooN9ux",
+          "title": "Party!!",
+          "artists": [
+            {
+              "name": "Ryokuoushoku Shakai",
+              "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_opENoFNGXlu",
+          "title": "Party!! (Karaoke) [Ryokuoushoku Shakai]",
+          "artists": []
+        },
+        {
+          "browseId": "MPREb_seNshRrbpOG",
+          "title": "Channel U",
+          "artists": [
+            {
+              "name": "Ryokuoushoku Shakai",
+              "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_RgCCjyO3pLt",
+          "title": "Channel Us 2025 Live at Tokyo Metropolitan Gymnasium",
+          "artists": [
+            {
+              "name": "Ryokuoushoku Shakai",
+              "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_DOhs4jCpjjf",
+          "title": "Actor",
+          "artists": [
+            {
+              "name": "Ryokuoushoku Shakai",
+              "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_CGGVs4KUFxU",
+        "title": "Party!!",
+        "kindLabel": "EP",
+        "artists": [
+          {
+            "name": "Ryokuoushoku Shakai",
+            "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+          }
+        ],
+        "year": 2024,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mnx_eFroedsxZyd6SWzPGifvCzcB8s3Ck",
+        "trackCount": 4,
+        "tracks": [
+          {
+            "videoId": "hlqQuP74NCI",
+            "title": "Party!!",
+            "artists": [
+              {
+                "name": "Ryokuoushoku Shakai",
+                "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_CGGVs4KUFxU",
+              "name": "Party!!"
+            },
+            "durationSeconds": 259,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "mALIw0k07Ws",
+            "title": "Party!! (Instrumental)",
+            "artists": [
+              {
+                "name": "Ryokuoushoku Shakai",
+                "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_CGGVs4KUFxU",
+              "name": "Party!!"
+            },
+            "durationSeconds": 259,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 3,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_3F1XrooN9ux",
+        "title": "Party!!",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Ryokuoushoku Shakai",
+            "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+          }
+        ],
+        "year": 2024,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_ngHLHc8ZaynUo9IxwCRhF0sMWcB7XA220",
+        "trackCount": 1,
+        "tracks": [
+          {
+            "videoId": "lB_dmG4DsgM",
+            "title": "Party!!",
+            "artists": [
+              {
+                "name": "Ryokuoushoku Shakai",
+                "channelId": "UCiSRuO0id8dgpgSE1zutE7Q"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_3F1XrooN9ux",
+              "name": "Party!!"
+            },
+            "durationSeconds": 259,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "reason": "ambiguous"
+    }
+  },
+  {
+    "source": {
+      "trackId": "60H06Uwpf1K7ZSzIPXloZr",
+      "title": "suddenly",
+      "artists": [
+        {
+          "id": "6oCeoRIeqwZAgoaNOv8IyB",
+          "name": "Spangle Call Lilli Line"
+        }
+      ],
+      "album": {
+        "id": "2WQwITVOBHDt6YzUa2tSnt",
+        "name": "Ampersand"
+      },
+      "trackNumber": 2,
+      "durationMs": 289560,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "Ampersand Spangle Call Lilli Line": [
+        {
+          "browseId": "MPREb_hnzJ1jMMk2c",
+          "title": "Ampersand",
+          "artists": [
+            {
+              "name": "Spangle call Lilli line",
+              "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_ZYDUY2a3kOj",
+          "title": "Isolation",
+          "artists": [
+            {
+              "name": "Spangle call Lilli line",
+              "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "suddenly Spangle Call Lilli Line Ampersand": [
+        {
+          "videoId": "uG8o11lCEjk",
+          "title": "someone in the flower",
+          "artists": [
+            {
+              "name": "Spangle call Lilli line",
+              "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+            }
+          ],
+          "album": {
+            "name": "someone in the flower",
+            "browseId": "MPREb_9LZRltAm4q9"
+          },
+          "durationSeconds": 292,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "4UJDznDQMb4",
+          "title": "Roam in Octave",
+          "artists": [
+            {
+              "name": "Spangle call Lilli line",
+              "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+            }
+          ],
+          "album": {
+            "name": "Isolation",
+            "browseId": "MPREb_ZYDUY2a3kOj"
+          },
+          "durationSeconds": 285,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "suddenly Spangle Call Lilli Line": [
+        {
+          "videoId": "uG8o11lCEjk",
+          "title": "someone in the flower",
+          "artists": [
+            {
+              "name": "Spangle call Lilli line",
+              "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+            }
+          ],
+          "album": {
+            "name": "someone in the flower",
+            "browseId": "MPREb_9LZRltAm4q9"
+          },
+          "durationSeconds": 292,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_hnzJ1jMMk2c",
+        "title": "Ampersand",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Spangle call Lilli line",
+            "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+          }
+        ],
+        "year": 2023,
+        "thumbnailUrl": null,
+        "audioPlaylistId": null,
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "AuM3qoOJcGg",
+            "title": "suddenly",
+            "artists": [
+              {
+                "name": "Spangle call Lilli line",
+                "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_hnzJ1jMMk2c",
+              "name": "Ampersand"
+            },
+            "durationSeconds": 290,
+            "videoType": null,
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": false
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_9LZRltAm4q9",
+        "title": "someone in the flower",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Spangle call Lilli line",
+            "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+          }
+        ],
+        "year": 2026,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m8u1QYt4FNU_l_fN95Kz4R9k_PsWLJ0lc",
+        "trackCount": 1,
+        "tracks": [
+          {
+            "videoId": "uG8o11lCEjk",
+            "title": "someone in the flower",
+            "artists": [
+              {
+                "name": "Spangle call Lilli line",
+                "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_9LZRltAm4q9",
+              "name": "someone in the flower"
+            },
+            "durationSeconds": 292,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_ZYDUY2a3kOj",
+        "title": "Isolation",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Spangle call Lilli line",
+            "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+          }
+        ],
+        "year": 2008,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lk3gGA4cjMZkjYG1UITStyBEF0AasJjLs",
+        "trackCount": 8,
+        "tracks": [
+          {
+            "videoId": "4UJDznDQMb4",
+            "title": "Roam in Octave",
+            "artists": [
+              {
+                "name": "Spangle call Lilli line",
+                "channelId": "UCWf41BXU6-_Hmf0w_vZeWow"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_ZYDUY2a3kOj",
+              "name": "Isolation"
+            },
+            "durationSeconds": 285,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "reason": "unavailable"
+    }
+  },
+  {
+    "source": {
+      "trackId": "5lB7phjWexiv38Ika0IUI3",
+      "title": "ヘッドライト花火",
+      "artists": [
+        {
+          "id": "4nDSmohFDEuowSQQjTAStH",
+          "name": "CARAMEL CANDiD"
+        }
+      ],
+      "album": {
+        "id": "7CG3RHRZK0IiU4ahZdvQGl",
+        "name": "ヘッドライト花火"
+      },
+      "trackNumber": 1,
+      "durationMs": 247000,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "ヘッドライト花火 CARAMEL CANDiD": [
+        {
+          "browseId": "MPREb_kl4PwMHZ7Ye",
+          "title": "Headlight Hanabi",
+          "artists": [
+            {
+              "name": "CARAMEL CANDiD",
+              "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_jf0l4ooKlVJ",
+          "title": "Not Heaven, Nor Hell",
+          "artists": [
+            {
+              "name": "CARAMEL CANDiD",
+              "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "ヘッドライト花火 CARAMEL CANDiD ヘッドライト花火": [
+        {
+          "videoId": "Maxfki-Sz6A",
+          "title": "ヘッドライト花火 - Headlight Hanabi",
+          "artists": [
+            {
+              "name": "CARAMEL CANDiD",
+              "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+            }
+          ],
+          "album": {
+            "name": "Headlight Hanabi",
+            "browseId": "MPREb_kl4PwMHZ7Ye"
+          },
+          "durationSeconds": 247,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "EcTxVTWZ7iY",
+          "title": "ヘッドライト花火 - Headlight Fireworks",
+          "artists": [
+            {
+              "name": "CARAMEL CANDiD",
+              "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+            }
+          ],
+          "album": {
+            "name": "Not Heaven, Nor Hell",
+            "browseId": "MPREb_jf0l4ooKlVJ"
+          },
+          "durationSeconds": 248,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "OIHstEYXlAc",
+          "title": "夜空に咲いた約束＜花火＞ - A promise that bloomed in the night sky",
+          "artists": [
+            {
+              "name": "Caramel",
+              "channelId": "UCeq6IvVqwfO9_ODvAWLj9Ng"
+            }
+          ],
+          "album": {
+            "name": "A promise that bloomed in the night sky",
+            "browseId": "MPREb_eNxvigbYny4"
+          },
+          "durationSeconds": 245,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "ヘッドライト花火 CARAMEL CANDiD": [
+        {
+          "videoId": "Maxfki-Sz6A",
+          "title": "ヘッドライト花火 - Headlight Hanabi",
+          "artists": [
+            {
+              "name": "CARAMEL CANDiD",
+              "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+            }
+          ],
+          "album": {
+            "name": "Headlight Hanabi",
+            "browseId": "MPREb_kl4PwMHZ7Ye"
+          },
+          "durationSeconds": 247,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "EcTxVTWZ7iY",
+          "title": "ヘッドライト花火 - Headlight Fireworks",
+          "artists": [
+            {
+              "name": "CARAMEL CANDiD",
+              "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+            }
+          ],
+          "album": {
+            "name": "Not Heaven, Nor Hell",
+            "browseId": "MPREb_jf0l4ooKlVJ"
+          },
+          "durationSeconds": 248,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_kl4PwMHZ7Ye",
+        "title": "Headlight Hanabi",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "CARAMEL CANDiD",
+            "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+          }
+        ],
+        "year": 2023,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_nSNhdow_qHJ4FIusArl_COlNBX9eoXtsQ",
+        "trackCount": 1,
+        "tracks": [
+          {
+            "videoId": "Maxfki-Sz6A",
+            "title": "ヘッドライト花火 - Headlight Hanabi",
+            "artists": [
+              {
+                "name": "CARAMEL CANDiD",
+                "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_kl4PwMHZ7Ye",
+              "name": "Headlight Hanabi"
+            },
+            "durationSeconds": 247,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_jf0l4ooKlVJ",
+        "title": "Not Heaven, Nor Hell",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "CARAMEL CANDiD",
+            "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+          }
+        ],
+        "year": 2025,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_nApVqPpoXutQedTWeJm2oeUAD0V7JdljA",
+        "trackCount": 11,
+        "tracks": [
+          {
+            "videoId": "EcTxVTWZ7iY",
+            "title": "ヘッドライト花火 - Headlight Fireworks",
+            "artists": [
+              {
+                "name": "CARAMEL CANDiD",
+                "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_jf0l4ooKlVJ",
+              "name": "Not Heaven, Nor Hell"
+            },
+            "durationSeconds": 248,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "X7csmqtSTT4",
+            "title": "短編小説 - Short Story",
+            "artists": [
+              {
+                "name": "CARAMEL CANDiD",
+                "channelId": "UC1dLBWBxnwqyNRAH4cODNSw"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_jf0l4ooKlVJ",
+              "name": "Not Heaven, Nor Hell"
+            },
+            "durationSeconds": 244,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 7,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_eNxvigbYny4",
+        "title": "A promise that bloomed in the night sky",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Caramel",
+            "channelId": "UCeq6IvVqwfO9_ODvAWLj9Ng"
+          }
+        ],
+        "year": 2026,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lYvLpbQ1Oa4AxUGhZZLGufrV4d14FEFn8",
+        "trackCount": 1,
+        "tracks": [
+          {
+            "videoId": "OIHstEYXlAc",
+            "title": "夜空に咲いた約束＜花火＞ - A promise that bloomed in the night sky",
+            "artists": [
+              {
+                "name": "Caramel",
+                "channelId": "UCeq6IvVqwfO9_ODvAWLj9Ng"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_eNxvigbYny4",
+              "name": "A promise that bloomed in the night sky"
+            },
+            "durationSeconds": 245,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "reason": "ambiguous"
+    }
+  },
+  {
+    "source": {
+      "trackId": "2UsfwQhyARwbtdfjiS3Jxa",
+      "title": "Bakaneji",
+      "artists": [
+        {
+          "id": "6LkAYCA4LUIeBJlu4BiaRx",
+          "name": "KIWIROLL"
+        }
+      ],
+      "album": {
+        "id": "592durBjV306wNo5vfS0eO",
+        "name": "Squeeze (2022 Remaster)"
+      },
+      "trackNumber": 3,
+      "durationMs": 215000,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "Squeeze (2022 Remaster) KIWIROLL": [],
+      "Squeeze KIWIROLL": []
+    },
+    "songs": {
+      "Bakaneji KIWIROLL Squeeze (2022 Remaster)": [
+        {
+          "videoId": "SOtZcjT03XQ",
+          "title": "バカネジ - Bakaneji",
+          "artists": [
+            {
+              "name": "KIWIROLL",
+              "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+            }
+          ],
+          "album": {
+            "name": "Bakaneji",
+            "browseId": "MPREb_qWAPgfsbeh0"
+          },
+          "durationSeconds": 217,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "EHQgf1282M4",
+          "title": "バカネジ - Bakaneji",
+          "artists": [
+            {
+              "name": "KIWIROLL",
+              "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+            }
+          ],
+          "album": {
+            "name": "Kiwiroll Anthology II",
+            "browseId": "MPREb_OOTR0ADTVwi"
+          },
+          "durationSeconds": 215,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "Bakaneji KIWIROLL": [
+        {
+          "videoId": "SOtZcjT03XQ",
+          "title": "バカネジ - Bakaneji",
+          "artists": [
+            {
+              "name": "KIWIROLL",
+              "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+            }
+          ],
+          "album": {
+            "name": "Bakaneji",
+            "browseId": "MPREb_qWAPgfsbeh0"
+          },
+          "durationSeconds": 217,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "EHQgf1282M4",
+          "title": "バカネジ - Bakaneji",
+          "artists": [
+            {
+              "name": "KIWIROLL",
+              "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+            }
+          ],
+          "album": {
+            "name": "Kiwiroll Anthology II",
+            "browseId": "MPREb_OOTR0ADTVwi"
+          },
+          "durationSeconds": 215,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_qWAPgfsbeh0",
+        "title": "Bakaneji",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "KIWIROLL",
+            "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+          }
+        ],
+        "year": 2000,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m0HQI4HwzvZmx1z-0qVJJAGxzgzerUhbM",
+        "trackCount": 3,
+        "tracks": [
+          {
+            "videoId": "SOtZcjT03XQ",
+            "title": "バカネジ - Bakaneji",
+            "artists": [
+              {
+                "name": "KIWIROLL",
+                "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_qWAPgfsbeh0",
+              "name": "Bakaneji"
+            },
+            "durationSeconds": 217,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_OOTR0ADTVwi",
+        "title": "Kiwiroll Anthology II",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "KIWIROLL",
+            "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+          }
+        ],
+        "year": 2008,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mQ-WiS08chBzSDgpq8blRhFpn1nC0Ql3k",
+        "trackCount": 21,
+        "tracks": [
+          {
+            "videoId": "EHQgf1282M4",
+            "title": "バカネジ - Bakaneji",
+            "artists": [
+              {
+                "name": "KIWIROLL",
+                "channelId": "UC7QMAG4dHjS2qNdQbl8kWOQ"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_OOTR0ADTVwi",
+              "name": "Kiwiroll Anthology II"
+            },
+            "durationSeconds": 215,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 3,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "reason": "ambiguous"
+    }
+  },
+  {
+    "source": {
+      "trackId": "6lkJKbOu7COoTKAqpC7xyR",
+      "title": "Suicide of the 21st century",
+      "artists": [
+        {
+          "id": "2bQl2eVUqMrlo9oncfmwtF",
+          "name": "0.8Syooogeki"
+        }
+      ],
+      "album": {
+        "id": "0Biieu4eDMwmS5K8XmTCaH",
+        "name": "ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB"
+      },
+      "trackNumber": 2,
+      "durationMs": 140813,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB 0.8Syooogeki": [
+        {
+          "browseId": "MPREb_PGuPevNfVE3",
+          "title": "ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB",
+          "artists": [
+            {
+              "name": "0.8byou to syogeki.",
+              "channelId": "UCU7w_EB2j1ATS1-NPXoE_vg"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "Suicide of the 21st century 0.8Syooogeki ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB": [
+        {
+          "videoId": "Tay5wEGfxuI",
+          "title": "Suicide of the 21st century",
+          "artists": [
+            {
+              "name": "0.8byou to syogeki.",
+              "channelId": "UCU7w_EB2j1ATS1-NPXoE_vg"
+            }
+          ],
+          "album": {
+            "name": "ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB",
+            "browseId": "MPREb_PGuPevNfVE3"
+          },
+          "durationSeconds": 141,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "Suicide of the 21st century 0.8Syooogeki": [
+        {
+          "videoId": "Tay5wEGfxuI",
+          "title": "Suicide of the 21st century",
+          "artists": [
+            {
+              "name": "0.8byou to syogeki.",
+              "channelId": "UCU7w_EB2j1ATS1-NPXoE_vg"
+            }
+          ],
+          "album": {
+            "name": "ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB",
+            "browseId": "MPREb_PGuPevNfVE3"
+          },
+          "durationSeconds": 141,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_PGuPevNfVE3",
+        "title": "ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB",
+        "kindLabel": "EP",
+        "artists": [
+          {
+            "name": "0.8byou to syogeki.",
+            "channelId": "UCU7w_EB2j1ATS1-NPXoE_vg"
+          }
+        ],
+        "year": 2010,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_nUb_uVc7AzhDfP73K3yVcumOVn7tBgYEY",
+        "trackCount": 4,
+        "tracks": [
+          {
+            "videoId": "Tay5wEGfxuI",
+            "title": "Suicide of the 21st century",
+            "artists": [
+              {
+                "name": "0.8byou to syogeki.",
+                "channelId": "UCU7w_EB2j1ATS1-NPXoE_vg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_PGuPevNfVE3",
+              "name": "ESUNOFANKYDOFUTOEFUSUKICAMCAMCULB"
+            },
+            "durationSeconds": 141,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UCU7w_EB2j1ATS1-NPXoE_vg": "0.8秒と衝撃。"
+    },
+    "originalTitles": {},
+    "expected": {
+      "reason": "no_match"
+    }
+  },
+  {
+    "source": {
+      "trackId": "2zYBRyHAy6dv1wb53JXFD7",
+      "title": "Laputa",
+      "artists": [
+        {
+          "id": "4KEHIUSoWCcqrk8AddTE1O",
+          "name": "Panchiko"
+        }
+      ],
+      "album": {
+        "id": "2MASm01cgG0a0CgioQpe6Q",
+        "name": "D>E>A>T>H>M>E>T>A>L"
+      },
+      "trackNumber": 3,
+      "durationMs": 163544,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "D>E>A>T>H>M>E>T>A>L Panchiko": [
+        {
+          "browseId": "MPREb_NgSjYZv0G0H",
+          "title": "D>E>A>T>H>M>E>T>A>L",
+          "artists": [
+            {
+              "name": "Panchiko",
+              "channelId": "UCKGudnGAtpF_E9pDKWtHpSg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_QtUmhSIcGhM",
+          "title": "D>E>A>T>H>M>E>T>A>L",
+          "artists": [
+            {
+              "name": "Panchiko",
+              "channelId": "UCKGudnGAtpF_E9pDKWtHpSg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_BrKoTX5Yha3",
+          "title": "Instrumental Hip Hop",
+          "artists": [
+            {
+              "name": "Type Beat",
+              "channelId": "UCtrU04llbZtZy6fartVNxow"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_NgSjYZv0G0H",
+        "title": "D>E>A>T>H>M>E>T>A>L",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Panchiko",
+            "channelId": "UCKGudnGAtpF_E9pDKWtHpSg"
+          }
+        ],
+        "year": 2000,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_muddqwi9_ZuvD8DrgG3Yy9tCsm8KdKMyM",
+        "trackCount": 11,
+        "tracks": [
+          {
+            "videoId": "iT6_UhWEP4Q",
+            "title": "Laputa",
+            "artists": [
+              {
+                "name": "Panchiko",
+                "channelId": "UCKGudnGAtpF_E9pDKWtHpSg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_NgSjYZv0G0H",
+              "name": "D>E>A>T>H>M>E>T>A>L"
+            },
+            "durationSeconds": 164,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 3,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "ocibcqhJ1bg",
+            "title": "Sodium Chloride",
+            "artists": [
+              {
+                "name": "Panchiko",
+                "channelId": "UCKGudnGAtpF_E9pDKWtHpSg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_NgSjYZv0G0H",
+              "name": "D>E>A>T>H>M>E>T>A>L"
+            },
+            "durationSeconds": 164,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 6,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "cmgoyPhUpJg",
+            "title": "Laputa_R>O>T",
+            "artists": [
+              {
+                "name": "Panchiko",
+                "channelId": "UCKGudnGAtpF_E9pDKWtHpSg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_NgSjYZv0G0H",
+              "name": "D>E>A>T>H>M>E>T>A>L"
+            },
+            "durationSeconds": 165,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_QtUmhSIcGhM",
+        "title": "D>E>A>T>H>M>E>T>A>L",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Panchiko",
+            "channelId": "UCKGudnGAtpF_E9pDKWtHpSg"
+          }
+        ],
+        "year": 2026,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_nlvMeSAf9Yw4syyW3m2gUwADb6bgsBnvo",
+        "trackCount": 1,
+        "tracks": []
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "iT6_UhWEP4Q"
+    }
+  },
+  {
+    "source": {
+      "trackId": "4tYahtb3rV9D65dojBDWBy",
+      "title": "海ファズ",
+      "artists": [
+        {
+          "id": "2J2ulUwLz2ItsDwB5V4LxU",
+          "name": "Stereo Type"
+        }
+      ],
+      "album": {
+        "id": "3kjLrCvrOLAyy0jgQDaT6S",
+        "name": "Tokyo Blue"
+      },
+      "trackNumber": 4,
+      "durationMs": 316786,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "Tokyo Blue Stereo Type": [
+        {
+          "browseId": "MPREb_3Oh52aICQHj",
+          "title": "Tokyo Blue",
+          "artists": [
+            {
+              "name": "stereo type",
+              "channelId": "UC0hVlCULK1oLFyvec3dmqMw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_9Hg28kW64J0",
+          "title": "Epic Phonk Songs Hard Heavy Bass Aggressive Sigma Phonk Beats",
+          "artists": [
+            {
+              "name": "Best Phonk Music",
+              "channelId": "UCtF33rp7MGelfoGLSpIdFDg"
+            },
+            {
+              "name": "Phonk Music 2023",
+              "channelId": "UC53SLi6_c7FJ1E68HC9Dl4A"
+            },
+            {
+              "name": "Phonk Christmas Music",
+              "channelId": "UCRguRDtVPv4eh0lExFWxhzg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_Y5ebh1nnQs5",
+          "title": "Bad",
+          "artists": [
+            {
+              "name": "Michael Jackson",
+              "channelId": "UCoIOOL7QKuBhQHVKL8y7BEQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_Ipdbt81GjO7",
+          "title": "Brazilian Phonk Music To Gym To",
+          "artists": [
+            {
+              "name": "Best Phonk Music",
+              "channelId": "UCtF33rp7MGelfoGLSpIdFDg"
+            },
+            {
+              "name": "Phonk Music 2023",
+              "channelId": "UC53SLi6_c7FJ1E68HC9Dl4A"
+            },
+            {
+              "name": "Phonk Christmas Music",
+              "channelId": "UCRguRDtVPv4eh0lExFWxhzg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_sQA3GaVcrhW",
+          "title": "Freestyling Beats",
+          "artists": [
+            {
+              "name": "Type Beat",
+              "channelId": "UCtrU04llbZtZy6fartVNxow"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_82jtrjhrsd3",
+          "title": "B.o.B Presents: The Adventures of Bobby Ray",
+          "artists": [
+            {
+              "name": "B.o.B",
+              "channelId": "UCU1JusGzZe0Msn79JB3g46w"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_dn44NLn7gxX",
+          "title": "Tomahawk Technique",
+          "artists": [
+            {
+              "name": "Sean Paul",
+              "channelId": "UCnCNNA05VZcH8wVJYtC-6ew"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "海ファズ Stereo Type Tokyo Blue": [
+        {
+          "videoId": "Vi0u6MMk3zc",
+          "title": "Umifuzz",
+          "artists": [
+            {
+              "name": "stereo type",
+              "channelId": "UC0hVlCULK1oLFyvec3dmqMw"
+            }
+          ],
+          "album": {
+            "name": "Tokyo Blue",
+            "browseId": "MPREb_3Oh52aICQHj"
+          },
+          "durationSeconds": 317,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "海ファズ Stereo Type": [
+        {
+          "videoId": "Vi0u6MMk3zc",
+          "title": "Umifuzz",
+          "artists": [
+            {
+              "name": "stereo type",
+              "channelId": "UC0hVlCULK1oLFyvec3dmqMw"
+            }
+          ],
+          "album": {
+            "name": "Tokyo Blue",
+            "browseId": "MPREb_3Oh52aICQHj"
+          },
+          "durationSeconds": 317,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "F2nM4a_VQAc",
+          "title": "午前二時からのドライブ",
+          "artists": [
+            {
+              "name": "stereo type",
+              "channelId": "UCqCWko3MDWdtbhyyYxaNcdw"
+            }
+          ],
+          "album": {
+            "name": "Real That She Knows",
+            "browseId": "MPREb_N7DPiLhTkox"
+          },
+          "durationSeconds": 321,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_3Oh52aICQHj",
+        "title": "Tokyo Blue",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "stereo type",
+            "channelId": "UC0hVlCULK1oLFyvec3dmqMw"
+          }
+        ],
+        "year": 2012,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_kFsWCUKnJBSoSqPG1AOquY-mrhieHyt4Y",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "Vi0u6MMk3zc",
+            "title": "Umifuzz",
+            "artists": [
+              {
+                "name": "stereo type",
+                "channelId": "UC0hVlCULK1oLFyvec3dmqMw"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_3Oh52aICQHj",
+              "name": "Tokyo Blue"
+            },
+            "durationSeconds": 317,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 4,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_N7DPiLhTkox",
+        "title": "Real That She Knows",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "stereo type",
+            "channelId": "UCqCWko3MDWdtbhyyYxaNcdw"
+          }
+        ],
+        "year": 2009,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_ks3_PGXG4idujE0AY-adjgmlqZR9WbzmQ",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "F2nM4a_VQAc",
+            "title": "午前二時からのドライブ",
+            "artists": [
+              {
+                "name": "stereo type",
+                "channelId": "UCqCWko3MDWdtbhyyYxaNcdw"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_N7DPiLhTkox",
+              "name": "Real That She Knows"
+            },
+            "durationSeconds": 321,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {
+      "Vi0u6MMk3zc": "海ファズ"
+    },
+    "expected": {
+      "videoId": "Vi0u6MMk3zc"
+    }
+  },
+  {
+    "source": {
+      "trackId": "11Gi13v5tOergV1LjEbbDT",
+      "title": "The Sun",
+      "artists": [
+        {
+          "id": "4ckGkK52pqm5j41Voz7lg4",
+          "name": "a子"
+        }
+      ],
+      "album": {
+        "id": "4U9TfKHxuKyPdFO5emYrfH",
+        "name": "The Sun"
+      },
+      "trackNumber": 1,
+      "durationMs": 209017,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "The Sun a子": [
+        {
+          "browseId": "MPREb_nXWh7RftjDF",
+          "title": "The Sun",
+          "artists": [
+            {
+              "name": "Ako",
+              "channelId": "UCJdgMcvs5gnXQehgc9aW_0A"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_0yV3CNHTbPT",
+          "title": "KIRA KIRA Sun Kaku",
+          "artists": [
+            {
+              "name": "Ako",
+              "channelId": "UCJdgMcvs5gnXQehgc9aW_0A"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_PgQzgXUXaSY",
+          "title": "君のように生きれたら",
+          "artists": [
+            {
+              "name": "宇宙ネコ子",
+              "channelId": "UC-NIZ7gKLKIw-gX4eiafNWQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_3HgwNJK7d2a",
+          "title": "Kimi No Youni Ikiretara Demo Tracks",
+          "artists": [
+            {
+              "name": "Uchu Nekoko",
+              "channelId": "UCxGtb89TilgdZ__StBew5kw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_qvby7mHN0sg",
+          "title": "Solo",
+          "artists": [
+            {
+              "name": "Tujiko Noriko",
+              "channelId": "UCWRSvAljy0xhzLt631SZAeQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_VwGxUPQcyuC",
+          "title": "こもれびの森のリラックス音楽",
+          "artists": [
+            {
+              "name": "ねこと音楽/Cats & Music",
+              "channelId": "UCVS4nAHRuUAb1Pe-K0Xi_Ww"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_0lwjRWLHtOj",
+          "title": "Kikuo Miku 2",
+          "artists": [
+            {
+              "name": "KIKUO",
+              "channelId": "UCsrf178D7cjgbhrxfcIWcXg"
+            },
+            {
+              "name": "Hatsune Miku",
+              "channelId": "UCR29q3hGlpPRDrR1bk_8XqQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_WUFuN4lrdDA",
+          "title": "Zach Bryan",
+          "artists": [
+            {
+              "name": "Zach Bryan",
+              "channelId": "UC8MtL8JEv9VHEU_ICCNplPA"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_Tg3YkHyUgsq",
+          "title": "Persona 3 Portable: Original Soundtrack",
+          "artists": [
+            {
+              "name": "Shuhei Kita",
+              "channelId": "UCP9cXuKUMbzAnazwQ-iq8cQ"
+            },
+            {
+              "name": "Lotus Juice",
+              "channelId": "UCeFCIlD8AJsR6hZg5-LtZag"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_63i3cRrJfD1",
+          "title": "A Domo Ohisashiburidesu",
+          "artists": [
+            {
+              "name": "GReeeeN",
+              "channelId": "UChGJnU2_JNprD1sAtQJpZkA"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_fL65nGKwllx",
+          "title": "Naked and True",
+          "artists": [
+            {
+              "name": "hiro",
+              "channelId": "UCMmmNdzWviKTiGgfw_Il6iw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_GOFIhgRPUsi",
+          "title": "Beatles For Sale",
+          "artists": [
+            {
+              "name": "The Beatles",
+              "channelId": "UC2XdaAVUannpujzv32jcouQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_mXptORiImqG",
+          "title": "Persona 3 Reload Original Soundtrack",
+          "artists": [
+            {
+              "name": "ATLUS Sound Team",
+              "channelId": "UCvKJAJJ0-DxyrgIPPAOcLoQ"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_eLqevLaPDX3",
+          "title": "Tracing the Faint Echoes of Daily Life",
+          "artists": [
+            {
+              "name": "佐倉音子",
+              "channelId": "UCD_9-WqPuCVrs9kYTbv8b8A"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_VGqs8EZKTi0",
+          "title": "Fate/Grand Order Original Soundtrack II",
+          "artists": [
+            {
+              "name": "Keita Haga",
+              "channelId": "UCXGNKQklKQl1TML7ELEjYHw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_wdrlpDZc89f",
+          "title": "Beauty and the Beast (Original Motion Picture Soundtrack)",
+          "artists": []
+        },
+        {
+          "browseId": "MPREb_nuoBsuuEniB",
+          "title": "Covers Collection Vol. 18",
+          "artists": [
+            {
+              "name": "Shania Yan",
+              "channelId": "UCJk24TP_Ql18lAeZz8aEjsw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_2V00yFOtR5l",
+          "title": "脳と耳にやさしいα波オルゴール　～ぐっすり眠りたい人のためのヒーリングBGM～",
+          "artists": [
+            {
+              "name": "月風",
+              "channelId": "UCTEisZa0RWlbwz0lbw-xRfg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_dARekIUCus5",
+          "title": "完美的一天 - A Perfect Day",
+          "artists": [
+            {
+              "name": "Sun Yanzi",
+              "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_vrMSP9TcsLe",
+          "title": "2020 J-Pop Best Hits Vol. 1(Music Box)",
+          "artists": [
+            {
+              "name": "Mutsuhiro Nishiwaki",
+              "channelId": "UCVLFFh8fxjXCDDeUJjH5F2A"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "The Sun a子 The Sun": [
+        {
+          "videoId": "3e5wGzuZXSY",
+          "title": "太陽 - The Sun",
+          "artists": [
+            {
+              "name": "Ako",
+              "channelId": "UCJdgMcvs5gnXQehgc9aW_0A"
+            }
+          ],
+          "album": {
+            "name": "The Sun",
+            "browseId": "MPREb_nXWh7RftjDF"
+          },
+          "durationSeconds": 210,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "The Sun a子": [
+        {
+          "videoId": "3e5wGzuZXSY",
+          "title": "太陽 - The Sun",
+          "artists": [
+            {
+              "name": "Ako",
+              "channelId": "UCJdgMcvs5gnXQehgc9aW_0A"
+            }
+          ],
+          "album": {
+            "name": "The Sun",
+            "browseId": "MPREb_nXWh7RftjDF"
+          },
+          "durationSeconds": 210,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "jae8pBVhoIQ",
+          "title": "太陽底下 - Under the Sun",
+          "artists": [
+            {
+              "name": "Sun Yanzi",
+              "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+            }
+          ],
+          "album": {
+            "name": "The Moment",
+            "browseId": "MPREb_M78uXenkeHU"
+          },
+          "durationSeconds": 205,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_nXWh7RftjDF",
+        "title": "The Sun",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Ako",
+            "channelId": "UCJdgMcvs5gnXQehgc9aW_0A"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_kkQs4vy8wAJzn__pnxUmIumCbcXLczztE",
+        "trackCount": 1,
+        "tracks": [
+          {
+            "videoId": "3e5wGzuZXSY",
+            "title": "太陽 - The Sun",
+            "artists": [
+              {
+                "name": "Ako",
+                "channelId": "UCJdgMcvs5gnXQehgc9aW_0A"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_nXWh7RftjDF",
+              "name": "The Sun"
+            },
+            "durationSeconds": 210,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_M78uXenkeHU",
+        "title": "The Moment",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Sun Yanzi",
+            "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+          }
+        ],
+        "year": 2003,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_mNBN3nWJLjuyTptcUiZ0LlG99PWTzRJhU",
+        "trackCount": 19,
+        "tracks": [
+          {
+            "videoId": "bGRFDm7pW50",
+            "title": "遇見 - Encounter",
+            "artists": [
+              {
+                "name": "Sun Yanzi",
+                "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_M78uXenkeHU",
+              "name": "The Moment"
+            },
+            "durationSeconds": 210,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "jae8pBVhoIQ",
+            "title": "太陽底下 - Under the Sun",
+            "artists": [
+              {
+                "name": "Sun Yanzi",
+                "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_M78uXenkeHU",
+              "name": "The Moment"
+            },
+            "durationSeconds": 205,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 5,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "kSgFHGyRIH0",
+            "title": "Someone",
+            "artists": [
+              {
+                "name": "Sun Yanzi",
+                "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_M78uXenkeHU",
+              "name": "The Moment"
+            },
+            "durationSeconds": 206,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 10,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "KoeH_j7OOCc",
+            "title": "眼神 - Wink",
+            "artists": [
+              {
+                "name": "Sun Yanzi",
+                "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_M78uXenkeHU",
+              "name": "The Moment"
+            },
+            "durationSeconds": 211,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 16,
+            "discNumber": null,
+            "isAvailable": true
+          },
+          {
+            "videoId": "LTA4TQ73kRU",
+            "title": "橄欖樹 - Olive Tree",
+            "artists": [
+              {
+                "name": "Sun Yanzi",
+                "channelId": "UCLFS9T3qlBLQsVlLASHC1ug"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_M78uXenkeHU",
+              "name": "The Moment"
+            },
+            "durationSeconds": 206,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 17,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UCLFS9T3qlBLQsVlLASHC1ug": "孫燕姿",
+      "UCJdgMcvs5gnXQehgc9aW_0A": "a子"
+    },
+    "originalTitles": {},
+    "expected": {
+      "videoId": "3e5wGzuZXSY"
+    }
+  },
+  {
+    "source": {
+      "trackId": "7Lju8n8ye0pu1gS3YHu0ny",
+      "title": "食虫植物",
+      "artists": [
+        {
+          "id": "4S3tEYMH3Mjdbn4mkBvqi0",
+          "name": "笹川真生"
+        }
+      ],
+      "album": {
+        "id": "1ztYjEcNyEOmaqfABKpz2F",
+        "name": "食虫植物"
+      },
+      "trackNumber": 1,
+      "durationMs": 182384,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "食虫植物 笹川真生": [
+        {
+          "browseId": "MPREb_mXpeAekLGli",
+          "title": "Welcome to Sunnyside",
+          "artists": [
+            {
+              "name": "Mao Sasagawa",
+              "channelId": "UCuAQLeBqqrj4vG3ALqfHp2g"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_YwnmRkx3fxy",
+          "title": "NEW ROMANCER",
+          "artists": [
+            {
+              "name": "RIM",
+              "channelId": "UCJI8ldaIM5VGPh_4SkoSRoA"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "食虫植物 笹川真生 食虫植物": [
+        {
+          "videoId": "11Fr8U7HArA",
+          "title": "食虫植物 - Carnivorous Plant",
+          "artists": [
+            {
+              "name": "Mao Sasagawa",
+              "channelId": "UCuAQLeBqqrj4vG3ALqfHp2g"
+            }
+          ],
+          "album": {
+            "name": "Carnivorous Plant",
+            "browseId": "MPREb_ZVAFraJjxXz"
+          },
+          "durationSeconds": 183,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "食虫植物 笹川真生": [
+        {
+          "videoId": "11Fr8U7HArA",
+          "title": "食虫植物 - Carnivorous Plant",
+          "artists": [
+            {
+              "name": "Mao Sasagawa",
+              "channelId": "UCuAQLeBqqrj4vG3ALqfHp2g"
+            }
+          ],
+          "album": {
+            "name": "Carnivorous Plant",
+            "browseId": "MPREb_ZVAFraJjxXz"
+          },
+          "durationSeconds": 183,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_ZVAFraJjxXz",
+        "title": "Carnivorous Plant",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Mao Sasagawa",
+            "channelId": "UCuAQLeBqqrj4vG3ALqfHp2g"
+          }
+        ],
+        "year": 2022,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lVH8C1BFhZVcwuY_xL4MO-FpvsUTQYiOM",
+        "trackCount": 1,
+        "tracks": [
+          {
+            "videoId": "11Fr8U7HArA",
+            "title": "食虫植物 - Carnivorous Plant",
+            "artists": [
+              {
+                "name": "Mao Sasagawa",
+                "channelId": "UCuAQLeBqqrj4vG3ALqfHp2g"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_ZVAFraJjxXz",
+              "name": "Carnivorous Plant"
+            },
+            "durationSeconds": 183,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UCJI8ldaIM5VGPh_4SkoSRoA": "理芽",
+      "UCuAQLeBqqrj4vG3ALqfHp2g": "mao sasagawa"
+    },
+    "originalTitles": {},
+    "expected": {
+      "reason": "no_match"
+    }
+  },
+  {
+    "source": {
+      "trackId": "10GvnDQqleveB7n9UAvopb",
+      "title": "いかれたBaby",
+      "artists": [
+        {
+          "id": "5gcO5h6V8NEtggUyWPX61I",
+          "name": "モトーラ世理奈"
+        }
+      ],
+      "album": {
+        "id": "4JXH14AMRYOeOcSsUVKNAW",
+        "name": "いかれたBaby"
+      },
+      "trackNumber": 1,
+      "durationMs": 288000,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "いかれたBaby モトーラ世理奈": [
+        {
+          "browseId": "MPREb_W2M72zJT6JR",
+          "title": "IKARETA BABY",
+          "artists": [
+            {
+              "name": "SERENA MOTOLA",
+              "channelId": "UCL0dnJAq7588_T8vJEeivmg"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_IFA0tVn7CbU",
+          "title": "98.12.28 Otokotachino Wakare (Live)",
+          "artists": [
+            {
+              "name": "Fishmans",
+              "channelId": "UC7xvvw65sBv6VkZwua70lgA"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "いかれたBaby モトーラ世理奈 いかれたBaby": [
+        {
+          "videoId": "GJMBdDibHbw",
+          "title": "いかれたBaby - IKARETA BABY",
+          "artists": [
+            {
+              "name": "SERENA MOTOLA",
+              "channelId": "UCL0dnJAq7588_T8vJEeivmg"
+            }
+          ],
+          "album": {
+            "name": "IKARETA BABY",
+            "browseId": "MPREb_W2M72zJT6JR"
+          },
+          "durationSeconds": 288,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "_v9EV5j3O54",
+          "title": "いかれたBABY - Ikareta Baby",
+          "artists": [
+            {
+              "name": "Fishmans",
+              "channelId": "UC7xvvw65sBv6VkZwua70lgA"
+            }
+          ],
+          "album": {
+            "name": "Neo Yankees' Holiday",
+            "browseId": "MPREb_plxxd2Zyftg"
+          },
+          "durationSeconds": 291,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "いかれたBaby モトーラ世理奈": [
+        {
+          "videoId": "GJMBdDibHbw",
+          "title": "いかれたBaby - IKARETA BABY",
+          "artists": [
+            {
+              "name": "SERENA MOTOLA",
+              "channelId": "UCL0dnJAq7588_T8vJEeivmg"
+            }
+          ],
+          "album": {
+            "name": "IKARETA BABY",
+            "browseId": "MPREb_W2M72zJT6JR"
+          },
+          "durationSeconds": 288,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        },
+        {
+          "videoId": "_v9EV5j3O54",
+          "title": "いかれたBABY - Ikareta Baby",
+          "artists": [
+            {
+              "name": "Fishmans",
+              "channelId": "UC7xvvw65sBv6VkZwua70lgA"
+            }
+          ],
+          "album": {
+            "name": "Neo Yankees' Holiday",
+            "browseId": "MPREb_plxxd2Zyftg"
+          },
+          "durationSeconds": 291,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_W2M72zJT6JR",
+        "title": "IKARETA BABY",
+        "kindLabel": "EP",
+        "artists": [
+          {
+            "name": "SERENA MOTOLA",
+            "channelId": "UCL0dnJAq7588_T8vJEeivmg"
+          }
+        ],
+        "year": 2019,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_ngE5bTDxPzRvm4zlUgXUlTgGn28CYwWtA",
+        "trackCount": 4,
+        "tracks": [
+          {
+            "videoId": "GJMBdDibHbw",
+            "title": "いかれたBaby - IKARETA BABY",
+            "artists": [
+              {
+                "name": "SERENA MOTOLA",
+                "channelId": "UCL0dnJAq7588_T8vJEeivmg"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_W2M72zJT6JR",
+              "name": "IKARETA BABY"
+            },
+            "durationSeconds": 288,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_plxxd2Zyftg",
+        "title": "Neo Yankees' Holiday",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Fishmans",
+            "channelId": "UC7xvvw65sBv6VkZwua70lgA"
+          }
+        ],
+        "year": 1993,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m6XABFiQzFQz4VsgZl-jycH8uRST3C9ms",
+        "trackCount": 13,
+        "tracks": [
+          {
+            "videoId": "_v9EV5j3O54",
+            "title": "いかれたBABY - Ikareta Baby",
+            "artists": [
+              {
+                "name": "Fishmans",
+                "channelId": "UC7xvvw65sBv6VkZwua70lgA"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_plxxd2Zyftg",
+              "name": "Neo Yankees' Holiday"
+            },
+            "durationSeconds": 291,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UC7xvvw65sBv6VkZwua70lgA": "フィッシュマンズ",
+      "UCL0dnJAq7588_T8vJEeivmg": "モトーラ世理奈",
+      "UCjH0Ha3OAXymISRM75Em20w": "角銅真実"
+    },
+    "originalTitles": {},
+    "expected": {
+      "videoId": "GJMBdDibHbw"
+    }
+  },
+  {
+    "source": {
+      "trackId": "6Cb3SRm57nqkFCvgQNhLCu",
+      "title": "Lazy river",
+      "artists": [
+        {
+          "id": "21bkNzNX7do9qb8SM9wFQF",
+          "name": "Mamiko Suzuki"
+        }
+      ],
+      "album": {
+        "id": "70uCGgxphLx3DEPQSEQqSj",
+        "name": "ms"
+      },
+      "trackNumber": 1,
+      "durationMs": 240567,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "ms Mamiko Suzuki": [
+        {
+          "browseId": "MPREb_FxrzxuVYYy1",
+          "title": "ms",
+          "artists": [
+            {
+              "name": "suzuki mamiko",
+              "channelId": "UCNOezgyPIKTYok7hYa53VFA"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "Lazy river Mamiko Suzuki ms": [
+        {
+          "videoId": "P4I8n9T1CLU",
+          "title": "Lazy river",
+          "artists": [
+            {
+              "name": "suzuki mamiko",
+              "channelId": "UCNOezgyPIKTYok7hYa53VFA"
+            }
+          ],
+          "album": {
+            "name": "Lazy river",
+            "browseId": "MPREb_5Y4lhBmCSVh"
+          },
+          "durationSeconds": 241,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "Lazy river Mamiko Suzuki": [
+        {
+          "videoId": "P4I8n9T1CLU",
+          "title": "Lazy river",
+          "artists": [
+            {
+              "name": "suzuki mamiko",
+              "channelId": "UCNOezgyPIKTYok7hYa53VFA"
+            }
+          ],
+          "album": {
+            "name": "Lazy river",
+            "browseId": "MPREb_5Y4lhBmCSVh"
+          },
+          "durationSeconds": 241,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_5Y4lhBmCSVh",
+        "title": "Lazy river",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "suzuki mamiko",
+            "channelId": "UCNOezgyPIKTYok7hYa53VFA"
+          }
+        ],
+        "year": 2021,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_l1QW9jldh_Zb-iku2_iUn2uNO8YVpaUu4",
+        "trackCount": 1,
+        "tracks": [
+          {
+            "videoId": "P4I8n9T1CLU",
+            "title": "Lazy river",
+            "artists": [
+              {
+                "name": "suzuki mamiko",
+                "channelId": "UCNOezgyPIKTYok7hYa53VFA"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_5Y4lhBmCSVh",
+              "name": "Lazy river"
+            },
+            "durationSeconds": 241,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 1,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {
+      "UCNOezgyPIKTYok7hYa53VFA": "鈴木真海子"
+    },
+    "originalTitles": {},
+    "expected": {
+      "videoId": "P4I8n9T1CLU"
+    }
+  },
+  {
+    "source": {
+      "trackId": "07eGxuz8bL6QMsRqEe1Adu",
+      "title": "Svefn-g-englar",
+      "artists": [
+        {
+          "id": "6UUrUCIZtQeOf8tC0WuzRy",
+          "name": "Sigur Rós"
+        }
+      ],
+      "album": {
+        "id": "1DMMv1Kmoli3Y9fVEZDUVC",
+        "name": "Ágætis byrjun"
+      },
+      "trackNumber": 2,
+      "durationMs": 606850,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "Ágætis byrjun Sigur Rós": [
+        {
+          "browseId": "MPREb_m66VrCVOY5u",
+          "title": "Ágætis byrjun",
+          "artists": [
+            {
+              "name": "Sigur Rós",
+              "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_UkDGZCSQhpI",
+          "title": "Ágætis byrjun (A Good Beginning) (20th Anniversary Deluxe Edition)",
+          "artists": [
+            {
+              "name": "Sigur Rós",
+              "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_7VhHm2gOdVr",
+          "title": "Ágætis byrjun (1998 Demo)",
+          "artists": [
+            {
+              "name": "Sigur Rós",
+              "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_9sCAgAoksPh",
+          "title": "Hvarf / Heim",
+          "artists": [
+            {
+              "name": "Sigur Rós",
+              "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+            }
+          ]
+        },
+        {
+          "browseId": "MPREb_sOOUTSQ0X6d",
+          "title": "Með suð í eyrum við spilum endalaust",
+          "artists": [
+            {
+              "name": "Sigur Rós",
+              "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {},
+    "releases": [
+      {
+        "browseId": "MPREb_m66VrCVOY5u",
+        "title": "Ágætis byrjun",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Sigur Rós",
+            "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+          }
+        ],
+        "year": 1999,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_kS0xK-8stFnvAtN5wIIAidUD2MAXSOxAI",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "VCVtqwu3_vg",
+            "title": "Svefn-g-englar",
+            "artists": [
+              {
+                "name": "Sigur Rós",
+                "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_m66VrCVOY5u",
+              "name": "Ágætis byrjun"
+            },
+            "durationSeconds": 607,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_UkDGZCSQhpI",
+        "title": "Ágætis byrjun (A Good Beginning) (20th Anniversary Deluxe Edition)",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "Sigur Rós",
+            "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+          }
+        ],
+        "year": 2019,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_lAcllbl47tsd-sNVjl3HtDZwBho6JBsSY",
+        "trackCount": 34,
+        "tracks": [
+          {
+            "videoId": "_Gzq8U1ctA4",
+            "title": "Svefn-g-englar",
+            "artists": [
+              {
+                "name": "Sigur Rós",
+                "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_UkDGZCSQhpI",
+              "name": "Ágætis byrjun (A Good Beginning) (20th Anniversary Deluxe Edition)"
+            },
+            "durationSeconds": 607,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 2,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      },
+      {
+        "browseId": "MPREb_7VhHm2gOdVr",
+        "title": "Ágætis byrjun (1998 Demo)",
+        "kindLabel": "Single",
+        "artists": [
+          {
+            "name": "Sigur Rós",
+            "channelId": "UCgI0KusPV2kAfsflrsAunUw"
+          }
+        ],
+        "year": 2019,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m5eGx4vSmlSaGSSezrtp7uwIFejQMu7Xs",
+        "trackCount": 1,
+        "tracks": []
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "VCVtqwu3_vg"
+    }
+  },
+  {
+    "source": {
+      "trackId": "0IMQQU2Tr4pLXhsxQwmZP3",
+      "title": "Sucide Girl",
+      "artists": [
+        {
+          "id": "741byU7Mazqx3tGmciUzcK",
+          "name": "SPOOL"
+        }
+      ],
+      "album": {
+        "id": "4sjkXbE30xeEvHqU33tCcE",
+        "name": "cyan / amber"
+      },
+      "trackNumber": 4,
+      "durationMs": 318029,
+      "addedAt": "2026-09-01T00:00:00Z",
+      "position": 0
+    },
+    "albums": {
+      "cyan / amber SPOOL": [
+        {
+          "browseId": "MPREb_86071AIpoAD",
+          "title": "cyan / amber",
+          "artists": [
+            {
+              "name": "SPOOL",
+              "channelId": "UCuZCsxr7kZRbNcRZztKGo8A"
+            }
+          ]
+        }
+      ]
+    },
+    "songs": {
+      "Sucide Girl SPOOL cyan / amber": [
+        {
+          "videoId": "xD-8dSk37VI",
+          "title": "スーサイド・ガール - suicide girl",
+          "artists": [
+            {
+              "name": "SPOOL",
+              "channelId": "UCuZCsxr7kZRbNcRZztKGo8A"
+            }
+          ],
+          "album": {
+            "name": "cyan / amber",
+            "browseId": "MPREb_86071AIpoAD"
+          },
+          "durationSeconds": 319,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ],
+      "Sucide Girl SPOOL": [
+        {
+          "videoId": "xD-8dSk37VI",
+          "title": "スーサイド・ガール - suicide girl",
+          "artists": [
+            {
+              "name": "SPOOL",
+              "channelId": "UCuZCsxr7kZRbNcRZztKGo8A"
+            }
+          ],
+          "album": {
+            "name": "cyan / amber",
+            "browseId": "MPREb_86071AIpoAD"
+          },
+          "durationSeconds": 319,
+          "videoType": "ATV",
+          "isExplicit": false,
+          "thumbnailUrl": null,
+          "trackNumber": null,
+          "discNumber": null,
+          "isAvailable": true
+        }
+      ]
+    },
+    "releases": [
+      {
+        "browseId": "MPREb_86071AIpoAD",
+        "title": "cyan / amber",
+        "kindLabel": "Album",
+        "artists": [
+          {
+            "name": "SPOOL",
+            "channelId": "UCuZCsxr7kZRbNcRZztKGo8A"
+          }
+        ],
+        "year": 2020,
+        "thumbnailUrl": null,
+        "audioPlaylistId": "OLAK5uy_m2bihipEyveOuDHBVdPLLQFFWTP9SZjFs",
+        "trackCount": 10,
+        "tracks": [
+          {
+            "videoId": "xD-8dSk37VI",
+            "title": "スーサイド・ガール - suicide girl",
+            "artists": [
+              {
+                "name": "SPOOL",
+                "channelId": "UCuZCsxr7kZRbNcRZztKGo8A"
+              }
+            ],
+            "album": {
+              "browseId": "MPREb_86071AIpoAD",
+              "name": "cyan / amber"
+            },
+            "durationSeconds": 319,
+            "videoType": "ATV",
+            "isExplicit": false,
+            "thumbnailUrl": null,
+            "trackNumber": 4,
+            "discNumber": null,
+            "isAvailable": true
+          }
+        ]
+      }
+    ],
+    "nativeNames": {},
+    "originalTitles": {},
+    "expected": {
+      "videoId": "xD-8dSk37VI"
+    }
+  }
+]

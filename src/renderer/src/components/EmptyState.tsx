@@ -1,18 +1,21 @@
 import { FolderOpen, LogIn } from 'lucide-react'
+import { hasSignedInAccount } from '../lib/accounts'
 import { invoke } from '../lib/api'
 import { useAppState } from '../lib/app-state'
 import { Button } from './ui/Button'
 
 /** Shown in the Library until the user is signed in and has chosen a folder. */
 export function useSetupNeeded(): boolean {
-  const { session, settings } = useAppState()
+  const { session, spotify, settings } = useAppState()
   if (!session || !settings) return false
-  return session.state !== 'signed_in' || !settings.libraryFolder
+  return !hasSignedInAccount(session, spotify) || !settings.libraryFolder
 }
 
 export function SetupEmptyState() {
-  const { session, settings, updateSettings } = useAppState()
-  const signedIn = session?.state === 'signed_in'
+  const { session, spotify, settings, updateSettings } = useAppState()
+  const youtubeSignedIn = session?.state === 'signed_in'
+  const spotifySignedIn = spotify?.state === 'signed_in'
+  const signedIn = hasSignedInAccount(session, spotify)
   const hasFolder = Boolean(settings?.libraryFolder)
   return (
     <div className="h-full flex items-center justify-center">
@@ -22,20 +25,29 @@ export function SetupEmptyState() {
             Your liked songs, as files you own
           </div>
           <div className="mt-2 text-[13px] text-zinc-400">
-            Sign in to YouTube Music and choose a folder. Liked songs download
-            there, tagged and ready for Navidrome, Plex or any music app.
+            Sign in to YouTube Music or Spotify and choose a folder. Liked songs
+            download there, tagged and ready for Navidrome, Plex or any music
+            app.
           </div>
         </div>
         <div className="flex flex-col gap-2 items-stretch">
           <Button
             variant={signedIn ? 'default' : 'primary'}
-            disabled={signedIn}
+            disabled={youtubeSignedIn}
             onClick={() => void invoke('session:signIn')}
           >
             <LogIn className="w-4 h-4" />{' '}
-            {signedIn
+            {youtubeSignedIn
               ? 'Signed in to YouTube Music'
               : 'Sign in to YouTube Music'}
+          </Button>
+          <Button
+            variant={signedIn ? 'default' : 'primary'}
+            disabled={spotifySignedIn}
+            onClick={() => void invoke('spotify:signIn')}
+          >
+            <LogIn className="w-4 h-4" />{' '}
+            {spotifySignedIn ? 'Signed in to Spotify' : 'Sign in to Spotify'}
           </Button>
           <Button
             variant={signedIn && !hasFolder ? 'primary' : 'default'}

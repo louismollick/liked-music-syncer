@@ -18,11 +18,19 @@ import type { Db } from '../library/db'
 import {
   artists,
   contributions,
+  files,
   sourceSnapshots,
   trackHistory,
   tracks,
 } from '../library/schema'
 import { releaseIdentityKey } from '../match/types'
+import type { SpotifyLibrary, SpotifyLikedTrack } from '../spotify/library'
+import {
+  BOTH_LIKED_SOURCE_ORIGIN,
+  SPOTIFY_LIKED_SOURCE_ORIGIN,
+  type TagFields,
+  YOUTUBE_LIKED_SOURCE_ORIGIN,
+} from '../tags/schema'
 
 /**
  * Source checks stage a complete snapshot and commit it in one transaction.
@@ -43,6 +51,12 @@ export interface LikedRaw {
   song: LikedSong
 }
 
+export interface SpotifyLikedRaw {
+  kind: 'spotify_liked'
+  track: SpotifyLikedTrack
+}
+export type ContributionRaw = LikedRaw | SpotifyLikedRaw | CatalogRaw
+
 export interface CatalogRaw {
   kind: 'catalog'
   artistId: string
@@ -62,6 +76,16 @@ export function catalogSourceKey(
   videoId: string
 ): string {
   return `catalog:${artistId}:${releaseId}:${videoId}`
+}
+
+export function spotifyLikedSourceKey(
+  accountId: string,
+  trackId: string
+): string {
+  return `spotify-liked:${accountId}:${trackId}`
+}
+export function spotifyLikedSnapshotSource(accountId: string): string {
+  return `spotify-liked:${accountId}`
 }
 
 function nowIso(now: () => Date): string {
@@ -100,13 +124,14 @@ function markSnapshot(
 }
 
 export function validateLikedSnapshot(
-  songs: LikedSong[],
+  songs: readonly unknown[],
   declaredCount: number | null,
-  previousActive: number
+  previousActive: number,
+  platform = 'YouTube Music'
 ): void {
   if (songs.length === 0 && declaredCount !== 0 && previousActive > 0) {
     throw new SuspiciousSnapshotError(
-      'YouTube Music returned no liked songs; keeping the previous list.'
+      `${platform} returned no liked songs; keeping the previous list.`
     )
   }
   if (
@@ -139,19 +164,81 @@ export interface LikedCheckResult {
   removed: number
 }
 
-/** Fetches the selected account's Liked Music and commits it as the active liked snapshot. */
-export async function checkLikedSongs(options: {
+interface LikesCheckOptions {
   db: Db
-  catalog: YouTubeMusicCatalog
   accountId: string
-  /** Returns false when the session changed while fetching; the snapshot is then discarded. */
   stillCurrent: () => boolean
   now?: () => Date
   signal?: AbortSignal
-}): Promise<LikedCheckResult> {
+}
+
+/** Fetches the selected YouTube Music Account's complete liked snapshot. */
+export function checkLikedSongs(
+  options: LikesCheckOptions & { catalog: YouTubeMusicCatalog }
+): Promise<LikedCheckResult> {
+  return checkLikes(
+    options,
+    'liked',
+    likedSnapshotSource(options.accountId),
+    async () => {
+      const result = await options.catalog.likedSongs(options.signal)
+      return {
+        declaredCount: result.declaredCount,
+        rows: result.tracks
+          .filter((song) => song.videoId)
+          .map((song) => ({
+            key: likedSourceKey(options.accountId, song.videoId),
+            videoId: song.videoId,
+            position: song.position,
+            likedAt: null,
+            raw: { kind: 'liked', song } satisfies LikedRaw,
+          })),
+      }
+    }
+  )
+}
+
+export function checkSpotifyLikedSongs(
+  options: LikesCheckOptions & { library: SpotifyLibrary }
+): Promise<LikedCheckResult> {
+  return checkLikes(
+    options,
+    'spotify_liked',
+    spotifyLikedSnapshotSource(options.accountId),
+    async () => {
+      const result = await options.library.likedSongs(options.signal)
+      return {
+        declaredCount: result.declaredCount,
+        rows: result.tracks.map((track) => ({
+          key: spotifyLikedSourceKey(options.accountId, track.trackId),
+          videoId: null,
+          position: track.position,
+          likedAt: track.addedAt,
+          raw: { kind: 'spotify_liked', track } satisfies SpotifyLikedRaw,
+        })),
+      }
+    }
+  )
+}
+
+/** Stage everything first; only a successful, current snapshot may deactivate likes. */
+async function checkLikes(
+  options: LikesCheckOptions,
+  kind: 'liked' | 'spotify_liked',
+  source: string,
+  fetch: () => Promise<{
+    declaredCount: number | null
+    rows: {
+      key: string
+      videoId: string | null
+      position: number
+      likedAt: string | null
+      raw: LikedRaw | SpotifyLikedRaw
+    }[]
+  }>
+): Promise<LikedCheckResult> {
   const { db, accountId } = options
   const now = options.now ?? (() => new Date())
-  const source = likedSnapshotSource(accountId)
   const startedAt = nowIso(now)
   markSnapshot(
     db,
@@ -160,7 +247,7 @@ export async function checkLikedSongs(options: {
     startedAt
   )
   try {
-    const result = await options.catalog.likedSongs(options.signal)
+    const result = await fetch()
     if (!options.stillCurrent())
       throw new Error('Account changed during the liked-songs check')
     const previousActive =
@@ -169,14 +256,21 @@ export async function checkLikedSongs(options: {
         .from(contributions)
         .where(
           and(
-            eq(contributions.kind, 'liked'),
+            eq(contributions.kind, kind),
             eq(contributions.accountId, accountId),
             eq(contributions.active, true)
           )
         )
         .get()?.count ?? 0
-    const songs = result.tracks.filter((song) => song.videoId)
-    validateLikedSnapshot(songs, result.declaredCount, previousActive)
+    const songs = [
+      ...new Map(result.rows.map((row) => [row.key, row])).values(),
+    ]
+    validateLikedSnapshot(
+      songs,
+      result.declaredCount,
+      previousActive,
+      kind === 'liked' ? 'YouTube Music' : 'Spotify'
+    )
 
     const committedAt = nowIso(now)
     let added = 0
@@ -184,10 +278,10 @@ export async function checkLikedSongs(options: {
     db.transaction((tx) => {
       const seen = new Set<string>()
       for (const song of songs) {
-        const key = likedSourceKey(accountId, song.videoId)
+        const key = song.key
         if (seen.has(key)) continue
         seen.add(key)
-        const raw: LikedRaw = { kind: 'liked', song }
+        const raw = song.raw
         const existing = tx
           .select()
           .from(contributions)
@@ -197,6 +291,7 @@ export async function checkLikedSongs(options: {
           tx.update(contributions)
             .set({
               likedPosition: song.position,
+              ...(song.likedAt ? { firstSeenAt: song.likedAt } : {}),
               lastSeenAt: committedAt,
               active: true,
               raw: JSON.stringify(raw),
@@ -209,11 +304,11 @@ export async function checkLikedSongs(options: {
             .values({
               id: randomUUID(),
               sourceKey: key,
-              kind: 'liked',
+              kind,
               accountId,
               sourceVideoId: song.videoId,
               likedPosition: song.position,
-              firstSeenAt: committedAt,
+              firstSeenAt: song.likedAt ?? committedAt,
               lastSeenAt: committedAt,
               active: true,
               raw: JSON.stringify(raw),
@@ -226,7 +321,7 @@ export async function checkLikedSongs(options: {
         .select({ id: contributions.id, sourceKey: contributions.sourceKey })
         .from(contributions)
         .where(
-          and(eq(contributions.kind, 'liked'), eq(contributions.active, true))
+          and(eq(contributions.kind, kind), eq(contributions.active, true))
         )
         .all()
         .filter((row) => !seen.has(row.sourceKey))
@@ -488,7 +583,10 @@ export async function checkArtistCatalog(options: {
           let canRestore =
             changedVideo &&
             linked?.identityKey ===
-              releaseIdentityKey(raw.release.browseId, existing.sourceVideoId)
+              releaseIdentityKey(
+                raw.release.browseId,
+                existing.sourceVideoId ?? ''
+              )
           if (canRestore && linked?.state === 'released' && existing.trackId) {
             const identityKey = releaseIdentityKey(
               raw.release.browseId,
@@ -645,45 +743,56 @@ export function deactivateArtistCatalog(db: Db, artistId: string): void {
     .run()
 }
 
-/**
- * Restored files not yet claimed by a like, by the liked video each
- * records. A video recorded by several files maps to none of them: the like is
- * matched normally and merges by Release Track identity instead.
- */
+/** Platform-specific source identity used when a like claims a restored file. */
+function likedClaimKey(raw: LikedRaw | SpotifyLikedRaw): string {
+  return raw.kind === 'liked'
+    ? `youtube:${raw.song.videoId}`
+    : `spotify:${raw.track.trackId}`
+}
+
+/** Ambiguous source IDs claim no file; normal matching decides their Recording. */
 function unclaimedRestoredBySource(db: Db): Map<string, string> {
   const bySource = new Map<string, string[]>()
+  const add = (key: string, id: string) =>
+    bySource.set(key, [...(bySource.get(key) ?? []), id])
   for (const row of db
-    .select({ id: tracks.id, match: tracks.match })
+    .select({ id: tracks.id, tagFields: files.tagFields })
     .from(tracks)
+    .innerJoin(files, eq(files.trackId, tracks.id))
     .where(
       and(
         eq(tracks.adopted, true),
-        // Not a track the user stopped managing, or is still deleting.
         sql`${tracks.state} != 'released'`,
         sql`NOT EXISTS (SELECT 1 FROM tombstones tb WHERE tb.track_id = ${tracks.id} AND tb.done_at IS NULL)`
       )
     )
     .all()) {
     try {
-      const saved = JSON.parse(row.match ?? 'null') as {
-        sourceVideoId?: string
-        resolutionMethod?: string
-      } | null
-      // A catalog wrote this file; its video was never a liked source.
-      if (saved?.resolutionMethod === 'favorite_artist_release_exact') continue
-      if (saved?.sourceVideoId)
-        bySource.set(saved.sourceVideoId, [
-          ...(bySource.get(saved.sourceVideoId) ?? []),
-          row.id,
-        ])
+      const lms = (JSON.parse(row.tagFields) as TagFields).lms
+      const origin = lms.sourceOrigin
+      if (
+        lms.sourceVideoId &&
+        (origin === YOUTUBE_LIKED_SOURCE_ORIGIN ||
+          origin === BOTH_LIKED_SOURCE_ORIGIN ||
+          // Before v8, a non-catalog Match with no origin recorded a YouTube like.
+          (!origin && lms.resolutionMethod !== 'favorite_artist_release_exact'))
+      )
+        add(`youtube:${lms.sourceVideoId}`, row.id)
+      if (
+        lms.spotifyTrackId &&
+        (origin === SPOTIFY_LIKED_SOURCE_ORIGIN ||
+          origin === BOTH_LIKED_SOURCE_ORIGIN)
+      )
+        add(`spotify:${lms.spotifyTrackId}`, row.id)
     } catch {
-      // Unreadable saved match: leave the track unclaimed.
+      /* Unreadable source tags leave the file unclaimed. */
     }
   }
-  const unique = new Map<string, string>()
-  for (const [videoId, ids] of bySource)
-    if (ids.length === 1) unique.set(videoId, ids[0])
-  return unique
+  return new Map(
+    [...bySource].flatMap(([key, ids]) =>
+      ids.length === 1 ? [[key, ids[0]]] : []
+    )
+  )
 }
 
 /**
@@ -703,11 +812,10 @@ export function linkContributions(
       .from(contributions)
       .where(and(eq(contributions.active, true), isNull(contributions.trackId)))
       .all()
-    // Restored files record the liked video they were downloaded from; a like of
-    // that same video claims the file right away (no match, no download).
+    // A like claims a confirmed file recording its platform source ID.
     const adoptedBySource = unclaimedRestoredBySource(tx as unknown as Db)
     for (const row of unlinked) {
-      const raw = JSON.parse(row.raw) as LikedRaw | CatalogRaw
+      const raw = JSON.parse(row.raw) as ContributionRaw
       if (raw.kind === 'catalog') {
         const key = releaseIdentityKey(raw.release.browseId, raw.track.videoId)
         const existing = tx
@@ -751,10 +859,23 @@ export function linkContributions(
           .run()
         created.push(id)
       } else {
-        const song = raw.song
-        const adoptedId = adoptedBySource.get(song.videoId)
+        const song =
+          raw.kind === 'liked'
+            ? raw.song
+            : {
+                title: raw.track.title,
+                artists: raw.track.artists.map((artist) => ({
+                  name: artist.name,
+                  channelId: null,
+                })),
+                album: raw.track.album,
+                durationSeconds: raw.track.durationMs / 1000,
+                thumbnailUrl: null,
+              }
+        const claimKey = likedClaimKey(raw)
+        const adoptedId = adoptedBySource.get(claimKey)
         if (adoptedId) {
-          adoptedBySource.delete(song.videoId)
+          adoptedBySource.delete(claimKey)
           tx.update(tracks)
             .set({ adopted: false, updatedAt: at })
             .where(eq(tracks.id, adoptedId))
@@ -795,7 +916,7 @@ export function linkContributions(
 
 /**
  * Moves likes from untouched provisional tracks onto adopted files that record
- * the same liked video. Covers the order where liked songs were checked before
+ * the same platform source ID. Covers the order where liked songs were checked before
  * the library folder was chosen (so linkContributions ran before adoption).
  */
 export function claimAdoptedFiles(
@@ -810,17 +931,20 @@ export function claimAdoptedFiles(
     const candidates = tx.all<{
       id: string
       track_id: string
-      source_video_id: string
+      raw: string
     }>(sql`
-      SELECT c.id, c.track_id, c.source_video_id FROM contributions c
+      SELECT c.id, c.track_id, c.raw FROM contributions c
       JOIN tracks t ON t.id = c.track_id
-      WHERE c.kind = 'liked' AND c.active = 1 AND t.identity_key IS NULL
+      WHERE c.kind IN ('liked', 'spotify_liked') AND c.active = 1 AND t.identity_key IS NULL
         AND NOT EXISTS (SELECT 1 FROM files f WHERE f.track_id = t.id)
     `)
     for (const row of candidates) {
-      const target = adopted.get(row.source_video_id)
+      const key = likedClaimKey(
+        JSON.parse(row.raw) as LikedRaw | SpotifyLikedRaw
+      )
+      const target = adopted.get(key)
       if (!target) continue
-      adopted.delete(row.source_video_id)
+      adopted.delete(key)
       tx.update(contributions)
         .set({ trackId: target })
         .where(eq(contributions.id, row.id))
@@ -851,7 +975,11 @@ export function claimAdoptedFiles(
  */
 export function updateWantedStates(
   db: Db,
-  options: { accountId: string | null; fullDiscographyArtistIds: string[] }
+  options: {
+    accountId: string | null
+    spotifyAccountId?: string | null
+    fullDiscographyArtistIds: string[]
+  }
 ): void {
   const at = new Date().toISOString()
   // A track that regained a source is always wanted again, whatever else failed.
@@ -865,8 +993,14 @@ export function updateWantedStates(
   // Marking tracks unwanted waits for the liked-songs source to have completed a
   // full check (or, without an account, every full-discography catalog), so a
   // fresh database or a failing catalog can't flag the library.
-  const required = options.accountId
-    ? [likedSnapshotSource(options.accountId)]
+  const likedSources = [
+    ...(options.accountId ? [likedSnapshotSource(options.accountId)] : []),
+    ...(options.spotifyAccountId
+      ? [spotifyLikedSnapshotSource(options.spotifyAccountId)]
+      : []),
+  ]
+  const required = likedSources.length
+    ? likedSources
     : options.fullDiscographyArtistIds.map(catalogSnapshotSource)
   if (required.length === 0) return
   const succeeded = db

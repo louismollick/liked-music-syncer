@@ -74,7 +74,7 @@ export const contributions = sqliteTable(
     accountId: text('account_id'),
     artistId: text('artist_id'),
     trackId: text('track_id'),
-    sourceVideoId: text('source_video_id').notNull(),
+    sourceVideoId: text('source_video_id'),
     releaseId: text('release_id'),
     likedPosition: integer('liked_position'),
     firstSeenAt: text('first_seen_at').notNull(),

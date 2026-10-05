@@ -76,6 +76,7 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
               text: classifyLyricsText(text)!.text,
               source: 'spotify',
             }
+          if (query.spotifyLiked) return text
           const alternate = await spotify.search(lookup, signal, savedId)
           if (alternate) {
             if (!savedId) spotifyTrackId = alternate

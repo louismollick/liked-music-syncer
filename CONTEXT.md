@@ -45,7 +45,7 @@ A relationship showing that a Liked Music Library or Full Discography catalog co
 _Avoid_: Original source, single source
 
 **Liked Date**:
-When a song entered a Liked Music Library. The app uses the platform's timestamp when one exists, and otherwise the first time it saw the like, ordered by the platform's liked-songs order.
+When a song entered a Liked Music Library. The app uses the platform's timestamp when one exists, and otherwise the first time it saw the like, ordered by the platform's liked-songs order. A song liked on several platforms uses its earliest Liked Date.
 _Avoid_: Download date, added date
 
 **Desired Library**:
@@ -71,7 +71,7 @@ _Avoid_: All uploads, every appearance
 ### Music identity
 
 **Recording**:
-The underlying performance or audio shared by one or more Release Tracks. A source video ID may identify a Recording, but it does not identify one appearance on an album or single.
+The underlying performance or audio shared by one or more Release Tracks. A source video ID may identify a Recording, but it does not identify one appearance on an album or single. A like is satisfied by any Library track of the same Recording, so a song liked on two platforms downloads once even when each platform lists it on a different Release. Live, remix, instrumental, acoustic, and sped-up or slowed versions are different Recordings; clean and explicit edits are not.
 _Avoid_: Library Track, release
 
 **Release Track**:
@@ -113,7 +113,7 @@ What the app is doing now and did recently, shown per track with the reason the 
 _Avoid_: Sync Job, run, queue, run history
 
 **Match**:
-The saved decision behind a Desired Track: which source track, Release, MusicBrainz recording, and lyrics the app chose. The app writes tags from the Match and only looks it up again on Refresh. A Full Discography catalog names its exact Release Track, so a track a catalog wants is always looked up from that catalog, even when it is also liked.
+The saved decision behind a Desired Track: which source track, Release, MusicBrainz recording, and lyrics the app chose. Audio and tags always come from a YouTube Music Release Track, even for a Spotify like; the Spotify track only guides the search. The app writes tags from the Match and only looks it up again on Refresh. A Full Discography catalog names its exact Release Track, so a track a catalog wants is always looked up from that catalog, even when it is also liked. Otherwise a YouTube Music like, which names a specific video, decides the Match before a Spotify like.
 _Avoid_: Resolution, candidate, lookup result
 
 **Refresh**:
@@ -137,6 +137,10 @@ _Avoid_: Google Session, email account, channel
 **Selected YouTube Music Account**:
 The YouTube Music Account the app currently uses.
 _Avoid_: Active Google Session, current channel
+
+**Spotify Account**:
+The one Spotify identity the user signed into through the app's own sign-in window. It only supplies a Liked Music Library; the app never downloads from Spotify. When the user signs out or the session expires, its likes stay as last seen and keep backing their tracks.
+_Avoid_: Spotify Session, Spotify developer app
 
 ## Example Dialogue
 
@@ -195,3 +199,11 @@ Domain expert: "No. A Full Discography artist is explicitly selected by the user
 Developer: "If a user liked some songs by a Full Discography artist, should those download twice?"
 
 Domain expert: "No. Liked songs and Full Discography discovery merge into one Desired Track when they refer to the same Release Track."
+
+Developer: "I liked a song on YouTube Music from the album and on Spotify from the single. Do I get two files?"
+
+Domain expert: "No. Both likes are the same Recording, so the second like joins the track the first one created."
+
+Developer: "A Spotify like has no match on YouTube Music. Does the app download the closest result?"
+
+Domain expert: "No. The track goes to Needs Attention. A wrong song tagged as the one you liked is worse than a missing one."

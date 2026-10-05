@@ -18,7 +18,7 @@ import { type ArtistCredit, normalizeArtistCredits } from '../domain'
  * exactly what the writer put there.
  */
 
-export const LMS_TAG_SCHEMA_VERSION = 7
+export const LMS_TAG_SCHEMA_VERSION = 8
 const ITUNES = 'com.apple.iTunes'
 
 export interface LmsFields {
@@ -77,6 +77,9 @@ export interface ReadResult {
  * so it stays as it is.
  */
 export const CATALOG_SOURCE_ORIGIN = 'favorite_artist_release'
+export const YOUTUBE_LIKED_SOURCE_ORIGIN = 'youtube_music_liked'
+export const SPOTIFY_LIKED_SOURCE_ORIGIN = 'spotify_liked'
+export const BOTH_LIKED_SOURCE_ORIGIN = 'youtube_music_and_spotify_liked'
 
 const LMS_KEYS: Record<
   Exclude<

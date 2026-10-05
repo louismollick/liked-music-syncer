@@ -38,7 +38,7 @@ function stagePercent(track: ActivityTrackView): number {
  * scrolling.
  */
 export function ActivityPage() {
-  const { setAttentionOpen, openSong } = useAppState()
+  const { settings, setAttentionOpen, openSong } = useAppState()
   const activity = useActivity()
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -221,11 +221,21 @@ export function ActivityPage() {
               ref={currentRef}
               className="my-2 h-14 flex items-center px-4 text-[15px] text-zinc-500"
             >
-              {activity?.checking
-                ? 'Checking your liked songs…'
-                : upNext.length
-                  ? 'Waiting to retry…'
-                  : 'Up to date. New likes will appear here.'}
+              {settings && !settings.libraryFolder ? (
+                <button
+                  type="button"
+                  className="text-left hover:text-white underline underline-offset-4"
+                  onClick={() => void navigate({ to: '/settings' })}
+                >
+                  Choose a library folder in Settings to start syncing.
+                </button>
+              ) : activity?.checking ? (
+                'Checking your liked songs…'
+              ) : upNext.length ? (
+                'Waiting to start…'
+              ) : (
+                'Up to date. New likes will appear here.'
+              )}
             </div>
           )}
           {upNext.map((track, index) => (

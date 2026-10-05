@@ -178,3 +178,54 @@ describe('LibraryQueries', () => {
     })
   })
 })
+
+it('filters each liked platform and shows the earliest Liked Date and both Source Contributions', async () => {
+  const { h, q, firstRow, secondRow } = await seeded()
+  h.db
+    .insert(contributions)
+    .values({
+      id: 'spotify',
+      sourceKey: 'spotify-liked:account:track',
+      kind: 'spotify_liked',
+      trackId: firstRow.id,
+      firstSeenAt: '2026-09-01T00:00:00.000Z',
+      lastSeenAt: 'now',
+      raw: '{}',
+    })
+    .run()
+  expect(
+    q.songs({ filters: { likedOn: 'spotify' } }).rows.map((row) => row.id)
+  ).toEqual([firstRow.id])
+  expect(
+    q.songs({ filters: { likedOn: 'youtube_music' } }).rows.map((row) => row.id)
+  ).toEqual(expect.arrayContaining([firstRow.id, secondRow.id]))
+  expect(q.track(firstRow.id)?.song).toMatchObject({
+    likedAt: '2026-09-01T00:00:00.000Z',
+    catalogOnly: false,
+  })
+  expect(q.track(firstRow.id)?.contributions).toEqual([
+    {
+      kind: 'spotify_liked',
+      label: 'Liked on Spotify',
+      at: '2026-09-01T00:00:00.000Z',
+    },
+    {
+      kind: 'liked',
+      label: 'Liked on YouTube Music',
+      at: '2026-09-24T00:00:00.000Z',
+    },
+  ])
+  h.db
+    .update(contributions)
+    .set({ active: false })
+    .where(eq(contributions.kind, 'liked'))
+    .run()
+  expect(q.songs({ filters: { likedOn: 'youtube_music' } }).rows).toEqual([])
+  expect(q.track(firstRow.id)?.song.likedAt).toBe('2026-09-01T00:00:00.000Z')
+  h.db
+    .update(contributions)
+    .set({ active: false })
+    .where(eq(contributions.kind, 'spotify_liked'))
+    .run()
+  expect(q.songs({ filters: { likedOn: 'spotify' } }).rows).toEqual([])
+})

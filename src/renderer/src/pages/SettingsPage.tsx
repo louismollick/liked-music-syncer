@@ -36,7 +36,7 @@ function Row({
 }
 
 export function SettingsPage() {
-  const { settings, session, updateSettings } = useAppState()
+  const { settings, session, spotify, updateSettings } = useAppState()
   if (!settings || !session) return null
   const account = session.accounts.find(
     (a) => a.id === session.selectedAccountId
@@ -49,9 +49,9 @@ export function SettingsPage() {
       <div className="p-6 max-w-3xl">
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 
-        <Heading>YouTube Music</Heading>
+        <Heading>Accounts</Heading>
         <Row
-          label="Account"
+          label="YouTube Music"
           help={
             session.state === 'signed_in'
               ? 'Signed in inside the app'
@@ -74,6 +74,11 @@ export function SettingsPage() {
                   </div>
                 )}
               </div>
+              {account.likedCount !== null && (
+                <span className="text-[11px] text-zinc-500">
+                  {account.likedCount.toLocaleString()} liked songs
+                </span>
+              )}
               {others.length > 0 && (
                 <Menu
                   align="right"
@@ -107,6 +112,37 @@ export function SettingsPage() {
               onClick={() => void invoke('session:signIn')}
             >
               <LogIn className="w-3.5 h-3.5" /> Sign in to YouTube Music
+            </Button>
+          )}
+        </Row>
+
+        <Row label="Spotify" help={spotify?.message ?? undefined}>
+          {spotify?.state === 'checking' ? (
+            <span className="text-[13px] text-zinc-400">
+              Checking Spotify Account…
+            </span>
+          ) : spotify?.account ? (
+            <>
+              <div className="min-w-0 mr-auto">
+                <div className="text-[13px] truncate">
+                  {spotify.account.name}
+                </div>
+                {spotify.account.likedCount !== null && (
+                  <div className="text-[11px] text-zinc-500">
+                    {spotify.account.likedCount.toLocaleString()} liked songs
+                  </div>
+                )}
+              </div>
+              <Button onClick={() => void invoke('spotify:signOut')}>
+                <LogOut className="w-3.5 h-3.5" /> Sign out
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={() => void invoke('spotify:signIn')}
+            >
+              <LogIn className="w-3.5 h-3.5" /> Sign in to Spotify
             </Button>
           )}
         </Row>

@@ -185,23 +185,40 @@ export function versionMarkers(value: string | null | undefined): Set<string> {
       .map(([name]) => name)
   )
 }
-export function versionCompatible(
-  sourceTitle: string,
-  sourceArtist: string,
-  candidate: CatalogTrack
-): boolean {
-  const markers = versionMarkers(sourceTitle)
-  if (!markers.size) return true
-  const found = versionMarkers(
-    `${candidate.title} ${candidate.album?.name ?? ''}`
+function albumVersionMarkers(value: string): Set<string> {
+  const versions = [
+    ...value.matchAll(/[([{（【]([^)\]}）】]*)[)\]}）】]/gu),
+  ].map((match) => match[1])
+  const suffix = /\s+-\s+(.+)$/u.exec(value)
+  if (suffix) versions.push(suffix[1])
+  const markers = versionMarkers(
+    versions
+      .join(' ')
+      .replace(/\b(remixes|covers|edits|demos)\b/giu, (word) =>
+        word.toLowerCase() === 'remixes' ? 'remix' : word.slice(0, -1)
+      )
   )
-  const missing = [...markers].filter((marker) => !found.has(marker))
-  if (!missing.length) return true
+  if (
+    normalizeText(value) === 'live' ||
+    /^\s*live\s+(?:at|in|from|on)\b/iu.test(value)
+  )
+    markers.add('live')
+  return markers
+}
+export function versionCompatible(
+  source: Pick<CatalogTrack, 'title' | 'album'>,
+  candidate: Pick<CatalogTrack, 'title' | 'album'>
+): boolean {
+  const markersFor = (track: Pick<CatalogTrack, 'title' | 'album'>) =>
+    new Set([
+      ...versionMarkers(track.title),
+      ...albumVersionMarkers(track.album?.name ?? ''),
+    ])
+  const markers = markersFor(source)
+  const found = markersFor(candidate)
   return (
-    missing.every((marker) => marker === 'cover') &&
-    candidate.artists.some(
-      (credit) => textSimilarity(credit.name, sourceArtist) >= 0.88
-    )
+    markers.size === found.size &&
+    [...markers].every((marker) => found.has(marker))
   )
 }
 export function orderedTitleSearchQueries(

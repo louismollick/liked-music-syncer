@@ -6,10 +6,12 @@ import ffmpegPath from 'ffmpeg-static'
 import type { AudioDownloader } from '../../src/main/acquire/audio'
 import { createArtistPages } from '../../src/main/artist-pages'
 import {
+  type CatalogAlbumSearchResult,
   type CatalogArtist,
   type CatalogRelease,
   type CatalogReleaseRef,
   CatalogShapeError,
+  type CatalogTrack,
   type LikedSong,
   type YouTubeMusicCatalog,
 } from '../../src/main/catalog/types'
@@ -133,7 +135,17 @@ export class FakeCatalog implements YouTubeMusicCatalog {
   async artistReleases(_channelId: string) {
     return this.refs
   }
-  async searchSongs() {
+  async searchAlbums(
+    _query: string,
+    _signal?: AbortSignal
+  ): Promise<CatalogAlbumSearchResult[]> {
+    return []
+  }
+  async searchSongs(
+    _query: string,
+    _options?: { ignoreSpelling?: boolean; limit?: number },
+    _signal?: AbortSignal
+  ): Promise<CatalogTrack[]> {
     return []
   }
   async watch() {
@@ -157,6 +169,13 @@ export class FakeMatcher implements Matcher {
     this.calls++
     if (this.error) throw this.error
     await this.during?.(input)
+    if (input.kind === 'spotify') {
+      const match = this.matches.get(input.track.trackId)
+      if (match) return match
+      throw Object.assign(new Error('Not found on YouTube Music'), {
+        kind: 'permanent',
+      })
+    }
     const item = input.kind === 'liked' ? input.song : input.track
     const fromMap = this.matches.get(item.videoId)
     if (fromMap) return fromMap

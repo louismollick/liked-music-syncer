@@ -57,6 +57,87 @@ function findArray(value: unknown, key: string): unknown[] | null {
 }
 
 describe('YouTube Music catalog', () => {
+  it('reads release IDs and artist credits from albums-filter search rows', async () => {
+    const response = {
+      contents: {
+        tabbedSearchResultsRenderer: {
+          tabs: [
+            {
+              tabRenderer: {
+                content: {
+                  sectionListRenderer: {
+                    contents: [
+                      {
+                        musicShelfRenderer: {
+                          title: { runs: [{ text: 'Albums' }] },
+                          contents: [
+                            {
+                              musicResponsiveListItemRenderer: {
+                                navigationEndpoint: {
+                                  browseEndpoint: { browseId: 'MPREalbum' },
+                                },
+                                flexColumns: [
+                                  {
+                                    musicResponsiveListItemFlexColumnRenderer: {
+                                      text: { runs: [{ text: 'Album' }] },
+                                    },
+                                  },
+                                  {
+                                    musicResponsiveListItemFlexColumnRenderer: {
+                                      text: {
+                                        runs: [
+                                          {
+                                            text: 'Artist',
+                                            navigationEndpoint: {
+                                              browseEndpoint: {
+                                                browseId: 'UCartist',
+                                              },
+                                            },
+                                          },
+                                        ],
+                                      },
+                                    },
+                                  },
+                                ],
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    }
+    const { catalog, calls } = fake(() => response)
+    expect(await catalog.searchAlbums('Album Artist')).toEqual([
+      {
+        browseId: 'MPREalbum',
+        title: 'Album',
+        artists: [{ name: 'Artist', channelId: 'UCartist' }],
+      },
+    ])
+    expect(calls[0]).toMatchObject({
+      endpoint: 'search',
+      authenticated: false,
+      body: {
+        query: 'Album Artist',
+        params: 'EgWKAQIYAWoKEAkQChAFEAMQBA%3D%3D',
+      },
+    })
+    expect(
+      await fake(() => fixture('search-no-results')).catalog.searchAlbums(
+        'missing'
+      )
+    ).toEqual([])
+    await expect(fake(() => ({})).catalog.searchAlbums('bad')).rejects.toThrow(
+      CatalogShapeError
+    )
+  })
   it('reads the page name and Official Artist Channel, with safe header fallbacks', async () => {
     const page = fixture('artist-primary-channel') as {
       header: {

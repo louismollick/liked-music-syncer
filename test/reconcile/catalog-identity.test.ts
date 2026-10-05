@@ -70,7 +70,7 @@ function expectCatalogInvariant(h: Harness) {
     if (row.kind !== 'catalog' || !row.active) continue
     const track = h.rows().find((t) => t.id === row.trackId)
     expect(track?.identityKey).toBe(
-      releaseIdentityKey(row.releaseId!, row.sourceVideoId)
+      releaseIdentityKey(row.releaseId!, row.sourceVideoId!)
     )
   }
 }

@@ -1,0 +1,76 @@
+{
+  "data": {
+    "me": {
+      "library": {
+        "tracks": {
+          "totalCount": 3,
+          "items": [
+            {
+              "addedAt": {
+                "isoString": "2026-09-30T12:00:00Z"
+              },
+              "track": {
+                "data": {
+                  "uri": "spotify:track:one",
+                  "name": "A Song",
+                  "artists": {
+                    "items": [
+                      {
+                        "uri": "spotify:artist:artist",
+                        "profile": {
+                          "name": "Test Artist"
+                        }
+                      }
+                    ]
+                  },
+                  "albumOfTrack": {
+                    "uri": "spotify:album:album",
+                    "name": "Test Album"
+                  },
+                  "trackDuration": {
+                    "totalMilliseconds": 200000
+                  },
+                  "trackNumber": 1
+                }
+              }
+            },
+            {
+              "track": {
+                "data": {
+                  "uri": "spotify:local:one"
+                }
+              }
+            },
+            {
+              "addedAt": "2026-10-01T12:00:00Z",
+              "item": {
+                "data": {
+                  "uri": "spotify:track:two",
+                  "name": "A Song",
+                  "artists": {
+                    "items": [
+                      {
+                        "uri": "spotify:artist:artist",
+                        "profile": {
+                          "name": "Test Artist"
+                        }
+                      }
+                    ]
+                  },
+                  "albumOfTrack": {
+                    "uri": "spotify:album:album",
+                    "name": "Test Album"
+                  },
+                  "duration": {
+                    "totalMilliseconds": 201000
+                  },
+                  "trackNumber": 2
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

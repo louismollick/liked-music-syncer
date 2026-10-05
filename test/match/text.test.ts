@@ -26,6 +26,45 @@ const candidate = (title: string, artist: string): CatalogTrack => ({
   discNumber: null,
   isAvailable: true,
 })
+
+describe('album version markers', () => {
+  it.each([
+    'Live Through This',
+    'Demo Tapes',
+    'Covers',
+    'Edit',
+    'The World We Live In',
+  ])('ignores ordinary words in %s in both directions', (album) => {
+    const studio = { title: 'Song', album: { name: album, browseId: null } }
+    const single = { title: 'Song', album: { name: 'Single', browseId: null } }
+    expect(versionCompatible(studio, single)).toBe(true)
+    expect(versionCompatible(single, studio)).toBe(true)
+  })
+  it.each([
+    ['Album (Live)', 'Live'],
+    ['Album [Remixes]', 'Remix'],
+    ['Album (Acoustic Version)', 'Acoustic'],
+    ['Album [Covers]', 'Cover'],
+    ['Album - Live', 'Live'],
+    ['Live', 'Live'],
+    ['LIVE!', 'Live'],
+    ['Live at Budokan', 'Live'],
+    ['Live in Tokyo', 'Live'],
+    ['Live from London', 'Live'],
+    ['Live on Stage', 'Live'],
+  ])('recognizes the version in %s symmetrically', (album, version) => {
+    const versioned = { title: 'Song', album: { name: album, browseId: null } }
+    const studio = { title: 'Song', album: null }
+    expect(versionCompatible(versioned, studio)).toBe(false)
+    expect(versionCompatible(studio, versioned)).toBe(false)
+    expect(
+      versionCompatible(versioned, { ...studio, title: `Song (${version})` })
+    ).toBe(true)
+    expect(
+      versionCompatible({ ...studio, title: `Song (${version})` }, versioned)
+    ).toBe(true)
+  })
+})
 describe('Python text goldens', () => {
   it('matches 80 realistic titles and artists', () => {
     expect(golden).toHaveLength(80)
@@ -55,8 +94,7 @@ describe('Python text goldens', () => {
       )
       expect(
         versionCompatible(
-          row.title,
-          row.artist,
+          { title: row.title, album: null },
           candidate(row.compare, row.artist)
         ),
         row.title

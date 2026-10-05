@@ -19,6 +19,7 @@ export interface SongsSearch {
   remote?: 'in_sync' | 'stale' | 'missing'
   state?: 'needs_attention' | 'no_longer_wanted'
   lang?: string
+  likedOn?: SongFilters['likedOn']
   fullDiscography?: boolean
   sort?: SongSort
   desc?: boolean
@@ -55,6 +56,7 @@ export function SongsPage() {
   const sort = search.sort ?? 'liked'
   const descending = search.desc ?? sort === 'liked'
   const filters: SongFilters = {
+    likedOn: search.likedOn,
     lyrics: search.lyrics,
     remote: search.remote,
     state: search.state,
@@ -64,6 +66,7 @@ export function SongsPage() {
   const { data } = useLibraryData(
     () => invoke('library:songs', { filters, sort, descending, limit: 20000 }),
     [
+      search.likedOn,
       search.lyrics,
       search.remote,
       search.state,
@@ -133,6 +136,16 @@ export function SongsPage() {
           meta={data ? plural(data.total, 'song') : undefined}
         />
         <div className="flex items-center gap-2 flex-wrap">
+          {search.likedOn && (
+            <Chip
+              label={
+                search.likedOn === 'spotify'
+                  ? 'Liked on Spotify'
+                  : 'Liked on YouTube Music'
+              }
+              onRemove={() => set({ likedOn: undefined })}
+            />
+          )}
           {search.state && (
             <Chip
               label={STATE_LABEL[search.state]}
@@ -165,6 +178,19 @@ export function SongsPage() {
           )}
           <AddFilterButton
             sections={[
+              {
+                title: 'Liked Music Library',
+                options: (['youtube_music', 'spotify'] as const).map(
+                  (platform) => ({
+                    label:
+                      platform === 'spotify'
+                        ? 'Liked on Spotify'
+                        : 'Liked on YouTube Music',
+                    active: search.likedOn === platform,
+                    onSelect: () => set({ likedOn: platform }),
+                  })
+                ),
+              },
               {
                 title: 'Lyrics',
                 options: (['synced', 'plain', 'none'] as const).map((v) => ({
