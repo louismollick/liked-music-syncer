@@ -46,3 +46,9 @@ A read-only backup contained 299 downloaded Spotify likes. The original and revi
 The checked-in fixture minimizes 22 representative real response captures, includes competing wrong artists and editions, and replaces liked dates/positions with neutral values. Release pages for the new alias path were fetched from the real catalog before inclusion. Unit and integration tests exercise exact native aliases, token multiplicity, short-title substring rejection, original-title video identity, unavailable membership, fallback-only optional reads, request caps, promise eviction, cancellation, transient errors, and existing-library joins without another match or download.
 
 Claude Opus 5.5 approved the revised plan after the first round identified false-positive and optional-network-failure risks. Its two binding constraints are reflected in the tests: narrow variants do not gain substring credit, and native reads filter duration/version/exact title before spending their budget.
+
+## Implementation review round 1 fixes
+
+Codex identified full bilingual-label containment, recording suffixes treated as bilingual variants, and loss of release evidence when deduplicating with a Standalone Recording. All three were reproduced and fixed. Added regressions reject short-title containment in both directions, exclude version/edition/mix/recording suffixes from relaxed title identity, and preserve proven release metadata while reusing a Standalone track's existing audio file and joining contributions.
+
+After these changes, offline rescoring of the 294 ordinary winners in the captured successful-track replay rejects none. All 22 real fixture cases still pass. The complete suite passes with 478 tests and two skipped; lint, all typechecks and the production build also pass. Independent reviewers must approve the revised commit before merge.

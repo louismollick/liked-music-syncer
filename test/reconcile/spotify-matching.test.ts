@@ -272,6 +272,43 @@ it('joins an existing liked recording through its stored native artist name with
   expect(h.downloads).toEqual(['audio'])
   expect(new Set(h.contributions().map((row) => row.trackId)).size).toBe(1)
 })
+
+it('upgrades an existing Standalone Recording to the proven Spotify Release Track without downloading again', async () => {
+  const h = harness()
+  const like = song('audio', 'A Song')
+  h.catalog.likes = [like]
+  await h.start()
+  await h.stop()
+  const existing = h.rows()[0]
+  expect(JSON.parse(existing.match!).release).toBeNull()
+  const album = release('album', like)
+  const match = { ...releaseMatch(like, album, 'audio'), sourceVideoId: null }
+  h.matcher.matches.set('spotify', match)
+  await addSpotify(h)
+  const outcome = await runMatch(
+    h.deps,
+    h.rows().find((row) => !row.identityKey)!,
+    run()
+  )
+  expect(outcome.trackId).toBe(existing.id)
+  expect(h.rows()).toHaveLength(1)
+  expect(h.rows()[0]).toMatchObject({
+    id: existing.id,
+    identityKey: match.identityKey,
+    album: album.title,
+    releaseId: album.browseId,
+    trackNumber: 1,
+  })
+  expect(JSON.parse(h.rows()[0].match!)).toMatchObject({
+    release: { browseId: album.browseId },
+    confirmed: true,
+  })
+  expect(new Set(h.contributions().map((row) => row.trackId))).toEqual(
+    new Set([existing.id])
+  )
+  await h.start()
+  expect(h.downloads).toEqual(['audio'])
+})
 it('applies the same Recording rule to YouTube likes while catalogs keep strict Release identities', async () => {
   const h = harness()
   const album = release('album', song('audio', 'A Song'))

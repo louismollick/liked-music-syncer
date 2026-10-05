@@ -129,6 +129,38 @@ describe('evidence cannot combine two weak identities', () => {
     ).toBeNull()
   })
 
+  it.each([
+    ['春', '春の歌 - Spring Song'],
+    ['春の歌 - Spring Song', '春'],
+  ])('rejects containment between full bilingual titles: %s / %s', (title, other) => {
+    expect(
+      spotifyCandidateScore(
+        { ...source, title },
+        candidate(other, source.artists[0].name)
+      )
+    ).toBeNull()
+  })
+
+  it.each([
+    'Album Version',
+    'Single Ver.',
+    'Original Mix',
+    'Alternate Recording',
+    'Special Edition',
+  ])('does not use %s as a bilingual title with a relaxed artist', (suffix) => {
+    const nativeNames = new Map([['channel', source.artists[0].name]])
+    const title = 'No Boy No Cry'
+    for (const [left, right] of [
+      [title, `${title} - ${suffix}`],
+      [`${title} - ${suffix}`, title],
+    ])
+      expect(
+        spotifyCandidateScore({ ...source, title: left }, candidate(right), {
+          nativeNames,
+        })
+      ).toBeNull()
+  })
+
   it('token-order equivalence retains multiplicity and requires an exact title', () => {
     const input = {
       ...source,
@@ -191,6 +223,33 @@ function setup() {
 }
 
 describe('optional lookup lifecycle', () => {
+  it.each([
+    ['春', '春の歌 - Spring Song'],
+    ['春の歌 - Spring Song', '春'],
+  ])('does not select a different song through bilingual containment: %s / %s', async (title, other) => {
+    const s = setup()
+    try {
+      const artists = [{ name: source.artists[0].name, channelId: 'channel' }]
+      s.album.tracks[0] = { ...s.item, title: other, artists }
+      s.searches.mockResolvedValue([
+        {
+          ...s.item,
+          title: other,
+          artists,
+          album: { browseId: s.album.browseId, name: s.album.title },
+        },
+      ])
+      vi.spyOn(s.h.deps.http, 'json').mockImplementation(
+        async <T>() => ({}) as T
+      )
+      await expect(
+        s.matcher.match({ kind: 'spotify', track: { ...source, title } })
+      ).rejects.toMatchObject({ reason: 'no_match' })
+    } finally {
+      await s.h.close()
+    }
+  })
+
   it('caches native names, evicts transient failures, and resets the cache', async () => {
     const s = setup()
     try {

@@ -410,6 +410,7 @@ function spotifyTitleVariants(title: string): string[] {
     /^(?:\d{4}\s+)?(?:remaster(?:ed)?|deluxe(?: edition)?|explicit|clean)(?:\s+\d{4})?$/iu.test(
       parts[1]
     ) ||
+    /\b(?:version|ver\.?|edition|mix|recording)\b/iu.test(parts[1]) ||
     !versionCompatible({ title, album: null }, { title: parts[0], album: null })
   )
     return [normalizeText(title)]
@@ -424,9 +425,15 @@ function exactSpotifyTitle(source: string, candidate: string): boolean {
 }
 
 function spotifyTitleScore(source: string, candidate: string): number {
-  let score = textSimilarity(source, candidate)
-  for (const left of spotifyTitleVariants(source))
-    for (const right of spotifyTitleVariants(candidate)) {
+  const sourceVariants = spotifyTitleVariants(source)
+  const candidateVariants = spotifyTitleVariants(candidate)
+  // Full bilingual labels can contain a different, shorter song title too.
+  let score =
+    sourceVariants.length === 1 && candidateVariants.length === 1
+      ? textSimilarity(source, candidate)
+      : 0
+  for (const left of sourceVariants)
+    for (const right of candidateVariants) {
       if (left === right) return 1
       // A short bilingual fragment must not gain the substring bonus.
       if (!left.includes(right) && !right.includes(left))
