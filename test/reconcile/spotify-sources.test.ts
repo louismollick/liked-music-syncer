@@ -102,6 +102,44 @@ it('requires every configured liked source before marking tracks No Longer Wante
   expect(h.db.select().from(tracks).get()?.state).toBe('pending')
 })
 
+it('keeps the previous Spotify account active until a complete replacement snapshot succeeds', async () => {
+  const h = harness()
+  await check(h, [spotifyTrack('old')])
+  const replacement = (declaredCount: number) =>
+    checkSpotifyLikedSongs({
+      db: h.db,
+      accountId: 'new-account',
+      library: {
+        likedSongs: async () => ({
+          tracks: [spotifyTrack('new')],
+          declaredCount,
+        }),
+      },
+      stillCurrent: () => true,
+    })
+  await expect(replacement(100)).rejects.toThrow('keeping the previous list')
+  expect(
+    h
+      .contributions()
+      .filter((row) => row.active)
+      .map((row) => row.accountId)
+  ).toEqual(['spotify-account'])
+  await replacement(1)
+  expect(
+    h
+      .contributions()
+      .filter((row) => row.active)
+      .map((row) => row.accountId)
+  ).toEqual(['new-account'])
+  await check(h, [spotifyTrack('old')])
+  expect(
+    h
+      .contributions()
+      .filter((row) => row.active)
+      .map((row) => row.accountId)
+  ).toEqual(['spotify-account'])
+})
+
 it('shows Spotify source errors in Activity while keeping its last-seen contributions active after sign-out', async () => {
   const h = harness()
   let accountId: string | null = 'spotify-account'

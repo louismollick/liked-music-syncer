@@ -48,7 +48,8 @@ import {
 import { isInstrumentalTitle } from '../lyrics/query'
 import type { LyricsFinder } from '../lyrics/types'
 import {
-  compareSpotifyCandidates,
+  SpotifyMatchError,
+  selectSpotifyCandidate,
   spotifyCandidateScore,
 } from '../match/resolve'
 import {
@@ -543,12 +544,17 @@ function existingSpotifyMatch(
         },
         relaxed ? { nativeNames } : undefined
       )
-      return scores ? [{ match, ...scores }] : []
+      return scores?.exactTitle ? [{ match, ...scores }] : []
     })
   let candidates = score(false)
   if (!candidates.length) candidates = score(true)
-  candidates.sort(compareSpotifyCandidates)
-  return candidates[0]?.match ?? null
+  try {
+    return selectSpotifyCandidate(candidates)
+  } catch (error) {
+    if (error instanceof SpotifyMatchError && error.reason === 'ambiguous')
+      return null
+    throw error
+  }
 }
 
 /** Likes join a known Recording; catalog inputs keep their exact Release Track. */
@@ -1182,10 +1188,16 @@ async function matchOnce(
 
   const at = iso(deps)
   let survivor = track.id
-  const targetCondition = recording
-    ? eq(tracks.id, recording.id)
-    : eq(tracks.identityKey, match.identityKey)
-  let candidate = deps.db.select().from(tracks).where(targetCondition).get()
+  const findTarget = (db: Db) =>
+    db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.identityKey, match.identityKey))
+      .get() ??
+    (recording
+      ? db.select().from(tracks).where(eq(tracks.id, recording.id)).get()
+      : undefined)
+  let candidate = findTarget(deps.db)
   if (candidate?.id === track.id) candidate = undefined
   const fileOf = (trackId: string) =>
     deps.db.select().from(files).where(eq(files.trackId, trackId)).get()
@@ -1222,7 +1234,7 @@ async function matchOnce(
     const names = canonicalTrackNames(db, { ...current, artistCredits }, match)
     if (!names) throw new RetryLaterError('Waiting for artist pages')
     const previousIdentityKey = current.identityKey
-    let target = db.select().from(tracks).where(targetCondition).get()
+    let target = findTarget(db)
     if (target?.id === current.id) target = undefined
     // A catalog contribution only ever belongs to its own Release Track.
     const required = [

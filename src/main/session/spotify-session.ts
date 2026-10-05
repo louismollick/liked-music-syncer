@@ -168,6 +168,10 @@ export class SpotifySession {
     this.signInWindow = null
     win?.close()
     await this.partition.clearStorageData()
+    // Invalidate refreshes and tokens created while old cookies were clearing.
+    this.gen += 1
+    this.token.invalidate()
+    this.current = { state: 'signed_out', account: null, message: null }
     return this.emit()
   }
 }

@@ -132,6 +132,11 @@ describe('evidence cannot combine two weak identities', () => {
   it.each([
     ['春', '春の歌 - Spring Song'],
     ['春の歌 - Spring Song', '春'],
+    ['Home', 'Home Again'],
+    ['Interlude', 'Interlude II'],
+    ['Stay', 'Stay With Me'],
+    ['Love', 'Love Song'],
+    ['春', '春の歌'],
   ])('rejects containment between full bilingual titles: %s / %s', (title, other) => {
     expect(
       spotifyCandidateScore(
@@ -139,6 +144,22 @@ describe('evidence cannot combine two weak identities', () => {
         candidate(other, source.artists[0].name)
       )
     ).toBeNull()
+  })
+
+  it.each([
+    ['But Tonight We Dance', 'But Tonight We Dance (Single Version)'],
+    ['A Beautiful Mine', 'A Beautiful Mine (Theme Music From Mad Men)'],
+  ])('retains title evidence for the delimited suffix: %s / %s', (title, other) => {
+    for (const [left, right] of [
+      [title, other],
+      [other, title],
+    ])
+      expect(
+        spotifyCandidateScore(
+          { ...source, title: left },
+          candidate(right, source.artists[0].name)
+        )
+      ).not.toBeNull()
   })
 
   it.each([
@@ -226,6 +247,11 @@ describe('optional lookup lifecycle', () => {
   it.each([
     ['春', '春の歌 - Spring Song'],
     ['春の歌 - Spring Song', '春'],
+    ['Home', 'Home Again'],
+    ['Interlude', 'Interlude II'],
+    ['Stay', 'Stay With Me'],
+    ['Love', 'Love Song'],
+    ['春', '春の歌'],
   ])('does not select a different song through bilingual containment: %s / %s', async (title, other) => {
     const s = setup()
     try {

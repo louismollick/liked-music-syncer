@@ -427,16 +427,29 @@ function exactSpotifyTitle(source: string, candidate: string): boolean {
 function spotifyTitleScore(source: string, candidate: string): number {
   const sourceVariants = spotifyTitleVariants(source)
   const candidateVariants = spotifyTitleVariants(candidate)
-  // Full bilingual labels can contain a different, shorter song title too.
-  let score =
-    sourceVariants.length === 1 && candidateVariants.length === 1
-      ? textSimilarity(source, candidate)
-      : 0
+  const suffixBase = (title: string) =>
+    normalizeText(
+      title
+        .replace(/(?:\s*[([{（【][^)\]}）】]*[)\]}）】])+\s*$/u, '')
+        .replace(/\s+-\s+.+$/u, '')
+    )
+  // Bare extra words can be a different song. Only delimited suffixes retain
+  // the old containment credit; bilingual labels use their narrow variants.
+  let score = 0
+  if (
+    sourceVariants.length === 1 &&
+    candidateVariants.length === 1 &&
+    (normalizeText(source) === suffixBase(candidate) ||
+      normalizeText(candidate) === suffixBase(source))
+  )
+    score = textSimilarity(source, candidate)
   for (const left of sourceVariants)
     for (const right of candidateVariants) {
       if (left === right) return 1
-      // A short bilingual fragment must not gain the substring bonus.
-      if (!left.includes(right) && !right.includes(left))
+      if (
+        (sourceVariants.length === 1 && candidateVariants.length === 1) ||
+        (!left.includes(right) && !right.includes(left))
+      )
         score = Math.max(score, sequenceMatcherRatio(left, right))
     }
   return score

@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   cookies: [] as { name: string; value: string }[],
   windows: [] as SignInWindow[],
   partitions: [] as string[],
+  clearStorageData: vi.fn(async () => {}),
 }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -49,9 +50,7 @@ vi.mock('electron', async () => {
                 (cookie) => !filter.name || cookie.name === filter.name
               ),
           },
-          clearStorageData: async () => {
-            state.cookies = []
-          },
+          clearStorageData: state.clearStorageData,
         }
       },
     },
@@ -61,6 +60,9 @@ beforeEach(() => {
   state.cookies = []
   state.windows = []
   state.partitions = []
+  state.clearStorageData.mockImplementation(async () => {
+    state.cookies = []
+  })
 })
 function session() {
   const calls: { url: string; headers: HeadersInit | undefined }[] = []
@@ -138,5 +140,37 @@ it('sign-out closes an open login without racing a new account probe', async () 
   await s.session.signOut()
   expect((await result).state).toBe('signed_out')
   expect(s.calls).toEqual([])
+  expect(s.session.accountId()).toBeNull()
+})
+
+it.each([
+  'before',
+  'after',
+])('keeps sign-out final when a concurrent refresh completes %s storage clearing', async (completion) => {
+  state.cookies = [{ name: 'sp_dc', value: 'secret' }]
+  const s = session()
+  const clearing = Promise.withResolvers<void>()
+  state.clearStorageData.mockImplementationOnce(async () => {
+    await clearing.promise
+    state.cookies = []
+  })
+  const probing = Promise.withResolvers<{ id: string; name: string }>()
+  vi.spyOn(s.session.library, 'account').mockReturnValueOnce(probing.promise)
+  const signingOut = s.session.signOut()
+  const refresh = s.session.refresh()
+  // Let refresh observe the cookies before storage clearing completes.
+  await Promise.resolve()
+  await Promise.resolve()
+  if (completion === 'before') {
+    probing.resolve({ id: 'old-account', name: 'Old account' })
+    await refresh
+  }
+  clearing.resolve()
+  expect((await signingOut).state).toBe('signed_out')
+  if (completion === 'after') {
+    probing.resolve({ id: 'old-account', name: 'Old account' })
+    await refresh
+  }
+  expect(s.session.view().state).toBe('signed_out')
   expect(s.session.accountId()).toBeNull()
 })

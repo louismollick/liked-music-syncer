@@ -67,26 +67,20 @@ it('enriches the YouTube Music Match for a Spotify-only track', async () => {
   })
 })
 
-it.each([
-  'album score',
-  'score',
-])('joins an existing Library match by %s without a catalog ambiguity error', async (priority) => {
+it('joins the exact requested album among compatible existing Library matches', async () => {
   const h = harness()
   const other = song('other-like', 'A Song')
   const preferred = song('preferred-like', 'A Song')
   const otherAlbum = {
     ...release('other-album', song('other-audio', 'A Song')),
-    title:
-      priority === 'album score'
-        ? `${spotify.album.name} Plus`
-        : spotify.album.name,
+    title: `${spotify.album.name} Plus`,
   }
   const preferredAlbum = {
     ...release('preferred-album', song('preferred-audio', 'A Song')),
     title: spotify.album.name,
   }
-  otherAlbum.tracks[0].durationSeconds = priority === 'album score' ? 1 : 4
-  preferredAlbum.tracks[0].durationSeconds = priority === 'album score' ? 4 : 1
+  otherAlbum.tracks[0].durationSeconds = 1
+  preferredAlbum.tracks[0].durationSeconds = 4
   h.catalog.likes = [other, preferred]
   h.matcher.matches.set(
     other.videoId,
@@ -120,6 +114,75 @@ it.each([
   ).toBe(expected.id)
   expect(h.rows()).toHaveLength(2)
   expect(h.downloads).toHaveLength(2)
+})
+
+it('searches the catalog when different saved Recordings are equally plausible, then deduplicates by the proven video', async () => {
+  const h = harness()
+  const first = song('first', 'A Song')
+  const second = song('second', 'A Song')
+  const firstAlbum = {
+    ...release('first-album', first),
+    title: spotify.album.name,
+  }
+  const secondAlbum = {
+    ...release('second-album', second),
+    title: spotify.album.name,
+  }
+  h.catalog.likes = [first, second]
+  h.matcher.matches.set('first', releaseMatch(first, firstAlbum))
+  h.matcher.matches.set('second', releaseMatch(second, secondAlbum))
+  await h.start()
+  await h.stop()
+  const expected = h
+    .rows()
+    .find((row) => row.identityKey === 'second-album:second')!
+  const calls = h.matcher.calls
+  h.matcher.matches.set('spotify', {
+    ...releaseMatch(second, secondAlbum),
+    sourceVideoId: null,
+  })
+  await addSpotify(h)
+  await runMatch(h.deps, h.rows().find((row) => !row.identityKey)!, run())
+  expect(h.matcher.calls).toBe(calls + 1)
+  expect(
+    h.contributions().find((row) => row.kind === 'spotify_liked')?.trackId
+  ).toBe(expected.id)
+  await h.start()
+  expect(h.rows()).toHaveLength(2)
+  expect(h.downloads).toHaveLength(2)
+})
+
+it.each([
+  ['Home', 'Home Again'],
+  ['Interlude', 'Interlude II'],
+  ['Stay', 'Stay With Me'],
+  ['Love', 'Love Song'],
+  ['春', '春の歌'],
+  ['A Song', 'A Song (Theme Music From Somewhere)'],
+])('looks up %s instead of assigning its Spotify source ID to the saved song %s', async (title, other) => {
+  const h = harness()
+  const wrong = song('wrong', other)
+  const album = { ...release('album', wrong), title: spotify.album.name }
+  h.catalog.likes = [wrong]
+  h.matcher.matches.set('wrong', releaseMatch(wrong, album))
+  await h.start()
+  await h.stop()
+  const existing = h.rows()[0]
+  const correct = song('correct', title)
+  h.matcher.matches.set('spotify', {
+    ...releaseMatch(correct, release('correct-album', correct)),
+    sourceVideoId: null,
+  })
+  const calls = h.matcher.calls
+  await addSpotify(h, { ...spotify, title })
+  await runMatch(h.deps, h.rows().find((row) => !row.identityKey)!, run())
+  expect(h.matcher.calls).toBe(calls + 1)
+  expect(
+    h.contributions().find((row) => row.kind === 'spotify_liked')?.trackId
+  ).not.toBe(existing.id)
+  expect(
+    h.rows().find((row) => row.id === existing.id)?.spotifyTrackId
+  ).toBeNull()
 })
 
 it('looks up Recording targets without parsing unrelated or unconfirmed Matches', async () => {
@@ -273,7 +336,10 @@ it('joins an existing liked recording through its stored native artist name with
   expect(new Set(h.contributions().map((row) => row.trackId)).size).toBe(1)
 })
 
-it('upgrades an existing Standalone Recording to the proven Spotify Release Track without downloading again', async () => {
+it.each([
+  false,
+  true,
+])('upgrades an existing Standalone Recording while respecting a released exact identity: %s', async (released) => {
   const h = harness()
   const like = song('audio', 'A Song')
   h.catalog.likes = [like]
@@ -283,6 +349,19 @@ it('upgrades an existing Standalone Recording to the proven Spotify Release Trac
   expect(JSON.parse(existing.match!).release).toBeNull()
   const album = release('album', like)
   const match = { ...releaseMatch(like, album, 'audio'), sourceVideoId: null }
+  if (released)
+    h.db
+      .insert(tracks)
+      .values({
+        id: 'released',
+        title: 'A Song',
+        identityKey: match.identityKey,
+        match: JSON.stringify({ ...match, confirmed: true }),
+        state: 'released',
+        createdAt: 'now',
+        updatedAt: 'now',
+      })
+      .run()
   h.matcher.matches.set('spotify', match)
   await addSpotify(h)
   const outcome = await runMatch(
@@ -290,6 +369,19 @@ it('upgrades an existing Standalone Recording to the proven Spotify Release Trac
     h.rows().find((row) => !row.identityKey)!,
     run()
   )
+  if (released) {
+    expect(h.rows().find((row) => row.id === 'released')?.state).toBe(
+      'released'
+    )
+    expect(
+      h.contributions().find((row) => row.kind === 'spotify_liked')?.trackId
+    ).toBe('released')
+    expect(h.rows().find((row) => row.id === existing.id)?.identityKey).toBe(
+      existing.identityKey
+    )
+    expect(h.downloads).toEqual(['audio'])
+    return
+  }
   expect(outcome.trackId).toBe(existing.id)
   expect(h.rows()).toHaveLength(1)
   expect(h.rows()[0]).toMatchObject({

@@ -33,6 +33,7 @@ describe('album version markers', () => {
     'Demo Tapes',
     'Covers',
     'Edit',
+    'The World We Live In',
   ])('ignores ordinary words in %s in both directions', (album) => {
     const studio = { title: 'Song', album: { name: album, browseId: null } }
     const single = { title: 'Song', album: { name: 'Single', browseId: null } }

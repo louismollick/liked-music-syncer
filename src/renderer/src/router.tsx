@@ -107,8 +107,8 @@ const albumsRoute = createRoute({
 const songsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/songs',
-  validateSearch: (search: Record<string, unknown>): SongsSearch =>
-    pick<SongsSearch>(search, [
+  validateSearch: (search: Record<string, unknown>): SongsSearch => {
+    const picked = pick<SongsSearch>(search, [
       'likedOn',
       'lyrics',
       'remote',
@@ -118,7 +118,11 @@ const songsRoute = createRoute({
       'sort',
       'desc',
       'song',
-    ]),
+    ])
+    if (picked.likedOn !== 'spotify' && picked.likedOn !== 'youtube_music')
+      delete picked.likedOn
+    return picked
+  },
   component: TabRoute,
 })
 
