@@ -242,6 +242,36 @@ it('joins a Spotify like to an existing YouTube-liked Recording on a different R
   await h.start()
   expect(h.downloads).toEqual(['audio'])
 })
+
+it('joins an existing liked recording through its stored native artist name without matching or downloading again', async () => {
+  const h = harness()
+  const like = {
+    ...song('youtube-like', 'Reverb'),
+    artists: [{ ...credit, name: 'Suichu Spica' }],
+  }
+  const audio = { ...song('audio', 'Reverb'), artists: like.artists }
+  const album = { ...release('youtube-album', audio), artists: like.artists }
+  h.catalog.likes = [like]
+  h.matcher.matches.set(like.videoId, releaseMatch(like, album, 'audio'))
+  await h.start()
+  await h.stop()
+  h.db
+    .update(artists)
+    .set({ nativeName: '水中スピカ' })
+    .where(eq(artists.channelId, credit.channelId!))
+    .run()
+  const calls = h.matcher.calls
+  await addSpotify(h, {
+    ...spotify,
+    title: 'Reverb',
+    artists: [{ id: 'artist', name: '水中スピカ' }],
+  })
+  await runMatch(h.deps, h.rows().find((row) => !row.identityKey)!, run())
+  expect(h.matcher.calls).toBe(calls)
+  expect(h.rows()).toHaveLength(1)
+  expect(h.downloads).toEqual(['audio'])
+  expect(new Set(h.contributions().map((row) => row.trackId)).size).toBe(1)
+})
 it('applies the same Recording rule to YouTube likes while catalogs keep strict Release identities', async () => {
   const h = harness()
   const album = release('album', song('audio', 'A Song'))
@@ -306,7 +336,7 @@ it('puts runner-up ambiguity in Needs Attention', async () => {
     lastErrorKind: 'permanent',
   })
   expect(h.reconciler.activity().needsAttention[0].reason).toContain(
-    'Not found on YouTube Music (ambiguous'
+    'Several compatible YouTube Music Release Tracks found'
   )
   expect(h.downloads).toEqual([])
 })

@@ -47,7 +47,10 @@ import {
 } from '../library/schema'
 import { isInstrumentalTitle } from '../lyrics/query'
 import type { LyricsFinder } from '../lyrics/types'
-import { spotifyCandidateScore } from '../match/resolve'
+import {
+  compareSpotifyCandidates,
+  spotifyCandidateScore,
+} from '../match/resolve'
 import {
   type Match,
   type Matcher,
@@ -505,7 +508,16 @@ function existingSpotifyMatch(
   input: Extract<MatchInput, { kind: 'spotify' }>,
   currentId: string
 ): Match | null {
-  const candidates = db
+  const nativeNames = new Map(
+    db
+      .select({ channel: artists.channelId, native: artists.nativeName })
+      .from(artists)
+      .all()
+      .flatMap((artist) =>
+        artist.channel ? [[artist.channel, artist.native] as const] : []
+      )
+  )
+  const existing = db
     .select()
     .from(tracks)
     .where(
@@ -518,17 +530,24 @@ function existingSpotifyMatch(
       )
     )
     .all()
-    .flatMap((track) => {
+  const score = (relaxed: boolean) =>
+    existing.flatMap((track) => {
       const match = parseMatch(track)
       if (!match?.release || track.state === 'released' || !match.confirmed)
         return []
-      const scores = spotifyCandidateScore(input.track, {
-        ...match,
-        durationSeconds: track.durationSeconds ?? match.durationSeconds,
-      })
+      const scores = spotifyCandidateScore(
+        input.track,
+        {
+          ...match,
+          durationSeconds: track.durationSeconds ?? match.durationSeconds,
+        },
+        relaxed ? { nativeNames } : undefined
+      )
       return scores ? [{ match, ...scores }] : []
     })
-  candidates.sort((a, b) => b.albumScore - a.albumScore || b.score - a.score)
+  let candidates = score(false)
+  if (!candidates.length) candidates = score(true)
+  candidates.sort(compareSpotifyCandidates)
   return candidates[0]?.match ?? null
 }
 

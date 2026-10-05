@@ -8,10 +8,13 @@ import type {
   LikedSong,
   YouTubeMusicCatalog,
 } from '../catalog/types'
+import { CatalogShapeError } from '../catalog/types'
 import { joinArtistNames } from '../domain'
 import type { HttpClient } from '../net/http'
+import { HttpError } from '../net/http'
 import type { SpotifyLikedTrack } from '../spotify/library'
 import { youtubeOriginalTitle } from './oembed'
+import { sequenceMatcherRatio } from './sequence-matcher'
 import {
   artistTitleIdentities,
   cleanChannelArtist,
@@ -373,9 +376,13 @@ export async function likedContribution(
 
 export class SpotifyMatchError extends Error {
   readonly kind = 'permanent' as const
-  constructor(readonly reason: 'no_match' | 'ambiguous') {
+  constructor(readonly reason: 'no_match' | 'ambiguous' | 'unavailable') {
     super(
-      `Not found on YouTube Music (${reason === 'ambiguous' ? 'ambiguous Recording match' : 'no compatible Release Track'})`
+      reason === 'ambiguous'
+        ? 'Several compatible YouTube Music Release Tracks found; no confident winner'
+        : reason === 'unavailable'
+          ? 'Matching Release Track is marked unavailable on YouTube Music'
+          : 'Not found on YouTube Music (no compatible Release Track)'
     )
   }
 }
@@ -395,29 +402,85 @@ function spotifySearchTitle(title: string): string {
     .trim()
 }
 
-type SpotifyCandidate = { match: Match; score: number; albumScore: number }
+/** Only split bilingual labels, never recording/edition suffixes. */
+function spotifyTitleVariants(title: string): string[] {
+  const parts = title.split(/\s+-\s+/u)
+  if (
+    parts.length !== 2 ||
+    /^(?:\d{4}\s+)?(?:remaster(?:ed)?|deluxe(?: edition)?|explicit|clean)(?:\s+\d{4})?$/iu.test(
+      parts[1]
+    ) ||
+    !versionCompatible({ title, album: null }, { title: parts[0], album: null })
+  )
+    return [normalizeText(title)]
+  return [...new Set([title, ...parts].map(normalizeText).filter(Boolean))]
+}
+
+function exactSpotifyTitle(source: string, candidate: string): boolean {
+  const variants = spotifyTitleVariants(source)
+  return spotifyTitleVariants(candidate).some((title) =>
+    variants.includes(title)
+  )
+}
+
+function spotifyTitleScore(source: string, candidate: string): number {
+  let score = textSimilarity(source, candidate)
+  for (const left of spotifyTitleVariants(source))
+    for (const right of spotifyTitleVariants(candidate)) {
+      if (left === right) return 1
+      // A short bilingual fragment must not gain the substring bonus.
+      if (!left.includes(right) && !right.includes(left))
+        score = Math.max(score, sequenceMatcherRatio(left, right))
+    }
+  return score
+}
+
+function sameArtistTokens(left: string, right: string): boolean {
+  const a = normalizeText(left).split(' ').filter(Boolean).sort()
+  const b = normalizeText(right).split(' ').filter(Boolean).sort()
+  return (
+    a.length > 0 && a.length === b.length && a.every((word, i) => word === b[i])
+  )
+}
+
+type SpotifyEvidence = {
+  /** Presence enables the fallback pass, including token-order equivalence. */
+  nativeNames?: ReadonlyMap<string, string | null>
+  originalTitle?: string | null
+}
+
+type SpotifyCandidate = {
+  match: Match
+} & NonNullable<ReturnType<typeof spotifyCandidateScore>>
+
+export function createSpotifyCache() {
+  return {
+    albums: new Map<string, Promise<CatalogRelease[]>>(),
+    nativeNames: new Map<string, Promise<string | null>>(),
+    originalTitles: new Map<string, Promise<string | null>>(),
+  }
+}
 
 /** Hard Recording gates shared by catalog candidates and existing Library tracks. */
 export function spotifyCandidateScore(
   source: SpotifyLikedTrack,
-  candidate: Pick<Match, 'title' | 'artists' | 'album' | 'durationSeconds'>
-): { score: number; albumScore: number } | null {
+  candidate: Pick<Match, 'title' | 'artists' | 'album' | 'durationSeconds'>,
+  evidence: SpotifyEvidence = {}
+) {
   if (candidate.durationSeconds === null) return null
   const delta = Math.abs(source.durationMs / 1000 - candidate.durationSeconds)
   if (delta > 5) return null
-  const titleScore = textSimilarity(
+  let titleScore = spotifyTitleScore(
     spotifySearchTitle(source.title),
     spotifySearchTitle(candidate.title)
   )
-  const artistScore = Math.max(
+  let artistScore = Math.max(
     0,
     ...candidate.artists.map((artist) =>
       textSimilarity(source.artists[0]?.name, artist.name)
     )
   )
   if (
-    titleScore < 0.9 ||
-    artistScore < 0.88 ||
     !versionCompatible(
       {
         title: source.title,
@@ -430,6 +493,46 @@ export function spotifyCandidateScore(
     )
   )
     return null
+  const exactTitle = exactSpotifyTitle(source.title, candidate.title)
+  if (artistScore < 0.88) {
+    // Relaxing the artist gate requires exact title evidence and excludes
+    // original-title relaxation, so two uncertain identities cannot combine.
+    const primary = source.artists[0]?.name ?? ''
+    if (
+      !normalizeText(primary) ||
+      !evidence.nativeNames ||
+      evidence.originalTitle ||
+      !exactTitle ||
+      !candidate.artists.some(
+        (artist) =>
+          sameArtistTokens(primary, artist.name) ||
+          (artist.channelId &&
+            normalizeText(primary) ===
+              normalizeText(evidence.nativeNames?.get(artist.channelId) ?? ''))
+      )
+    )
+      return null
+    artistScore = 1
+    titleScore = 1
+  } else if (titleScore < 0.9) {
+    if (
+      !evidence.originalTitle ||
+      !exactSpotifyTitle(source.title, evidence.originalTitle) ||
+      !versionCompatible(
+        {
+          title: source.title,
+          album: { name: source.album.name, browseId: null },
+        },
+        {
+          title: evidence.originalTitle,
+          album: { name: candidate.album, browseId: null },
+        }
+      )
+    )
+      return null
+    titleScore = 1
+  }
+  if (titleScore < 0.9) return null
   const albumScore =
     source.album.name && candidate.album
       ? textSimilarity(
@@ -444,7 +547,24 @@ export function spotifyCandidateScore(
       0.15 * albumScore +
       0.1 * Math.max(0, 1 - delta / 10),
     albumScore,
+    exactAlbum:
+      Boolean(source.album.name) &&
+      normalizeText(source.album.name) === normalizeText(candidate.album),
+    exactTitle,
   }
+}
+
+/** Release preference also applies to the multiple appearances of one video. */
+export function compareSpotifyCandidates(
+  a: SpotifyCandidate,
+  b: SpotifyCandidate
+): number {
+  return (
+    Number(b.exactAlbum) - Number(a.exactAlbum) ||
+    Number(b.exactTitle) - Number(a.exactTitle) ||
+    b.albumScore - a.albumScore ||
+    b.score - a.score
+  )
 }
 
 /** Different Release appearances of a catalog video are one Recording for likes. */
@@ -454,28 +574,34 @@ export function selectSpotifyCandidate(
   const recordings = new Map<string, SpotifyCandidate>()
   for (const candidate of candidates) {
     const previous = recordings.get(candidate.match.catalogVideoId)
-    if (
-      !previous ||
-      candidate.albumScore > previous.albumScore ||
-      (candidate.albumScore === previous.albumScore &&
-        candidate.score > previous.score)
-    )
+    if (!previous || compareSpotifyCandidates(candidate, previous) < 0)
       recordings.set(candidate.match.catalogVideoId, candidate)
   }
   const ranked = [...recordings.values()].sort((a, b) => b.score - a.score)
   if (!ranked.length) return null
-  if (ranked[1] && ranked[0].score - ranked[1].score < 0.04 - Number.EPSILON)
+  const close = ranked.filter(
+    (candidate) => ranked[0].score - candidate.score < 0.04 - Number.EPSILON
+  )
+  close.sort(compareSpotifyCandidates)
+  if (
+    close[1] &&
+    close[0].exactAlbum === close[1].exactAlbum &&
+    close[0].exactTitle === close[1].exactTitle
+  )
     throw new SpotifyMatchError('ambiguous')
-  return ranked[0].match
+  return close[0].match
 }
 
 export async function spotifyContribution(
   catalog: YouTubeMusicCatalog,
+  http: HttpClient,
   source: SpotifyLikedTrack,
-  albums: Map<string, Promise<CatalogRelease[]>>,
+  cache: ReturnType<typeof createSpotifyCache>,
   signal?: AbortSignal
 ): Promise<Match> {
   const primaryArtist = source.artists[0]?.name ?? ''
+  const { albums } = cache
+  let sawUnavailable = false
   const browsed = new Map<string, Promise<CatalogRelease>>()
   const browse = (id: string) => {
     let promise = browsed.get(id)
@@ -488,11 +614,14 @@ export async function spotifyContribution(
   const candidate = (
     release: CatalogRelease,
     track: CatalogTrack,
-    method: ResolutionMethod
+    method: ResolutionMethod,
+    evidence: SpotifyEvidence = {}
   ): SpotifyCandidate | null => {
-    if (!track.videoId || !track.isAvailable || !release.browseId) return null
+    if (!track.videoId || !release.browseId) return null
     const match = releaseTrack(release, track, null, method, null)
-    const scores = spotifyCandidateScore(source, match)
+    const scores = spotifyCandidateScore(source, match, evidence)
+    if (scores && !track.isAvailable) sawUnavailable = true
+    if (!track.isAvailable) return null
     return scores ? { match, ...scores } : null
   }
   let albumLookup = albums.get(source.album.id)
@@ -540,7 +669,11 @@ export async function spotifyContribution(
       return releases
     })()
     albums.set(source.album.id, albumLookup)
-    albumLookup.catch(() => albums.delete(source.album.id))
+    const pending = albumLookup
+    void pending.catch(() => {
+      if (albums.get(source.album.id) === pending)
+        albums.delete(source.album.id)
+    })
   }
   const albumCandidates = (await albumLookup).flatMap((release) =>
     release.tracks.flatMap((track) => {
@@ -559,7 +692,8 @@ export async function spotifyContribution(
       .map((artist) => `${source.title} ${artist.name}`),
   ])
   const found: SpotifyCandidate[] = []
-  for (const result of await searchTracks(catalog, queries, signal)) {
+  const results = await searchTracks(catalog, queries, signal)
+  for (const result of results) {
     if (!result.album?.browseId || !result.isAvailable) continue
     // Only browse results that already pass the Recording gates.
     if (
@@ -583,8 +717,144 @@ export async function spotifyContribution(
     if (checked) found.push(checked)
   }
   const match = selectSpotifyCandidate(found)
-  if (!match) throw new SpotifyMatchError('no_match')
-  return match
+  if (match) return match
+
+  // Optional evidence never runs when ordinary matching has a winner or
+  // an ambiguity. Filter first, so unrelated results cannot consume the budget.
+  const nativeNames = new Map<string, string | null>()
+  let channelReads = 0
+  let titleReads = 0
+  for (const result of results) {
+    if (
+      !result.album?.browseId ||
+      !result.isAvailable ||
+      result.durationSeconds === null ||
+      Math.abs(source.durationMs / 1000 - result.durationSeconds) > 5 ||
+      !versionCompatible(
+        {
+          title: source.title,
+          album: { name: source.album.name, browseId: null },
+        },
+        result
+      )
+    )
+      continue
+    const artistScore = Math.max(
+      0,
+      ...result.artists.map((artist) =>
+        textSimilarity(primaryArtist, artist.name)
+      )
+    )
+    let evidence: SpotifyEvidence
+    if (artistScore < 0.88) {
+      if (!exactSpotifyTitle(source.title, result.title)) continue
+      evidence = { nativeNames }
+      if (
+        !spotifyCandidateScore(
+          source,
+          { ...result, album: result.album.name },
+          evidence
+        )
+      ) {
+        for (const artist of result.artists) {
+          const id = artist.channelId
+          if (!id || nativeNames.has(id)) continue
+          let pending = cache.nativeNames.get(id)
+          if (!pending) {
+            if (channelReads >= 3) continue
+            channelReads++
+            pending = (async () => {
+              try {
+                const page = await catalog.artist(id, signal, 'ja')
+                signal?.throwIfAborted()
+                return page.name
+              } catch (error) {
+                signal?.throwIfAborted()
+                if (
+                  error instanceof CatalogShapeError ||
+                  error instanceof SyntaxError ||
+                  (error instanceof HttpError &&
+                    [404, 410].includes(error.status ?? 0))
+                )
+                  return null
+                throw error
+              }
+            })()
+            cache.nativeNames.set(id, pending)
+            const request = pending
+            void request.catch(() => {
+              if (cache.nativeNames.get(id) === request)
+                cache.nativeNames.delete(id)
+            })
+          }
+          nativeNames.set(id, await pending)
+          signal?.throwIfAborted()
+        }
+      }
+    } else {
+      if (
+        spotifyCandidateScore(source, { ...result, album: result.album.name })
+      )
+        continue
+      let pending = cache.originalTitles.get(result.videoId)
+      if (!pending) {
+        if (titleReads >= 3) continue
+        titleReads++
+        pending = (async () => {
+          try {
+            const title = await youtubeOriginalTitle(
+              http,
+              result.videoId,
+              signal
+            )
+            signal?.throwIfAborted()
+            return title
+          } catch (error) {
+            signal?.throwIfAborted()
+            if (
+              error instanceof CatalogShapeError ||
+              error instanceof SyntaxError ||
+              (error instanceof HttpError &&
+                error.kind === 'permanent' &&
+                error.status !== null &&
+                error.status >= 400 &&
+                error.status < 500)
+            )
+              return null
+            throw error
+          }
+        })()
+        cache.originalTitles.set(result.videoId, pending)
+        const request = pending
+        void request.catch(() => {
+          if (cache.originalTitles.get(result.videoId) === request)
+            cache.originalTitles.delete(result.videoId)
+        })
+      }
+      evidence = { originalTitle: await pending }
+      signal?.throwIfAborted()
+    }
+    if (
+      !spotifyCandidateScore(
+        source,
+        { ...result, album: result.album.name },
+        evidence
+      )
+    )
+      continue
+    const release = await browse(result.album.browseId)
+    // Evidence belongs to this video's catalog identity, never a fuzzy fallback.
+    const track = release.tracks.find(
+      (track) => track.videoId === result.videoId
+    )
+    if (!track) continue
+    const checked = candidate(release, track, 'spotify_search', evidence)
+    if (checked) found.push(checked)
+  }
+  const fallback = selectSpotifyCandidate(found)
+  if (!fallback)
+    throw new SpotifyMatchError(sawUnavailable ? 'unavailable' : 'no_match')
+  return fallback
 }
 
 function uniqueSearchQueries(queries: string[]): string[] {
