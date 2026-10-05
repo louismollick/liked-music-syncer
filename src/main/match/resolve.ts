@@ -489,20 +489,23 @@ export function createSpotifyCache() {
   }
 }
 
+/** Reprises and numbered sections can share the main song's artist and length. */
+function spotifySection(title: string): string {
+  return normalizeText(
+    /(?:\s+-\s+|[([{（【])\s*(reprise|intro|interlude|prelude|bonus track|(?:pt\.?|part)\s+(?:\d+|[ivxlcdm]+))(?=\s|[)\]}）】]|$)/iu.exec(
+      title
+    )?.[1] ?? ''
+  )
+}
+
 /** Hard Recording gates shared by catalog candidates and existing Library tracks. */
 export function spotifyCandidateScore(
   source: SpotifyLikedTrack,
   candidate: Pick<Match, 'title' | 'artists' | 'album' | 'durationSeconds'>,
   evidence: SpotifyEvidence = {}
 ) {
-  const section = (title: string) =>
-    normalizeText(
-      /(?:\s+-\s+|[([{（【])\s*(reprise|intro|interlude|prelude|bonus track|(?:pt\.?|part)\s+(?:\d+|[ivxlcdm]+))(?=\s|[)\]}）】]|$)/iu.exec(
-        title
-      )?.[1] ?? ''
-    )
-  // A reprise or numbered section can share the main song's artist and length.
-  if (section(source.title) !== section(candidate.title)) return null
+  if (spotifySection(source.title) !== spotifySection(candidate.title))
+    return null
   if (candidate.durationSeconds === null) return null
   const delta = Math.abs(source.durationMs / 1000 - candidate.durationSeconds)
   if (delta > 5) return null
@@ -764,6 +767,7 @@ export async function spotifyContribution(
     if (
       !result.album?.browseId ||
       !result.isAvailable ||
+      spotifySection(source.title) !== spotifySection(result.title) ||
       result.durationSeconds === null ||
       Math.abs(source.durationMs / 1000 - result.durationSeconds) > 5 ||
       !versionCompatible(

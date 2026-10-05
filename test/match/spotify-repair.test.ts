@@ -287,6 +287,78 @@ function setup() {
 }
 
 describe('optional lookup lifecycle', () => {
+  it('skips rejected sections before spending the original-title budget', async () => {
+    const s = setup()
+    try {
+      const input = {
+        ...source,
+        title: 'Song',
+        artists: [{ id: 'artist', name: 'Tokyo Syoki Syodo' }],
+      }
+      const valid = { ...s.item, title: 'Translated Song' }
+      s.album.tracks[0] = valid
+      s.searches.mockResolvedValue([
+        ...['Reprise', 'Intro', 'Pt. 2'].map((section, index) => ({
+          ...s.item,
+          videoId: `rejected-${index}`,
+          title: `Song - ${section}`,
+          album: { browseId: s.album.browseId, name: s.album.title },
+        })),
+        {
+          ...valid,
+          album: { browseId: s.album.browseId, name: s.album.title },
+        },
+      ])
+      const reads = vi
+        .spyOn(s.h.deps.http, 'json')
+        .mockImplementation(async <T>() => ({ title: 'Song' }) as T)
+      await expect(
+        s.matcher.match({ kind: 'spotify', track: input })
+      ).resolves.toMatchObject({ catalogVideoId: 'video' })
+      expect(reads).toHaveBeenCalledTimes(1)
+      expect(
+        new URL(
+          new URL(reads.mock.calls[0][0]).searchParams.get('url')!
+        ).searchParams.get('v')
+      ).toBe('video')
+    } finally {
+      await s.h.close()
+    }
+  })
+
+  it('skips rejected mixed-script sections before spending the native-artist budget', async () => {
+    const s = setup()
+    try {
+      const input = { ...source, title: '曲' }
+      const valid = { ...s.item, title: '曲 - Song' }
+      s.album.tracks[0] = valid
+      s.searches.mockResolvedValue([
+        ...['Reprise', 'Intro', 'Pt. 2'].map((section, index) => ({
+          ...s.item,
+          videoId: `rejected-${index}`,
+          title: `曲 - ${section}`,
+          artists: [
+            {
+              name: 'Translated Artist',
+              channelId: `rejected-channel-${index}`,
+            },
+          ],
+          album: { browseId: s.album.browseId, name: s.album.title },
+        })),
+        {
+          ...valid,
+          album: { browseId: s.album.browseId, name: s.album.title },
+        },
+      ])
+      await expect(
+        s.matcher.match({ kind: 'spotify', track: input })
+      ).resolves.toMatchObject({ catalogVideoId: 'video' })
+      expect(s.artist.mock.calls.map(([id]) => id)).toEqual(['channel'])
+    } finally {
+      await s.h.close()
+    }
+  })
+
   it.each([
     ['春', '春の歌 - Spring Song'],
     ['春の歌 - Spring Song', '春'],

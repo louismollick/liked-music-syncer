@@ -72,3 +72,9 @@ The first replay of these changes exposed one ordinary winner choosing a differe
 The optional Standalone-to-Release metadata upgrade can be reversed by Refresh when the higher-priority YouTube liked source still resolves as Standalone. This accepted non-blocking limitation is documented in the PR description. It does not cause another audio download.
 
 The final full 299-source live replay, in `/tmp/lms-failure-review/success-regression-round3-final.json`, preserves all 294 ordinary winners from the original matcher on identical shared catalog responses, with no new failures or changed ordinary identities. Five old ambiguities resolve through stronger evidence: The Reason, Imagine and the three blink-182 songs already inspected in the original validation. LET IT DIE retains the original THE NEWEST JOKE album identity after the identical-label correction.
+
+## Implementation review round 3 fix
+
+Claude approved head 51f1705. Codex then reproduced optional-evidence budget exhaustion by candidates already rejected for incompatible recording sections. The section parser is now shared by scoring and the optional-read prefilter. No ordinary scoring changes were made after the 299-source replay.
+
+Two new full-matcher regressions were verified failing before this change and passing afterwards: three rejected sections preceding a valid original-title candidate, and three rejected mixed-script sections preceding a valid native-artist candidate. Each valid match now needs only its one relevant read. All 22 real fixture cases still pass; the complete suite passes with 525 tests and two skipped. Lint, all typechecks and the production build pass.
