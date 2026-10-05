@@ -137,18 +137,31 @@ describe('evidence cannot combine two weak identities', () => {
     ['Stay', 'Stay With Me'],
     ['Love', 'Love Song'],
     ['春', '春の歌'],
-  ])('rejects containment between full bilingual titles: %s / %s', (title, other) => {
-    expect(
-      spotifyCandidateScore(
-        { ...source, title },
-        candidate(other, source.artists[0].name)
-      )
-    ).toBeNull()
+    ['Dear Theodosia', 'Dear Theodosia - Reprise'],
+    ['Song', 'Song - Pt. 2'],
+    ['Song', 'Song - Part II'],
+    ['Song', 'Song - Interlude'],
+    ['Song - Intro', 'Song'],
+    ['Song', 'Song - Bonus Track'],
+    ['曲', '曲 - Reprise'],
+    ['Song - Part I', 'Song - Part II'],
+  ])('rejects a different song or section in both directions: %s / %s', (title, other) => {
+    for (const [left, right] of [
+      [title, other],
+      [other, title],
+    ])
+      expect(
+        spotifyCandidateScore(
+          { ...source, title: left },
+          candidate(right, source.artists[0].name)
+        )
+      ).toBeNull()
   })
 
   it.each([
     ['But Tonight We Dance', 'But Tonight We Dance (Single Version)'],
     ['A Beautiful Mine', 'A Beautiful Mine (Theme Music From Mad Men)'],
+    ['LET IT DIE (OAO)', 'LET IT DIE（OAO） - LET IT DIE (OAO)'],
   ])('retains title evidence for the delimited suffix: %s / %s', (title, other) => {
     for (const [left, right] of [
       [title, other],
@@ -180,6 +193,36 @@ describe('evidence cannot combine two weak identities', () => {
           nativeNames,
         })
       ).toBeNull()
+  })
+
+  it.each([
+    ['曲', 'Song (Album Version) - 曲'],
+    ['曲', '曲 - Song (Album Version)'],
+  ])('rejects version decorations in either bilingual segment: %s / %s', (title, other) => {
+    const nativeNames = new Map([['channel', source.artists[0].name]])
+    for (const [left, right] of [
+      [title, other],
+      [other, title],
+    ])
+      expect(
+        spotifyCandidateScore({ ...source, title: left }, candidate(right), {
+          nativeNames,
+        })
+      ).toBeNull()
+  })
+
+  it.each([
+    'Live',
+    'LIVE!',
+  ])('rejects studio/live album context in %s in both directions', (album) => {
+    const item = candidate(source.title, source.artists[0].name)
+    expect(spotifyCandidateScore(source, { ...item, album })).toBeNull()
+    expect(
+      spotifyCandidateScore(
+        { ...source, album: { ...source.album, name: album } },
+        item
+      )
+    ).toBeNull()
   })
 
   it('token-order equivalence retains multiplicity and requires an exact title', () => {
@@ -252,6 +295,8 @@ describe('optional lookup lifecycle', () => {
     ['Stay', 'Stay With Me'],
     ['Love', 'Love Song'],
     ['春', '春の歌'],
+    ['Dear Theodosia', 'Dear Theodosia - Reprise'],
+    ['Song', 'Song - Pt. 2'],
   ])('does not select a different song through bilingual containment: %s / %s', async (title, other) => {
     const s = setup()
     try {
@@ -271,6 +316,54 @@ describe('optional lookup lifecycle', () => {
       await expect(
         s.matcher.match({ kind: 'spotify', track: { ...source, title } })
       ).rejects.toMatchObject({ reason: 'no_match' })
+    } finally {
+      await s.h.close()
+    }
+  })
+
+  it.each([
+    'Live',
+    'LIVE!',
+  ])('does not select a concert recording from %s for a studio like', async (title) => {
+    const s = setup()
+    try {
+      s.album.title = title
+      s.album.tracks[0].artists = [
+        { name: source.artists[0].name, channelId: 'channel' },
+      ]
+      s.searches.mockResolvedValue([
+        {
+          ...s.item,
+          artists: s.album.tracks[0].artists,
+          album: { browseId: s.album.browseId, name: title },
+        },
+      ])
+      vi.spyOn(s.h.deps.http, 'json').mockImplementation(
+        async <T>() => ({}) as T
+      )
+      await expect(
+        s.matcher.match({ kind: 'spotify', track: source })
+      ).rejects.toMatchObject({ reason: 'no_match' })
+    } finally {
+      await s.h.close()
+    }
+  })
+
+  it('does not select a versioned bilingual recording through a native artist alias', async () => {
+    const s = setup()
+    try {
+      s.album.tracks[0].title = 'Song (Album Version) - 曲'
+      s.searches.mockResolvedValue([
+        {
+          ...s.item,
+          title: s.album.tracks[0].title,
+          album: { browseId: s.album.browseId, name: s.album.title },
+        },
+      ])
+      await expect(
+        s.matcher.match({ kind: 'spotify', track: { ...source, title: '曲' } })
+      ).rejects.toMatchObject({ reason: 'no_match' })
+      expect(s.artist).not.toHaveBeenCalled()
     } finally {
       await s.h.close()
     }

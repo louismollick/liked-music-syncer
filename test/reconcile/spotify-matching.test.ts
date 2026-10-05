@@ -159,6 +159,8 @@ it.each([
   ['Love', 'Love Song'],
   ['春', '春の歌'],
   ['A Song', 'A Song (Theme Music From Somewhere)'],
+  ['Dear Theodosia', 'Dear Theodosia - Reprise'],
+  ['Song', 'Song - Pt. 2'],
 ])('looks up %s instead of assigning its Spotify source ID to the saved song %s', async (title, other) => {
   const h = harness()
   const wrong = song('wrong', other)

@@ -46,6 +46,8 @@ describe('album version markers', () => {
     ['Album (Acoustic Version)', 'Acoustic'],
     ['Album [Covers]', 'Cover'],
     ['Album - Live', 'Live'],
+    ['Live', 'Live'],
+    ['LIVE!', 'Live'],
     ['Live at Budokan', 'Live'],
     ['Live in Tokyo', 'Live'],
     ['Live from London', 'Live'],

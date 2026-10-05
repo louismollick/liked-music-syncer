@@ -402,15 +402,23 @@ function spotifySearchTitle(title: string): string {
     .trim()
 }
 
-/** Only split bilingual labels, never recording/edition suffixes. */
+/** Split mixed-script labels or exact duplicate labels, never edition suffixes. */
 function spotifyTitleVariants(title: string): string[] {
   const parts = title.split(/\s+-\s+/u)
+  const labelKey = (label: string) =>
+    normalizeText(label).replace(/\s+(?=[([{])/gu, '')
+  if (parts.length === 2 && labelKey(parts[0]) === labelKey(parts[1]))
+    return [...new Set(parts.map(normalizeText))]
   if (
     parts.length !== 2 ||
+    /[^\P{L}\p{Script=Latin}]/u.test(parts[0]) ===
+      /[^\P{L}\p{Script=Latin}]/u.test(parts[1]) ||
     /^(?:\d{4}\s+)?(?:remaster(?:ed)?|deluxe(?: edition)?|explicit|clean)(?:\s+\d{4})?$/iu.test(
       parts[1]
     ) ||
-    /\b(?:version|ver\.?|edition|mix|recording)\b/iu.test(parts[1]) ||
+    parts.some((part) =>
+      /\b(?:version|ver\.?|edition|mix|recording)\b/iu.test(part)
+    ) ||
     !versionCompatible({ title, album: null }, { title: parts[0], album: null })
   )
     return [normalizeText(title)]
@@ -487,6 +495,14 @@ export function spotifyCandidateScore(
   candidate: Pick<Match, 'title' | 'artists' | 'album' | 'durationSeconds'>,
   evidence: SpotifyEvidence = {}
 ) {
+  const section = (title: string) =>
+    normalizeText(
+      /(?:\s+-\s+|[([{（【])\s*(reprise|intro|interlude|prelude|bonus track|(?:pt\.?|part)\s+(?:\d+|[ivxlcdm]+))(?=\s|[)\]}）】]|$)/iu.exec(
+        title
+      )?.[1] ?? ''
+    )
+  // A reprise or numbered section can share the main song's artist and length.
+  if (section(source.title) !== section(candidate.title)) return null
   if (candidate.durationSeconds === null) return null
   const delta = Math.abs(source.durationMs / 1000 - candidate.durationSeconds)
   if (delta > 5) return null

@@ -198,7 +198,11 @@ function albumVersionMarkers(value: string): Set<string> {
         word.toLowerCase() === 'remixes' ? 'remix' : word.slice(0, -1)
       )
   )
-  if (/^\s*live\s+(?:at|in|from|on)\b/iu.test(value)) markers.add('live')
+  if (
+    normalizeText(value) === 'live' ||
+    /^\s*live\s+(?:at|in|from|on)\b/iu.test(value)
+  )
+    markers.add('live')
   return markers
 }
 export function versionCompatible(
