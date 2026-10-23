@@ -215,6 +215,16 @@ export function SettingsPage() {
           <Button onClick={() => void invoke('settings:recheckLyrics')}>
             Recheck lyrics
           </Button>
+          <Button onClick={() => void invoke('settings:recheckGenres')}>
+            Look up missing genres
+          </Button>
+        </Row>
+        <Row label="Last.fm API key" help="For genres MusicBrainz doesn't have">
+          <TextInput
+            value={settings.lastfmApiKey}
+            mono
+            onCommit={(v) => void updateSettings({ lastfmApiKey: v })}
+          />
         </Row>
       </div>
     </div>

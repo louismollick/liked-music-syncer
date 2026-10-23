@@ -265,6 +265,13 @@ export function nextStep(
     !deferred.has(`lyrics:${track.id}`)
   )
     return 'lyrics'
+  // A marked track gets its genre before it is rewritten and uploaded.
+  if (
+    track.genreRequested &&
+    settings.lastfmApiKey.trim() &&
+    !deferred.has(`genre:${track.id}`)
+  )
+    return 'genre'
   const desired = desiredFieldsFor(db, track)
   const sidecar = desiredSidecar(track)
   const sidecarSha = sidecar ? sha256(sidecar) : null
@@ -475,6 +482,73 @@ export async function runLyrics(
     .run()
   run.progress(1)
   return lookup.values.lyricsCheckedAt !== null
+}
+
+/**
+ * Genres from Last.fm, used only when MusicBrainz has none. Looked up for the
+ * primary credited artist; null when no key is set or the artist has none.
+ */
+async function lastfmGenre(
+  deps: StepDeps,
+  match: Match,
+  signal: AbortSignal
+): Promise<string | null> {
+  const apiKey = deps.settings().lastfmApiKey.trim()
+  const artist = match.artists[0]?.name
+  return apiKey && artist ? deps.matcher.genre(artist, apiKey, signal) : null
+}
+
+/**
+ * The one Last.fm lookup for a track marked by "Look up missing genres".
+ * Returns false when Last.fm failed and the track stays marked for a later pass;
+ * throws a connectivity error when the network is down.
+ */
+export async function runGenre(
+  deps: StepDeps,
+  track: TrackRow,
+  run: StepRun
+): Promise<boolean> {
+  const match = parseMatch(track)
+  if (!match) return true
+  let genre: string | null = null
+  let failure: string | null = null
+  try {
+    genre = await lastfmGenre(deps, match, run.signal)
+  } catch (error) {
+    if (run.signal.aborted) throw error
+    // A lost connection pauses the lane (ADR 0010) instead of counting as a failure.
+    if (isConnectivityError(error)) throw error
+    failure = error instanceof Error ? error.message : String(error)
+  }
+  run.signal.throwIfAborted()
+  const current = deps.db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, track.id))
+    .get()
+  if (
+    !current ||
+    current.state === 'released' ||
+    current.state === 'no_longer_wanted' ||
+    current.match !== track.match
+  )
+    return true
+  const errors = JSON.parse(current.enrichmentErrors) as Record<string, string>
+  delete errors.lastfm
+  if (failure) errors.lastfm = failure
+  deps.db
+    .update(tracks)
+    .set({
+      // A genre MusicBrainz supplied meanwhile wins.
+      ...(genre && !current.genre ? { genre } : {}),
+      ...(failure ? {} : { genreRequested: false }),
+      enrichmentErrors: JSON.stringify(errors),
+      updatedAt: iso(deps),
+    })
+    .where(eq(tracks.id, track.id))
+    .run()
+  run.progress(1)
+  return failure === null
 }
 
 // ---------------------------------------------------------------- match
@@ -1209,6 +1283,21 @@ async function matchOnce(
     if (run.signal.aborted) throw error
     errors.musicbrainz = error instanceof Error ? error.message : String(error)
   }
+  // Last.fm fills in only when MusicBrainz has no genre. A pending
+  // "Look up missing genres" request stays until Last.fm has been asked.
+  let genreAsked = Boolean(enrichment.genre)
+  if (!enrichment.genre && deps.settings().lastfmApiKey.trim()) {
+    try {
+      const genre = await lastfmGenre(deps, match, run.signal)
+      enrichment = { ...enrichment, genre }
+      genreAsked = true
+    } catch (error) {
+      if (run.signal.aborted) throw error
+      errors.lastfm = error instanceof Error ? error.message : String(error)
+      // Never strip a genre the track already has.
+      enrichment = { ...enrichment, genre: (recording ?? track).genre }
+    }
+  }
   run.progress(0.6)
   const lyrics = await lookUpLyrics(
     deps,
@@ -1352,6 +1441,7 @@ async function matchOnce(
             ? ((target ?? current).durationSeconds ?? match.durationSeconds)
             : match.durationSeconds,
         genre: enrichment.genre,
+        genreRequested: (target ?? current).genreRequested && !genreAsked,
         isrc: enrichment.isrc,
         mbRecordingId: enrichment.mbRecordingId,
         ...betterLyrics(

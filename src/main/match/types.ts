@@ -101,6 +101,12 @@ export interface Matcher {
   match(input: MatchInput, signal?: AbortSignal): Promise<Match>
   /** MusicBrainz lookup. Throws on network errors; callers record them as enrichment errors. */
   enrich(match: Match, signal?: AbortSignal): Promise<Enrichment>
+  /** Last.fm genres for an artist ("a; b; c"), null when it has none. Throws on provider errors. */
+  genre(
+    artist: string,
+    apiKey: string,
+    signal?: AbortSignal
+  ): Promise<string | null>
 }
 
 export interface MatcherDeps {

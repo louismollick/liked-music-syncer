@@ -224,4 +224,8 @@ export const MIGRATIONS: string[] = [
   `
   CREATE INDEX tracks_album ON tracks(album, album_artist);
   `,
+  // 8: tracks marked for a one-time Last.fm genre lookup
+  `
+  ALTER TABLE tracks ADD COLUMN genre_requested INTEGER NOT NULL DEFAULT 0;
+  `,
 ]

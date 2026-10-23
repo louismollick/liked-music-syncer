@@ -234,6 +234,19 @@ describe('backup before migrating', () => {
     upgraded.close()
   })
 
+  it('adds the genre request column as migration 8, after the album index', () => {
+    const dir = tempDir('lms-backup-')
+    const file = oldDatabase(dir, 4)
+
+    const db = openDatabase(file)
+    expect(
+      db.$client.prepare('SELECT genre_requested FROM tracks').all()
+    ).toEqual([{ genre_requested: 0 }])
+    db.$client.close()
+    expect(MIGRATIONS[6]).toContain('tracks_album')
+    expect(MIGRATIONS[7]).toContain('genre_requested')
+  })
+
   it('skips the backup for a new database and for one already up to date', () => {
     const dir = tempDir('lms-backup-')
     const file = path.join(dir, 'library.db')

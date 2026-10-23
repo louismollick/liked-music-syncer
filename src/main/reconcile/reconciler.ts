@@ -67,6 +67,7 @@ import {
   REWRITE_AUDIO,
   RetryLaterError,
   runAcquire,
+  runGenre,
   runLyrics,
   runMatch,
   runMove,
@@ -94,6 +95,7 @@ const NETWORK_STEPS: ReadonlySet<StepKind> = new Set([
 const STAGE_WEIGHTS: Record<ActivityStage, [number, number]> = {
   matching: [0, 0.15],
   lyrics: [0.15, 0.7],
+  genres: [0.15, 0.7],
   downloading: [0.15, 0.7],
   uploading: [0.85, 0.15],
 }
@@ -659,6 +661,17 @@ export class Reconciler {
     this.markDirty()
   }
 
+  /** Marks tracks without a genre for one Last.fm lookup; manual only, like lyrics. */
+  recheckGenres(): void {
+    this.db
+      .update(tracks)
+      .set({ genreRequested: true })
+      .where(sql`${tracks.genre} IS NULL OR ${tracks.genre} = ''`)
+      .run()
+    this.deps.onLibraryChanged(null)
+    this.markDirty()
+  }
+
   retry(trackId: string): void {
     this.db
       .update(tracks)
@@ -1122,6 +1135,9 @@ export class Reconciler {
           } else if (step === 'lyrics') {
             if (!(await runLyrics(this.deps, track, run)))
               this.deferred.add(`lyrics:${trackId}`)
+          } else if (step === 'genre') {
+            if (!(await runGenre(this.deps, track, run)))
+              this.deferred.add(`genre:${trackId}`)
           } else if (step === 'acquire') {
             await runAcquire(this.deps, track, run)
           } else if (step === 'retag') await runRetag(this.deps, track, run)
@@ -1484,11 +1500,11 @@ function mergeCatalogRequests(
   return [...new Set([...a, ...b])]
 }
 
-/** Lyrics-only work last; otherwise newest likes, then newest catalog releases. */
+/** Lyrics and genre-only work last; otherwise newest likes, then newest catalog releases. */
 function queueOrder() {
   return [
     asc(sql`CASE WHEN ${tracks.match} IS NOT NULL
-      AND ${tracks.lyricsCheckedAt} IS NULL AND ${tracks.refreshRequested} = 0
+      AND (${tracks.lyricsCheckedAt} IS NULL OR ${tracks.genreRequested} = 1) AND ${tracks.refreshRequested} = 0
       AND EXISTS (SELECT 1 FROM files f WHERE f.track_id = ${tracks.id}
         AND (f.audio_video_id IS NULL OR f.audio_video_id = json_extract(${tracks.match}, '$.catalogVideoId')))
       THEN 1 ELSE 0 END`),

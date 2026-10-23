@@ -12,12 +12,18 @@ export const settingsSchema = z.object({
   remoteFolder: z.string(),
   lyricsEnabled: z.boolean(),
   lyricsServerUrl: z.string(),
+  lastfmApiKey: z.string(),
   selectedAccountId: z.string().nullable(),
 })
 export type Settings = z.infer<typeof settingsSchema>
 
 /** Visible Activity stage for a Track Step. */
-export type ActivityStage = 'matching' | 'lyrics' | 'downloading' | 'uploading'
+export type ActivityStage =
+  | 'matching'
+  | 'lyrics'
+  | 'genres'
+  | 'downloading'
+  | 'uploading'
 
 export interface AccountView {
   id: string
@@ -260,6 +266,7 @@ export interface InvokeMap {
   'settings:get': [void, Settings]
   'settings:update': [Partial<Settings>, Settings]
   'settings:recheckLyrics': [void, void]
+  'settings:recheckGenres': [void, void]
   'settings:chooseFolder': [void, string | null]
   'spotify:get': [void, SpotifySessionView]
   'spotify:signIn': [void, SpotifySessionView]

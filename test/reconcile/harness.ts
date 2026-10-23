@@ -202,6 +202,15 @@ export class FakeMatcher implements Matcher {
   async enrich() {
     return { mbRecordingId: null, genre: null, isrc: null }
   }
+  /** Last.fm genre by artist name; null when the artist has none. */
+  genres = new Map<string, string>()
+  genreError: Error | null = null
+  genreCalls: string[] = []
+  async genre(artist: string) {
+    this.genreCalls.push(artist)
+    if (this.genreError) throw this.genreError
+    return this.genres.get(artist) ?? null
+  }
 }
 
 export function releaseMatch(
@@ -262,6 +271,7 @@ export class Harness {
     remoteFolder: this.remote,
     lyricsEnabled: true,
     lyricsServerUrl: '',
+    lastfmApiKey: '',
     selectedAccountId: 'account-a',
   }
   reconciler: Reconciler
