@@ -54,6 +54,8 @@ function fakeHttp(route: Route) {
       return new Response(
         '<response><status>00000000</status><songs/></response>'
       )
+    if (url.hostname === 'music.163.com')
+      return Response.json({ code: 200, result: { songCount: 0 } })
     if (url.hostname === 'open.spotify.com' && url.pathname === '/')
       return spotifyBootstrap()
     if (url.pathname.endsWith('secretDict.json') && !('9' in Object(value)))
@@ -181,6 +183,8 @@ describe('lyrics finder', () => {
     expect(calls.map((call) => call.url.pathname)).toEqual([
       '/api/search',
       '/api/GetPetitLyricsData.php',
+      '/api/search/get',
+      '/api/search/get',
     ])
     expect(result.errors).toEqual({})
     expect(result.lyrics?.text).toBe('Concert lyrics')
@@ -260,6 +264,8 @@ describe('lyrics finder', () => {
       'lrclib',
       'lrclib',
       'petitlyrics',
+      'netease',
+      'netease',
     ])
   })
 
@@ -415,6 +421,7 @@ describe('lyrics finder', () => {
       spotify: 'lyrics.example unavailable',
       'youtube-music': 'catalog unavailable',
       lrclib: 'lrclib.net unavailable',
+      netease: 'music.163.com unavailable',
       petitlyrics: 'p0.petitlyrics.com unavailable',
     })
   })

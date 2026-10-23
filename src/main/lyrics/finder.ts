@@ -1,6 +1,7 @@
 import { type ClassifiedLyrics, classifyLyricsText } from './classify'
 import { detectLyricsLanguage } from './language'
 import { lrclibLyrics } from './lrclib'
+import { neteaseLyrics } from './netease'
 import { petitLyrics } from './petitlyrics'
 import { prepareLyricsQuery } from './query'
 import { createSpotifyClient } from './spotify'
@@ -107,6 +108,10 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
       if (!synced)
         synced = await consider('petitlyrics', () =>
           petitLyrics(deps.http, lookup, signal)
+        )
+      if (!synced)
+        synced = await consider('netease', () =>
+          neteaseLyrics(deps.http, lookup, signal)
         )
       const selected = synced ?? firstPlain
       let language: string | null = null

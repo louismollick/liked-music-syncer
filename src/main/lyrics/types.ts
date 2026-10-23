@@ -7,6 +7,7 @@ export type LyricsSource =
   | 'youtube-music'
   | 'lrclib'
   | 'petitlyrics'
+  | 'netease'
 
 export interface LyricsQuery {
   title: string
@@ -48,7 +49,7 @@ export interface LyricsOptions {
 export interface LyricsFinder {
   /**
    * Looks for synced lyrics first (Spotify via the lyrics server, then YouTube
-   * Music, then LRCLIB), then plain lyrics in the same order.
+   * Music, LRCLIB, PetitLyrics, NetEase), then plain lyrics in the same order.
    */
   find(
     query: LyricsQuery,

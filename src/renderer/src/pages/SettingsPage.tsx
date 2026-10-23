@@ -205,7 +205,7 @@ export function SettingsPage() {
         </Row>
         <Row
           label="Spotify lyrics server"
-          help="Optional. Then YouTube Music, LRCLIB, PetitLyrics"
+          help="Optional. Then YouTube Music, LRCLIB, PetitLyrics, NetEase"
         >
           <TextInput
             value={settings.lyricsServerUrl}

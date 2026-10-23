@@ -1,0 +1,56 @@
+{
+  "code": 200,
+  "result": {
+    "songCount": 6,
+    "songs": [
+      {
+        "id": 1409311773,
+        "name": "夜に駆ける",
+        "alias": [],
+        "artists": [{ "name": "YOASOBI", "id": 33927412 }],
+        "album": { "name": "夜に駆ける", "id": 84072830 },
+        "duration": 261013
+      },
+      {
+        "id": 5,
+        "name": "群青",
+        "alias": [],
+        "artists": [{ "name": "YOASOBI", "id": 33927412 }],
+        "album": { "name": "群青", "id": 94214994 },
+        "duration": 261000
+      },
+      {
+        "id": 6,
+        "name": "夜に駆ける (Live)",
+        "alias": [],
+        "artists": [{ "name": "YOASOBI", "id": 33927412 }],
+        "album": { "name": "THE BOOK", "id": 99079344 },
+        "duration": 261000
+      },
+      {
+        "id": 7,
+        "name": "夜に駆ける",
+        "alias": ["Instrumental"],
+        "artists": [{ "name": "YOASOBI", "id": 33927412 }],
+        "album": { "name": "夜に駆ける", "id": 84072830 },
+        "duration": 261500
+      },
+      {
+        "id": 8,
+        "name": "夜に駆ける",
+        "alias": [],
+        "artists": [{ "name": "YOASOBI", "id": 33927412 }],
+        "album": { "name": "夜に駆ける", "id": 84072830 },
+        "duration": 265400
+      },
+      {
+        "id": 9,
+        "name": "夜に駆ける",
+        "alias": [],
+        "artists": [{ "name": "Someone Else", "id": 1 }],
+        "album": { "name": "Covers", "id": 2 },
+        "duration": 261000
+      }
+    ]
+  }
+}

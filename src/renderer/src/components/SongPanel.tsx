@@ -24,6 +24,7 @@ const LYRICS_SOURCE: Record<string, string> = {
   'youtube-music': 'YouTube Music',
   lrclib: 'LRCLIB',
   petitlyrics: 'PetitLyrics',
+  netease: 'NetEase',
 }
 const REMOTE_TEXT = {
   in_sync: 'in sync',
