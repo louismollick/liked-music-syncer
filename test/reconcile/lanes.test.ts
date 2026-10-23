@@ -463,6 +463,29 @@ describe('remote audit', () => {
   })
 })
 
+describe('activity updates', () => {
+  it('still sends a full update after a snapshot read, not just progress', async () => {
+    const h = harness()
+    await h.start()
+    // With a progress channel installed, a timer with nothing but progress to
+    // report sends only the live part.
+    const full: unknown[] = []
+    const progress: unknown[] = []
+    h.deps.onActivity = (view) => full.push(view)
+    h.deps.onProgress = (live) => progress.push(live)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    full.length = 0
+    progress.length = 0
+
+    h.reconciler.markDirty()
+    // A snapshot read (e.g. an IPC query) between the change and the timer.
+    h.reconciler.activity()
+    await until(() => full.length > 0 || progress.length > 0)
+    expect(full).toHaveLength(1)
+    expect(progress).toHaveLength(0)
+  })
+})
+
 describe('stopping', () => {
   it('gives up on work that ignores the abort', async () => {
     const h = harness({ stopWaitMs: 200 })

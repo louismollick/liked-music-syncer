@@ -220,6 +220,7 @@ export class Reconciler {
   private loopPromise: Promise<unknown> | null = null
   /** Cached Activity lists, rebuilt only when track states change. */
   private lists: ActivityLists | null = null
+  /** Observers owe a full update. Cleared by the emit, not by reading a snapshot. */
   private listsDirty = true
   private folderChangePromise: Promise<void> | null = null
   /** Checks and audits still touching the database; stop() waits for them. */
@@ -1264,7 +1265,12 @@ export class Reconciler {
       this.lastEmit = Date.now()
       if (!this.listsDirty && this.deps.onProgress)
         this.deps.onProgress(this.liveView())
-      else this.deps.onActivity(this.buildActivity(this.listsDirty))
+      else {
+        const full = this.buildActivity(this.listsDirty)
+        // Only a full emit pays the debt; a snapshot read (`activity()`) does not.
+        this.listsDirty = false
+        this.deps.onActivity(full)
+      }
     }, wait)
   }
 
@@ -1310,7 +1316,6 @@ export class Reconciler {
   private buildActivity(rebuildLists: boolean): ActivityView {
     if (rebuildLists || !this.lists) {
       this.lists = this.computeLists()
-      this.listsDirty = false
     }
     const lists = this.lists
     const live = this.liveView()
