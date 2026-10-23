@@ -217,6 +217,8 @@ export class Reconciler {
   private emitTimer: NodeJS.Timeout | null = null
   private checkTimer: NodeJS.Timeout | null = null
   private sourceErrors = new Map<string, string>()
+  /** Failed enrichment lookups (`<step>:<trackId>`) that wait for the next check pass. */
+  private readonly deferred = new Set<string>()
   private loopPromise: Promise<unknown> | null = null
   /** Cached Activity lists, rebuilt only when track states change. */
   private lists: ActivityLists | null = null
@@ -437,6 +439,8 @@ export class Reconciler {
       return
     }
     this.deps.matcher.resetCache?.()
+    // A check is the normal pass: lookups that failed earlier are due again.
+    this.deferred.clear()
     this.checking = true
     this.emitSoon()
     const accountId = this.deps.session.accountId()
@@ -843,7 +847,8 @@ export class Reconciler {
         track,
         fileRows.get(track.id),
         uploadRows.get(track.id),
-        settings
+        settings,
+        this.deferred
       )
       if (step) planned.set(track.id, step)
       if (step && track.state !== 'pending') toPending.push(track.id)
@@ -1055,7 +1060,8 @@ export class Reconciler {
           track,
           file,
           upload,
-          this.deps.settings()
+          this.deps.settings(),
+          this.deferred
         )
         if (!step) {
           this.db
@@ -1114,7 +1120,8 @@ export class Reconciler {
                 .run()
             }
           } else if (step === 'lyrics') {
-            await runLyrics(this.deps, track, run)
+            if (!(await runLyrics(this.deps, track, run)))
+              this.deferred.add(`lyrics:${trackId}`)
           } else if (step === 'acquire') {
             await runAcquire(this.deps, track, run)
           } else if (step === 'retag') await runRetag(this.deps, track, run)

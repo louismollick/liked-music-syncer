@@ -49,7 +49,8 @@ export function createArtistImages(deps: {
                 await writeFile(imagePath, bytes)
               }
             } catch {
-              imagePath = null
+              // Leave it unchecked so the next run tries again.
+              continue
             }
             deps.db
               .update(artists)

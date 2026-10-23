@@ -58,6 +58,7 @@ import {
   type MatchInput,
   releaseIdentityKey,
 } from '../match/types'
+import { isConnectivityError } from '../net/connectivity'
 import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
 import { withPathLocks } from '../remote/path-locks'
@@ -231,13 +232,18 @@ export function parseFields(row: FileRow): TagFields {
   return JSON.parse(row.tagFields) as TagFields
 }
 
-/** Decides the next Track Step from facts (plan: "Track states and steps"). */
+/**
+ * Decides the next Track Step from facts (plan: "Track states and steps").
+ * `deferred` holds enrichment lookups that failed since the last pass, keyed
+ * `<step>:<trackId>`; they wait for the next pass instead of looping.
+ */
 export function nextStep(
   db: Db,
   track: TrackRow,
   file: FileRow | undefined,
   upload: UploadRow | undefined,
-  settings: Settings
+  settings: Settings,
+  deferred: ReadonlySet<string> = new Set()
 ): StepKind | null {
   const match = parseMatch(track)
   if (!match || track.refreshRequested) return 'match'
@@ -253,7 +259,12 @@ export function nextStep(
   ) {
     return 'acquire'
   }
-  if (settings.lyricsEnabled && track.lyricsCheckedAt === null) return 'lyrics'
+  if (
+    settings.lyricsEnabled &&
+    track.lyricsCheckedAt === null &&
+    !deferred.has(`lyrics:${track.id}`)
+  )
+    return 'lyrics'
   const desired = desiredFieldsFor(db, track)
   const sidecar = desiredSidecar(track)
   const sidecarSha = sidecar ? sha256(sidecar) : null
@@ -329,7 +340,11 @@ function betterLyrics(
   }
 }
 
-/** Shared by matching and lyrics-only work; provider failures still complete the lookup. */
+/**
+ * Shared by matching and lyrics-only work. A provider error with nothing found
+ * leaves the track unchecked so a later pass tries again; a clean miss is checked.
+ * `offline` is set when nothing was found and every failure was a lost connection.
+ */
 export async function lookUpLyrics(
   deps: StepDeps,
   track: TrackRow,
@@ -341,7 +356,9 @@ export async function lookUpLyrics(
   values.spotifyTrackId = spotifyId ?? values.spotifyTrackId
   const errors: Record<string, string> = {}
   const settings = deps.settings()
-  if (!settings.lyricsEnabled) return { values, errors }
+  if (!settings.lyricsEnabled) return { values, errors, offline: false }
+  let failed = false
+  let offline = false
   try {
     if (!isInstrumentalTitle(match.title)) {
       const original = match.artists.map((credit) => credit.name).join(', ')
@@ -377,6 +394,9 @@ export async function lookUpLyrics(
         { lyricsServerUrl: settings.lyricsServerUrl.trim() || null },
         run.signal
       )
+      const failures = Object.values(found.errors)
+      failed = !found.lyrics && failures.length > 0
+      offline = failed && failures.every(isConnectivityError)
       Object.assign(
         errors,
         Object.fromEntries(
@@ -403,22 +423,31 @@ export async function lookUpLyrics(
     }
   } catch (error) {
     if (run.signal.aborted) throw error
+    failed = true
+    offline = isConnectivityError(error)
     errors['lyrics:lookup'] =
       error instanceof Error ? error.message : String(error)
   }
-  values.lyricsCheckedAt = iso(deps)
-  return { values, errors }
+  if (!failed) values.lyricsCheckedAt = iso(deps)
+  return { values, errors, offline }
 }
 
+/**
+ * Returns false when providers failed and the track stays unchecked for a later
+ * pass. Throws a connectivity error when the network is down, so the lane waits
+ * (ADR 0010) instead of counting a miss.
+ */
 export async function runLyrics(
   deps: StepDeps,
   track: TrackRow,
   run: StepRun
-): Promise<void> {
+): Promise<boolean> {
   const match = parseMatch(track)
-  if (!match) return
+  if (!match) return true
   const lookup = await lookUpLyrics(deps, track, match, run)
   run.signal.throwIfAborted()
+  if (lookup.offline)
+    throw new Error(Object.values(lookup.errors)[0] ?? 'Offline')
   const current = deps.db
     .select()
     .from(tracks)
@@ -430,7 +459,7 @@ export async function runLyrics(
     current.state === 'no_longer_wanted' ||
     current.match !== track.match
   )
-    return
+    return true
   const errors = JSON.parse(current.enrichmentErrors) as Record<string, string>
   for (const key of Object.keys(errors))
     if (key.startsWith('lyrics:')) delete errors[key]
@@ -445,6 +474,7 @@ export async function runLyrics(
     .where(eq(tracks.id, track.id))
     .run()
   run.progress(1)
+  return lookup.values.lyricsCheckedAt !== null
 }
 
 // ---------------------------------------------------------------- match

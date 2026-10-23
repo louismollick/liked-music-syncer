@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { stageForStep } from '../../src/main/domain'
 import { artists, files, tracks } from '../../src/main/library/schema'
 import { createLyricsFinder } from '../../src/main/lyrics/finder'
+import { isConnectivityError } from '../../src/main/net/connectivity'
 import { createHttpClient, HttpError } from '../../src/main/net/http'
 import { nextStep, runLyrics, runMatch } from '../../src/main/reconcile/steps'
 import { readTags } from '../../src/main/tags/schema'
@@ -86,7 +87,7 @@ describe('lyrics-only work', () => {
     'error',
     'throw',
     'instrumental',
-  ])('stamps checked time on %s and lets retag continue', async (outcome) => {
+  ])('records %s and lets retag continue', async (outcome) => {
     const h = harness()
     const { track } = await seed(h, 'track')
     if (outcome === 'instrumental') {
@@ -120,10 +121,18 @@ describe('lyrics-only work', () => {
     const current = h.rows()[0]
     const f = file(h, track.id)
     expect(nextStep(h.db, current, f, undefined, h.settings)).toBe('lyrics')
-    await runLyrics(h.deps, current, run())
+    const failed = outcome === 'error' || outcome === 'throw'
+    expect(await runLyrics(h.deps, current, run())).toBe(!failed)
     const after = h.rows()[0]
-    expect(after.lyricsCheckedAt).toBe(h.time.toISOString())
-    expect(nextStep(h.db, after, f, undefined, h.settings)).toBe('retag')
+    // A provider failure with nothing found stays unchecked for the next pass.
+    expect(after.lyricsCheckedAt).toBe(failed ? null : h.time.toISOString())
+    const deferred = new Set([`lyrics:${track.id}`])
+    expect(nextStep(h.db, after, f, undefined, h.settings, deferred)).toBe(
+      'retag'
+    )
+    expect(nextStep(h.db, after, f, undefined, h.settings)).toBe(
+      failed ? 'lyrics' : 'retag'
+    )
     expect(JSON.parse(after.enrichmentErrors)).toEqual({
       cover: 'keep',
       ...(outcome === 'error'
@@ -141,7 +150,7 @@ describe('lyrics-only work', () => {
     expect(stageForStep('lyrics')).toBe('lyrics')
   })
 
-  it('preserves synced lyrics after a Spotify error and YouTube plain result', async () => {
+  it('preserves synced lyrics when every provider fails or misses', async () => {
     const h = harness()
     const { track } = await seed(h, 'track', 'synced')
     vi.spyOn(h.deps.catalog, 'lyrics').mockResolvedValue({
@@ -173,7 +182,7 @@ describe('lyrics-only work', () => {
       lyricsText: 'Stored lyrics',
       lyricsStatus: 'synced',
       lyricsSource: 'spotify',
-      lyricsCheckedAt: h.time.toISOString(),
+      lyricsCheckedAt: null,
     })
     expect(
       JSON.parse(h.rows()[0].enrichmentErrors)['lyrics:spotify']
@@ -393,5 +402,121 @@ describe('lyrics-only work', () => {
         h.settings
       )
     ).toBe('retag')
+  })
+})
+
+describe('failed lyrics lookups', () => {
+  it('upload without lyrics, stay unchecked, and retry on the next check', async () => {
+    const h = harness()
+    h.settings.remoteEnabled = true
+    h.catalog.likes = [song('track')]
+    const find = vi.spyOn(h.deps.lyrics, 'find').mockResolvedValue({
+      lyrics: null,
+      spotifyTrackId: null,
+      errors: { spotify: 'unavailable' },
+    })
+    await h.start()
+    const failed = h.rows()[0]
+    // One lookup in the match step, one retry in the lyrics step, then no loop.
+    expect(find.mock.calls.length).toBeLessThanOrEqual(2)
+    expect(failed).toMatchObject({ state: 'done', lyricsCheckedAt: null })
+    expect(h.upload(failed.id)).toBeDefined()
+    const calls = find.mock.calls.length
+    await h.check()
+    expect(find.mock.calls.length).toBe(calls + 1)
+    find.mockResolvedValue({
+      lyrics: {
+        text: '[00:01.00]Found',
+        synced: true,
+        source: 'lrclib',
+        language: null,
+      },
+      spotifyTrackId: null,
+      errors: {},
+    })
+    await h.check()
+    expect(h.rows()[0]).toMatchObject({
+      lyricsStatus: 'synced',
+      lyricsCheckedAt: h.time.toISOString(),
+    })
+    expect(h.upload(failed.id)?.lrcHash).not.toBeNull()
+  })
+
+  it('waits for the network instead of counting a lost connection as a miss', async () => {
+    const h = new Harness({ probeBackoffMs: [30, 30] })
+    open.push(h)
+    h.settings.remoteEnabled = false
+    h.catalog.likes = [song('track')]
+    let online = false
+    const find = vi
+      .spyOn(h.deps.lyrics, 'find')
+      .mockImplementation(async () => ({
+        lyrics: online
+          ? {
+              text: '[00:01.00]Found',
+              synced: true,
+              source: 'lrclib' as const,
+              language: null,
+            }
+          : null,
+        spotifyTrackId: null,
+        errors: online
+          ? {}
+          : {
+              lrclib: 'lrclib: fetch failed (ENOTFOUND)',
+              netease: 'netease: fetch failed (ENOTFOUND)',
+            },
+      }))
+    await h.reconciler.start()
+    const end = Date.now() + 10_000
+    while (!h.reconciler.activity().offline || find.mock.calls.length < 3) {
+      if (Date.now() > end) throw new Error('Timed out waiting for offline')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    // The lane waits and probes; the track keeps its retries and stays unchecked.
+    expect(h.rows()[0]).toMatchObject({
+      state: 'pending',
+      attempts: 0,
+      lyricsCheckedAt: null,
+    })
+    online = true
+    await h.idle()
+    expect(h.reconciler.activity().offline).toBe(false)
+    expect(h.rows()[0]).toMatchObject({
+      state: 'done',
+      lyricsStatus: 'synced',
+      lyricsCheckedAt: h.time.toISOString(),
+    })
+  })
+
+  it('treats a mix of a lost connection and a clean miss as a retry, not an outage', async () => {
+    const h = harness()
+    const { track } = await seed(h, 'track')
+    file(h, track.id)
+    vi.spyOn(h.deps.lyrics, 'find').mockResolvedValue({
+      lyrics: null,
+      spotifyTrackId: null,
+      errors: {
+        netease: 'netease: fetch failed (ENOTFOUND)',
+        lrclib: 'HTTP 500',
+      },
+    })
+    expect(await runLyrics(h.deps, h.rows()[0], run())).toBe(false)
+    expect(h.rows()[0].lyricsCheckedAt).toBeNull()
+  })
+
+  it('throws a connectivity error when every provider is unreachable', async () => {
+    const h = harness()
+    const { track } = await seed(h, 'track')
+    file(h, track.id)
+    vi.spyOn(h.deps.lyrics, 'find').mockResolvedValue({
+      lyrics: null,
+      spotifyTrackId: null,
+      errors: { netease: 'netease: fetch failed (ENOTFOUND)' },
+    })
+    await expect(runLyrics(h.deps, h.rows()[0], run())).rejects.toSatisfy(
+      isConnectivityError
+    )
+    expect(h.rows()[0].lyricsCheckedAt).toBeNull()
   })
 })
