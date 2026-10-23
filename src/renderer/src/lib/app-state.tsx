@@ -113,6 +113,10 @@ export function ActivityProvider({ children }: { children: React.ReactNode }) {
     void invoke('activity:get').then(setActivity)
   }, [])
   useEvent('activity:changed', setActivity)
+  // Progress ticks carry only the tracks being worked on, not the lists.
+  useEvent('activity:progress', (live) =>
+    setActivity((previous) => (previous ? { ...previous, ...live } : previous))
+  )
   return (
     <ActivityContext.Provider value={activity}>
       {children}

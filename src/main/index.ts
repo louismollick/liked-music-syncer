@@ -211,6 +211,7 @@ async function main() {
     },
     coverUrl: coverUrlFor,
     onActivity: (view) => broadcast('activity:changed', view),
+    onProgress: (live) => broadcast('activity:progress', live),
     onLibraryChanged: (trackIds) => {
       broadcast('library:changed', { trackIds })
       scheduleArtistImages()
@@ -223,7 +224,7 @@ async function main() {
 
   const busy = () => {
     const view = reconciler.activity()
-    return view.checking || view.current !== null
+    return view.checking || view.current !== null || view.uploading.length > 0
   }
 
   registerIpc({
@@ -241,8 +242,10 @@ async function main() {
             value.rcloneRemote.trim() &&
             value.remoteFolder.trim()
         )
-      if (remoteOn(before) !== remoteOn(next))
+      if (remoteOn(before) !== remoteOn(next)) {
         broadcast('library:changed', { trackIds: null })
+        if (remoteOn(next)) void reconciler.checkRemote()
+      }
       if (
         patch.libraryFolder !== undefined &&
         patch.libraryFolder !== before.libraryFolder

@@ -402,7 +402,11 @@ describe('reconciler', () => {
     const track = h.rows()[0]
     const remote = path.join(h.remote, h.file(track.id)!.relativePath)
     rmSync(remote)
+    // Only an audit (startup, new target, a probe) notices; a like check does not.
     await h.check()
+    expect(existsSync(remote)).toBe(false)
+    await h.reconciler.checkRemote()
+    await h.idle()
     expect(existsSync(remote)).toBe(true)
     expect(h.upload(track.id)?.remoteSize).toBeGreaterThan(0)
   })

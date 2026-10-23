@@ -34,6 +34,7 @@ import type { HttpClient } from '../../src/main/net/http'
 import {
   Reconciler,
   type ReconcilerDeps,
+  type Tuning,
 } from '../../src/main/reconcile/reconciler'
 import { createRclone } from '../../src/main/remote/rclone'
 import type { Settings } from '../../src/shared/ipc'
@@ -265,7 +266,7 @@ export class Harness {
   }
   reconciler: Reconciler
   deps: ReconcilerDeps
-  constructor() {
+  constructor(tuning?: Partial<Tuning>) {
     mkdirSync(this.userData, { recursive: true })
     mkdirSync(this.library, { recursive: true })
     mkdirSync(this.remote, { recursive: true })
@@ -323,6 +324,7 @@ export class Harness {
       coverUrl: (_path, fallback) => fallback,
       onActivity: () => {},
       onLibraryChanged: () => {},
+      tuning,
     }
     this.reconciler = new Reconciler(this.deps)
   }
@@ -351,7 +353,10 @@ export class Harness {
     while (Date.now() < until) {
       const activity = this.reconciler.activity()
       const busy =
-        activity.checking || activity.current || activity.upNextCount > 0
+        activity.checking ||
+        activity.current ||
+        activity.uploading.length > 0 ||
+        activity.upNextCount > 0
       if (!busy && ++stable >= 3) return
       if (busy) stable = 0
       await new Promise((resolve) => setTimeout(resolve, 25))

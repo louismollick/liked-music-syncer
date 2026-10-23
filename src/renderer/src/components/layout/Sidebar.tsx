@@ -41,14 +41,16 @@ function StatusSection() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const now = useNow()
   const [spinning, setSpinning] = useState(false)
-  const current = activity?.current ?? null
+  // Uploads can run while nothing downloads; show one of them then.
+  const current = activity?.current ?? activity?.uploading[0] ?? null
   const onActivity = pathname.startsWith('/activity')
   const busy = Boolean(current) && !onActivity
   const working = Boolean(activity?.working || activity?.checking)
   const upNext = activity?.upNextCount ?? 0
   const signedIn = hasSignedInAccount(session, spotify)
 
-  const remaining = upNext + (current ? 1 : 0)
+  const remaining =
+    upNext + (activity?.current ? 1 : 0) + (activity?.uploading.length ?? 0)
   const checked = activity?.lastCheckedAt ?? null
   const title = !signedIn
     ? 'Not signed in'
@@ -61,9 +63,13 @@ function StatusSection() {
         : 'Up to date'
   const detail = !signedIn
     ? 'Sign in from Settings'
-    : !checked
-      ? 'Not checked yet'
-      : `${activity?.checking ? 'Last checked' : 'Checked'} ${timeAgo(checked, now)}`
+    : activity?.offline
+      ? 'Offline'
+      : activity?.remoteUnreachable
+        ? "Can't reach the VPS"
+        : !checked
+          ? 'Not checked yet'
+          : `${activity?.checking ? 'Last checked' : 'Checked'} ${timeAgo(checked, now)}`
 
   const check = () => {
     setSpinning(true)
@@ -103,7 +109,11 @@ function StatusSection() {
             />
           </div>
           <div className="mt-2 text-[11px] text-zinc-500">
-            {plural(upNext, 'song')} up next
+            {activity?.offline
+              ? 'Offline'
+              : activity?.remoteUnreachable
+                ? "Can't reach the VPS"
+                : `${plural(upNext, 'song')} up next`}
           </div>
         </div>
       ) : (

@@ -60,7 +60,12 @@ import {
 } from '../match/types'
 import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
-import type { HashAlgo, Rclone, RemoteTarget } from '../remote/rclone'
+import type {
+  HashAlgo,
+  Rclone,
+  RemoteTarget,
+  VerifiedUpload,
+} from '../remote/rclone'
 import {
   BOTH_LIKED_SOURCE_ORIGIN,
   CATALOG_SOURCE_ORIGIN,
@@ -105,6 +110,12 @@ export interface StepRun {
   signal: AbortSignal
   /** Progress within the current step, 0..1. */
   progress: (fraction: number) => void
+  /**
+   * Remote object sizes by path from the last audit, or null/absent before one
+   * succeeded. A new upload to a path the listing lacks skips the check for
+   * an identical remote copy.
+   */
+  remoteListing?: ReadonlyMap<string, number> | null
 }
 
 /** Fields that do not justify rewriting a file on their own. */
@@ -1875,11 +1886,20 @@ export async function runMove(
 
 // ---------------------------------------------------------------- upload
 
-/** Drop records for remote objects removed or resized outside the app. */
-export async function auditRemote(deps: StepDeps): Promise<string[]> {
+/**
+ * Drops records for remote objects removed or resized outside the app. Returns
+ * the tracks it dropped and the remote's object sizes by path.
+ */
+export async function auditRemote(
+  deps: StepDeps,
+  signal?: AbortSignal
+): Promise<{ stale: string[]; listing: Map<string, number> } | null> {
   const target = remoteTarget(deps.settings())
-  if (!target) return []
-  const listing = await deps.rclone.list(target, {})
+  if (!target) return null
+  const remote = await deps.rclone.list(target, {}, signal)
+  const listing = new Map(
+    [...remote].map(([remotePath, object]) => [remotePath, object.size])
+  )
   const key = targetKey(target)
   const recorded =
     deps.db
@@ -1889,7 +1909,7 @@ export async function auditRemote(deps: StepDeps): Promise<string[]> {
       .get()?.n ?? 0
   // An empty listing while uploads are recorded usually means the remote folder is
   // briefly unavailable, not that every file was deleted.
-  if (listing.size === 0 && recorded >= 3) return []
+  if (remote.size === 0 && recorded >= 3) return { stale: [], listing }
   const stale: string[] = []
   for (const row of deps.db
     .select()
@@ -1897,10 +1917,10 @@ export async function auditRemote(deps: StepDeps): Promise<string[]> {
     .where(eq(uploads.remoteTarget, key))
     .all()) {
     const audio = row.remotePath
-      ? listing.get(row.remotePath.normalize('NFC'))
+      ? remote.get(row.remotePath.normalize('NFC'))
       : null
     const sidecar = row.lrcRemotePath
-      ? listing.get(row.lrcRemotePath.normalize('NFC'))
+      ? remote.get(row.lrcRemotePath.normalize('NFC'))
       : null
     if (
       (row.remotePath && (!audio || audio.size !== row.remoteSize)) ||
@@ -1911,7 +1931,7 @@ export async function auditRemote(deps: StepDeps): Promise<string[]> {
   }
   if (stale.length)
     deps.db.delete(uploads).where(inArray(uploads.trackId, stale)).run()
-  return stale
+  return { stale, listing }
 }
 
 export async function runUpload(
@@ -1999,7 +2019,13 @@ export async function runUpload(
       run.signal
     )
   }
-  if (!audio && !existing) {
+  const listed = run.remoteListing
+  if (
+    !audio &&
+    !existing &&
+    // The last audit saw no object of this size there: nothing to accept.
+    (!listed || listed.get(file.relativePath.normalize('NFC')) === file.size)
+  ) {
     // No upload record (fresh database or adoption): accept an identical
     // remote copy. Only this one object is hashed (ADR 0005).
     audio = await deps.rclone.verify(
@@ -2021,40 +2047,37 @@ export async function runUpload(
       hash: existing.contentHash,
     }
   }
-  if (!audio) {
-    audio = await deps.rclone.upload(
-      target,
-      local,
-      file.relativePath,
-      (f) => run.progress(f * 0.9),
-      run.signal
-    )
-  }
-
-  // Sidecar
+  // The audio and its sidecar go up in one rclone run and are verified together.
   const lrcRelative = sidecarPath(file.relativePath)
   let lrcRemotePath: string | null = null
   let lrcRemoteSize: number | null = null
+  const sidecarCurrent =
+    movedSidecar ||
+    (existing?.lrcHash === file.lrcSha256 &&
+      existing?.lrcRemotePath === lrcRelative)
+  const batch = [
+    ...(audio ? [] : [file.relativePath]),
+    ...(file.lrcSha256 && !sidecarCurrent ? [lrcRelative] : []),
+  ]
+  const uploaded = new Map<string, VerifiedUpload>()
+  if (batch.length) {
+    const results = await deps.rclone.upload(
+      target,
+      root,
+      batch,
+      (f) => run.progress(f * 0.95),
+      run.signal
+    )
+    batch.forEach((relativePath, index) => {
+      uploaded.set(relativePath, results[index])
+    })
+  }
+  audio ??= uploaded.get(file.relativePath) ?? null
+  if (!audio) throw new Error(`Upload of ${file.relativePath} did not verify`)
   if (file.lrcSha256) {
-    const lrcLocal = path.join(root, lrcRelative)
-    if (
-      !(
-        movedSidecar ||
-        (existing?.lrcHash === file.lrcSha256 &&
-          existing.lrcRemotePath === lrcRelative)
-      )
-    ) {
-      const verified = await deps.rclone.upload(
-        target,
-        lrcLocal,
-        lrcRelative,
-        () => {},
-        run.signal
-      )
-      lrcRemoteSize = verified.size
-    } else {
-      lrcRemoteSize = existing?.lrcRemoteSize ?? null
-    }
+    lrcRemoteSize = sidecarCurrent
+      ? (existing?.lrcRemoteSize ?? null)
+      : (uploaded.get(lrcRelative)?.size ?? null)
     lrcRemotePath = lrcRelative
   }
   // The old sidecar is gone or lives at a path we no longer use.
@@ -2096,6 +2119,13 @@ export async function runUpload(
       .get()?.state
     // Stopped managing meanwhile: the app no longer tracks its remote copy.
     if (state === 'released') return
+    // Deleted or rewritten meanwhile: what we verified is no longer this file.
+    const current = db
+      .select({ sha: files.contentSha256 })
+      .from(files)
+      .where(eq(files.trackId, track.id))
+      .get()
+    if (current?.sha !== file.contentSha256) return
     if (db.select().from(uploads).where(eq(uploads.trackId, track.id)).get()) {
       db.update(uploads).set(row).where(eq(uploads.trackId, track.id)).run()
     } else {
