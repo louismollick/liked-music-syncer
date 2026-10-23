@@ -220,4 +220,8 @@ export const MIGRATIONS: string[] = [
   CREATE UNIQUE INDEX contributions_source_key ON contributions(source_key);
   CREATE INDEX contributions_track ON contributions(track_id);
   `,
+  // 7: the Albums list and album pages group and look up tracks by album
+  `
+  CREATE INDEX tracks_album ON tracks(album, album_artist);
+  `,
 ]

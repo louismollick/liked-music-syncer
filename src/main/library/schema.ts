@@ -62,6 +62,7 @@ export const tracks = sqliteTable(
   (table) => [
     uniqueIndex('tracks_identity_key').on(table.identityKey),
     index('tracks_state').on(table.state),
+    index('tracks_album').on(table.album, table.albumArtist),
   ]
 )
 
