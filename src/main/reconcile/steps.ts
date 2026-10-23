@@ -60,6 +60,7 @@ import {
 } from '../match/types'
 import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
+import { withPathLocks } from '../remote/path-locks'
 import type {
   HashAlgo,
   Rclone,
@@ -1934,7 +1935,77 @@ export async function auditRemote(
   return { stale, listing }
 }
 
+/** Lock key for one remote path, compared like paths are elsewhere (ADR 0010). */
+const remotePathLock = (key: string, remotePath: string) =>
+  `${key}\n${pathKey(remotePath)}`
+
+/**
+ * Whether another track's upload record owns this remote path (audio or
+ * sidecar). Read from the database each time, so call it under the path's
+ * reservation, right before a destructive remote operation.
+ */
+function ownedByOtherTrack(
+  deps: StepDeps,
+  key: string,
+  trackId: string | null,
+  remotePath: string
+): boolean {
+  const wanted = pathKey(remotePath)
+  return deps.db
+    .select({
+      trackId: uploads.trackId,
+      path: uploads.remotePath,
+      lrc: uploads.lrcRemotePath,
+    })
+    .from(uploads)
+    .where(eq(uploads.remoteTarget, key))
+    .all()
+    .some(
+      (row) =>
+        row.trackId !== trackId &&
+        [row.path, row.lrc].some((value) => value && pathKey(value) === wanted)
+    )
+}
+
+/**
+ * Uploads a track's file, moving or cleaning up its old remote copy. Reserves
+ * every remote path it writes or deletes until the upload record is committed,
+ * so a concurrent upload of another track to a freed path cannot be deleted
+ * out from under it.
+ */
 export async function runUpload(
+  deps: StepDeps,
+  track: TrackRow,
+  run: StepRun
+): Promise<void> {
+  const target = remoteTarget(deps.settings())
+  if (!target) return
+  const key = targetKey(target)
+  const file = deps.db
+    .select()
+    .from(files)
+    .where(eq(files.trackId, track.id))
+    .get()
+  if (!file) throw new Error('No file to upload')
+  const recorded = deps.db
+    .select()
+    .from(uploads)
+    .where(eq(uploads.trackId, track.id))
+    .get()
+  const paths = [
+    file.relativePath,
+    sidecarPath(file.relativePath),
+    ...(recorded?.remoteTarget === key
+      ? [recorded.remotePath, recorded.lrcRemotePath]
+      : []),
+  ]
+  await withPathLocks(
+    paths.flatMap((value) => (value ? [remotePathLock(key, value)] : [])),
+    () => uploadLocked(deps, track, run)
+  )
+}
+
+async function uploadLocked(
   deps: StepDeps,
   track: TrackRow,
   run: StepRun
@@ -1970,22 +2041,9 @@ export async function runUpload(
   let movedSidecar = false
   // Another track may have been uploaded to our old path since; leave it
   // alone. Case-insensitive, because some remotes (and APFS) are.
-  const othersPaths = new Set(
-    deps.db
-      .select({ path: uploads.remotePath, lrc: uploads.lrcRemotePath })
-      .from(uploads)
-      .where(
-        and(
-          eq(uploads.remoteTarget, targetKey(target)),
-          sql`${uploads.trackId} != ${track.id}`
-        )
-      )
-      .all()
-      .flatMap((row) => [row.path, row.lrc])
-      .flatMap((value) => (value ? [pathKey(value)] : []))
-  )
+  const key = targetKey(target)
   const ownedByOther = (remotePath: string) =>
-    othersPaths.has(pathKey(remotePath))
+    ownedByOtherTrack(deps, key, track.id, remotePath)
   // A spelling-only change is the same object on case-insensitive remotes:
   // never move or delete it (on a case-sensitive remote the old spelling is
   // merely left behind).
@@ -2084,11 +2142,12 @@ export async function runUpload(
   if (
     oldSidecar &&
     !movedSidecar &&
-    pathKey(oldSidecar) !== pathKey(lrcRemotePath ?? '')
+    pathKey(oldSidecar) !== pathKey(lrcRemotePath ?? '') &&
+    !ownedByOther(oldSidecar)
   ) {
     await deps.rclone.delete(target, oldSidecar, run.signal)
   }
-  if (oldAudio) {
+  if (oldAudio && !ownedByOther(oldAudio)) {
     await deps.rclone
       .delete(target, oldAudio, run.signal)
       .catch(() => undefined)
@@ -2286,19 +2345,13 @@ export async function processTombstones(
           ? targetFromKey(row.remoteTarget)
           : target
         if (!storedTarget) continue
-        const owner = row.path.endsWith('.lrc')
-          ? deps.db
-              .select()
-              .from(uploads)
-              .where(eq(uploads.lrcRemotePath, row.path))
-              .get()
-          : deps.db
-              .select()
-              .from(uploads)
-              .where(eq(uploads.remotePath, row.path))
-              .get()
-        if (!owner || owner.remoteTarget !== targetKey(storedTarget))
-          await deps.rclone.delete(storedTarget, row.path, signal)
+        // Reserved, and checked against the database under the reservation:
+        // an upload may have just recorded this path for another track.
+        const storedKey = targetKey(storedTarget)
+        await withPathLocks([remotePathLock(storedKey, row.path)], async () => {
+          if (!ownedByOtherTrack(deps, storedKey, null, row.path))
+            await deps.rclone.delete(storedTarget, row.path, signal)
+        })
       }
       deps.db
         .update(tombstones)

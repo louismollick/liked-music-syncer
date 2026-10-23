@@ -1,21 +1,26 @@
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
 import path from 'node:path'
+import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
-import { uploads } from '../../src/main/library/schema'
+import { files, tracks, uploads } from '../../src/main/library/schema'
 import type { Tuning } from '../../src/main/reconcile/reconciler'
+import { runUpload } from '../../src/main/reconcile/steps'
 import {
   createRclone,
   type Rclone,
   type RemoteObject,
 } from '../../src/main/remote/rclone'
+import { makeM4a } from '../helpers/audio'
 import { Harness, song } from './harness'
 
 const open: Harness[] = []
@@ -228,6 +233,88 @@ describe('upload lane', () => {
     await h.idle()
     expect(h.upload(track.id)?.verifiedAt).toBeTruthy()
     expect(h.row('video:bad')?.state).toBe('done')
+  })
+})
+
+describe('remote path reservations', () => {
+  /**
+   * Track A is retagged and moves locally from P to Q, so its upload sends Q and
+   * then deletes the old remote P. Track B downloads to the freed P meanwhile and
+   * uploads it, while A's upload of Q is still in flight.
+   */
+  it("keeps another track's verified upload when the old path is cleaned up", async () => {
+    const h = harness()
+    await h.start()
+    h.catalog.likes = [song('a', 'Alpha'), song('b', 'Beta')]
+    await h.check()
+    await h.stop()
+    const a = h.rows().find((row) => row.identityKey === 'video:a')!
+    const b = h.rows().find((row) => row.identityKey === 'video:b')!
+    const p = h.file(a.id)!.relativePath
+    const q = 'Test Artist/Alpha Retagged/Alpha.m4a'
+
+    // A: new bytes at a new local path; its remote copy is still at P.
+    mkdirSync(path.dirname(path.join(h.library, q)), { recursive: true })
+    rmSync(path.join(h.library, p))
+    makeM4a(path.join(h.library, q), 0.5, 880)
+    const aBytes = readFileSync(path.join(h.library, q))
+    h.db
+      .update(files)
+      .set({
+        relativePath: q,
+        size: aBytes.length,
+        contentSha256: createHash('sha256').update(aBytes).digest('hex'),
+      })
+      .where(eq(files.trackId, a.id))
+      .run()
+    // B: downloaded to the freed P, with no upload record yet.
+    renameSync(
+      path.join(h.library, h.file(b.id)!.relativePath),
+      path.join(h.library, p)
+    )
+    h.db
+      .update(files)
+      .set({ relativePath: p })
+      .where(eq(files.trackId, b.id))
+      .run()
+    h.db.delete(uploads).where(eq(uploads.trackId, b.id)).run()
+
+    // Hold A's upload until B has been started.
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const real = h.deps.rclone
+    h.deps.rclone = {
+      ...real,
+      async upload(target, root, relativePaths, onProgress, signal) {
+        if (relativePaths.includes(q)) await gate
+        return real.upload(target, root, relativePaths, onProgress, signal)
+      },
+    }
+    const step = (id: string) =>
+      runUpload(
+        h.deps,
+        h.db.select().from(tracks).where(eq(tracks.id, id)).get()!,
+        {
+          signal: new AbortController().signal,
+          progress: () => {},
+        }
+      )
+    const aRun = step(a.id)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const bRun = step(b.id)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    release()
+    await Promise.all([aRun, bRun])
+
+    expect(h.upload(a.id)?.remotePath).toBe(q)
+    expect(h.upload(b.id)?.remotePath).toBe(p)
+    // The recorded copy of B is really there, with B's bytes.
+    expect(readFileSync(path.join(h.remote, p))).toEqual(
+      readFileSync(path.join(h.library, p))
+    )
+    expect(existsSync(path.join(h.remote, q))).toBe(true)
   })
 })
 
