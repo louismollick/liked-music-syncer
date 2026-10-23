@@ -14,6 +14,7 @@ export const settingsSchema = z.object({
   lyricsServerUrl: z.string(),
   lastfmApiKey: z.string(),
   selectedAccountId: z.string().nullable(),
+  openAtLogin: z.boolean(),
 })
 export type Settings = z.infer<typeof settingsSchema>
 
@@ -76,6 +77,8 @@ export interface ActivityView {
   remoteUnreachable: boolean
   /** The internet cannot be reached; downloads wait and retry. */
   offline: boolean
+  /** Syncing is paused until resumed (kept in memory only). */
+  paused: boolean
   lastCheckedAt: string | null
   /** The track the download pipeline (match, lyrics, download, tags) is on. */
   current: ActivityTrackView | null
@@ -277,6 +280,8 @@ export interface InvokeMap {
   'session:selectAccount': [string, SessionView]
   'activity:get': [void, ActivityView]
   'activity:check': [void, void]
+  'activity:pause': [void, void]
+  'activity:resume': [void, void]
   'activity:refreshCatalogs': [void, void]
   'activity:retry': [string, void]
   'activity:retryAll': [void, void]
@@ -310,6 +315,8 @@ export interface EventMap {
   'spotify:changed': SpotifySessionView
   'session:changed': SessionView
   'settings:changed': Settings
+  /** The menu bar asks an open window to show a page. */
+  'app:navigate': '/activity'
 }
 
 export type EventChannel = keyof EventMap

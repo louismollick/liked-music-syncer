@@ -15,12 +15,12 @@ import {
 } from 'drizzle-orm'
 import type {
   ActivityLive,
-  ActivityStage,
   ActivityTrackView,
   ActivityView,
   AttentionItemView,
   RefreshScope,
 } from '../../shared/ipc'
+import { STAGE_WEIGHTS } from '../../shared/status'
 import { stageForStep } from '../domain'
 import { sha256File } from '../inventory/files'
 import {
@@ -92,13 +92,6 @@ const NETWORK_STEPS: ReadonlySet<StepKind> = new Set([
   'acquire',
   'upload',
 ])
-const STAGE_WEIGHTS: Record<ActivityStage, [number, number]> = {
-  matching: [0, 0.15],
-  lyrics: [0.15, 0.7],
-  genres: [0.15, 0.7],
-  downloading: [0.15, 0.7],
-  uploading: [0.85, 0.15],
-}
 
 export interface SessionInfo {
   /** Selected YouTube Music Account ID, or null when signed out. */
@@ -187,6 +180,7 @@ type ActivityLists = Omit<
   | 'uploading'
   | 'working'
   | 'checking'
+  | 'paused'
   | 'remoteUnreachable'
   | 'offline'
 >
@@ -213,6 +207,7 @@ export class Reconciler {
   private remoteGeneration = 0
   private probing: Promise<void> | null = null
   private checking = false
+  private isPaused = false
   private queuedCheck: CatalogRequest | null = null
   private planDirty = true
   private lastEmit = 0
@@ -252,8 +247,27 @@ export class Reconciler {
         this.laneLoop('upload')
       ),
     ])
-    this.checkTimer = setInterval(() => void this.check(), CHECK_INTERVAL_MS)
+    this.checkTimer = setInterval(() => {
+      if (!this.isPaused) void this.check()
+    }, CHECK_INTERVAL_MS)
     void this.check()
+  }
+
+  /** Syncing is paused: no lane starts a new Track Step. Not persisted. */
+  get paused(): boolean {
+    return this.isPaused
+  }
+
+  /** Steps already running finish; both lanes then wait for resume(). */
+  pause(): void {
+    this.isPaused = true
+    this.emitSoon()
+  }
+
+  resume(): void {
+    this.isPaused = false
+    this.wakeAll()
+    this.emitSoon()
   }
 
   async stop(): Promise<void> {
@@ -920,6 +934,10 @@ export class Reconciler {
           await this.prepareLibrary()
         continue
       }
+      if (this.isPaused) {
+        await this.idle(60_000)
+        continue
+      }
       const pause = this.pauses[lane]
       if (pause) {
         const wait = pause.until - Date.now()
@@ -1096,6 +1114,8 @@ export class Reconciler {
           this.handOff(flight, step)
           return
         }
+        // Pausing lets the step in flight finish but starts no further step.
+        if (this.isPaused) break
         flight.step = step
         flight.fraction = 0
         flight.row = this.activityRow(trackId)
@@ -1345,6 +1365,7 @@ export class Reconciler {
     return {
       working: this.flights.size > 0 || lists.upNextCount > 0,
       checking: this.checking,
+      paused: this.isPaused,
       remoteUnreachable: this.pauses.upload !== null,
       offline: this.pauses.acquire !== null,
       ...live,

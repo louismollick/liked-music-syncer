@@ -49,6 +49,15 @@ export function SettingsPage() {
       <div className="p-6 max-w-3xl">
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 
+        <Heading>General</Heading>
+        <Row label="Open at login">
+          <Switch
+            label="Open at login"
+            checked={settings.openAtLogin}
+            onChange={(v) => void updateSettings({ openAtLogin: v })}
+          />
+        </Row>
+
         <Heading>Accounts</Heading>
         <Row
           label="YouTube Music"

@@ -14,6 +14,7 @@ import { TabPages } from './components/layout/TabPages'
 import { NeedsAttentionDrawer } from './components/NeedsAttention'
 import { Palette } from './components/Palette'
 import { SongPanel } from './components/SongPanel'
+import { useEvent } from './lib/api'
 import { useAppState } from './lib/app-state'
 import { TabSearchesProvider, useRememberedSearches } from './lib/tabs'
 import { ActivityPage } from './pages/ActivityPage'
@@ -38,6 +39,7 @@ function useSongPanelFollowsUrl() {
 
 function RootLayout() {
   useSongPanelFollowsUrl()
+  useEvent('app:navigate', (to) => void router.navigate({ to }))
   const searches = useRememberedSearches()
   return (
     <TabSearchesProvider value={searches}>
