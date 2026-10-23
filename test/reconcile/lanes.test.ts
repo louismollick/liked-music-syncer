@@ -384,7 +384,8 @@ describe('outages', () => {
     h.catalog.likes = [song('x')]
     await h.reconciler.start()
     await until(() => h.reconciler.activity().offline)
-    await until(() => attempts >= 5)
+    // Between probes the track is pending; during one it is briefly working.
+    await until(() => attempts >= 5 && h.rows()[0].state === 'pending')
     expect(h.rows()[0]).toMatchObject({ state: 'pending', attempts: 0 })
     expect(h.reconciler.activity().remoteUnreachable).toBe(false)
 
