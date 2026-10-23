@@ -10,13 +10,32 @@ const DEFAULT_KILL_GRACE_MS = 5_000
 /** After the child exits, how long to wait for its pipes to close. */
 const PIPE_CLOSE_WAIT_MS = 1_000
 
-/** SIGTERM now, SIGKILL if it has not exited after the grace period. */
+/** Children lead their own process group (POSIX), so signals reach descendants too. */
+const GROUPS = process.platform !== 'win32'
+
+function hasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null
+}
+
+function signalTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    if (GROUPS && child.pid) process.kill(-child.pid, signal)
+    else child.kill(signal)
+  } catch {
+    // Already gone.
+  }
+}
+
+/**
+ * SIGTERM now, SIGKILL after the grace period. Reaches the whole process group,
+ * including descendants that outlive an exited parent.
+ */
 function terminate(child: ChildProcess, graceMs = DEFAULT_KILL_GRACE_MS): void {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  child.kill('SIGTERM')
-  const timer = setTimeout(() => child.kill('SIGKILL'), graceMs)
+  signalTree(child, 'SIGTERM')
+  const timer = setTimeout(() => signalTree(child, 'SIGKILL'), graceMs)
   timer.unref()
-  child.once('exit', () => clearTimeout(timer))
+  // 'close' means the parent exited and every pipe is shut: nothing left to kill.
+  child.once('close', () => clearTimeout(timer))
 }
 
 export interface RunOptions {
@@ -82,6 +101,7 @@ export function run(
       env: options.env ?? process.env,
       cwd: options.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
+      detached: GROUPS,
     })
     live.add(child)
     const out: Buffer[] = []
@@ -91,12 +111,22 @@ export function run(
     let idleTimer: NodeJS.Timeout | undefined
     let timedOut = false
     let pipeTimer: NodeJS.Timeout | undefined
+    // Stops the process tree. If the parent already exited, descendants may
+    // still hold the pipes open, so drop them and settle instead of waiting.
+    const stop = () => {
+      terminate(child, options.killGraceMs)
+      if (hasExited(child)) {
+        child.stdout.destroy()
+        child.stderr.destroy()
+        settleKilled(child.exitCode)
+      }
+    }
     const armIdle = () => {
       if (idleMs <= 0) return
       clearTimeout(idleTimer)
       idleTimer = setTimeout(() => {
         timedOut = true
-        terminate(child, options.killGraceMs)
+        stop()
       }, idleMs)
     }
     armIdle()
@@ -116,7 +146,7 @@ export function run(
       err.push(chunk)
       feed('stderr', chunk)
     })
-    const onAbort = () => terminate(child, options.killGraceMs)
+    const onAbort = stop
     options.signal?.addEventListener('abort', onAbort, { once: true })
     let settled = false
     const finish = (settle: () => void) => {

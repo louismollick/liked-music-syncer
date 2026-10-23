@@ -51,4 +51,51 @@ describe('run', () => {
     ).rejects.toBeInstanceOf(ProcessTimeoutError)
     expect(Date.now() - started).toBeLessThan(5_000)
   })
+
+  // sh exits at once, but its backgrounded helper keeps stdout open and
+  // prints its pid first so the test can check the helper was killed.
+  const orphanScript = 'sleep 30 & echo $!; exit 0'
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  const waitDead = async (pid: number) => {
+    for (let i = 0; i < 100 && alive(pid); i++)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    return !alive(pid)
+  }
+
+  it('settles an idle timeout after the parent exited while a descendant holds the pipes', async () => {
+    let pid = 0
+    const started = Date.now()
+    const error = await run('sh', ['-c', orphanScript], {
+      idleTimeoutMs: 300,
+      killGraceMs: 100,
+      onLine: (line) => {
+        pid = Number(line)
+      },
+    }).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ProcessTimeoutError)
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(await waitDead(pid)).toBe(true)
+  })
+
+  it('settles an abort after the parent exited while a descendant holds the pipes', async () => {
+    const controller = new AbortController()
+    let pid = 0
+    const pending = run('sh', ['-c', orphanScript], {
+      signal: controller.signal,
+      killGraceMs: 100,
+      onLine: (line) => {
+        pid = Number(line)
+      },
+    })
+    setTimeout(() => controller.abort(new Error('stop')), 300)
+    await expect(pending).rejects.toThrow('stop')
+    expect(await waitDead(pid)).toBe(true)
+  })
 })
