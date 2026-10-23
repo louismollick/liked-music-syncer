@@ -88,6 +88,14 @@ export interface HttpClient {
   bytes(url: string, options: RequestOptions): Promise<Uint8Array>
 }
 
+/** fetch failures say only "fetch failed"; the cause's code (ENOTFOUND, ...) says why. */
+function describeNetworkError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const cause = error instanceof Error ? error.cause : undefined
+  const code = (cause as { code?: unknown } | undefined)?.code
+  return typeof code === 'string' ? `${message} (${code})` : message
+}
+
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 function classifyStatus(status: number): ErrorKind {
@@ -165,8 +173,11 @@ export function createHttpClient(
         response = await fetchImpl(url, { ...init, signal: controller.signal })
       } catch (error) {
         if (signal?.aborted) throw error
-        const message = error instanceof Error ? error.message : String(error)
-        throw new HttpError(`${host}: ${message}`, 'transient', null)
+        throw new HttpError(
+          `${host}: ${describeNetworkError(error)}`,
+          'transient',
+          null
+        )
       }
       if (!response.ok) {
         const retryAfterMs = parseRetryAfter(
