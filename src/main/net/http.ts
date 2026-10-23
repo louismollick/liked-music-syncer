@@ -67,7 +67,9 @@ export class HttpError extends Error {
     message: string,
     readonly kind: ErrorKind,
     readonly status: number | null,
-    readonly retryAfterMs: number | null = null
+    readonly retryAfterMs: number | null = null,
+    /** 'ETIMEDOUT' when our own request timeout fired (see isConnectivityError). */
+    readonly code: string | null = null
   ) {
     super(message)
     this.name = 'HttpError'
@@ -161,8 +163,12 @@ export function createHttpClient(
     const { host, signal, retryable: _retryable, ...init } = options
     await waitForSlot(host, deadline, signal)
     const controller = new AbortController()
+    let timedOut = false
     const timeout = setTimeout(
-      () => controller.abort(new Error('timeout')),
+      () => {
+        timedOut = true
+        controller.abort(new Error('timeout'))
+      },
       Math.max(1, Math.min(POLICIES[host].timeoutMs, deadline - now()))
     )
     const onAbort = () => controller.abort(signal?.reason)
@@ -176,7 +182,9 @@ export function createHttpClient(
         throw new HttpError(
           `${host}: ${describeNetworkError(error)}`,
           'transient',
-          null
+          null,
+          null,
+          timedOut ? 'ETIMEDOUT' : null
         )
       }
       if (!response.ok) {
@@ -197,7 +205,13 @@ export function createHttpClient(
       } catch (error) {
         if (signal?.aborted) throw error
         const message = error instanceof Error ? error.message : String(error)
-        throw new HttpError(`${host}: ${message}`, 'transient', null)
+        throw new HttpError(
+          `${host}: ${message}`,
+          'transient',
+          null,
+          null,
+          timedOut ? 'ETIMEDOUT' : null
+        )
       }
     } finally {
       clearTimeout(timeout)

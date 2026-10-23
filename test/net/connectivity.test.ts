@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isConnectivityError } from '../../src/main/net/connectivity'
 import { createHttpClient } from '../../src/main/net/http'
 import { ProcessError } from '../../src/main/platform/process'
@@ -12,6 +12,8 @@ function processError(stderr: string): ProcessError {
   })
 }
 
+afterEach(() => vi.useRealTimers())
+
 describe('isConnectivityError', () => {
   it.each([
     'getaddrinfo ENOTFOUND vps.example.com',
@@ -24,6 +26,9 @@ describe('isConnectivityError', () => {
     'dial tcp: lookup vps.example.com: no such host',
     'net::ERR_INTERNET_DISCONNECTED',
     'ERROR: Unable to download webpage: <urlopen error [Errno 8] nodename nor servname provided, or not known>',
+    'ERROR: Unable to download webpage: [Errno 60] Operation timed out',
+    'ERROR: Unable to download webpage: HTTPSConnectionPool(host=x): Read timed out. (read timeout=20.0)',
+    'ERROR: Unable to download webpage: <urlopen error timed out>',
   ])('recognizes %s', (message) => {
     expect(isConnectivityError(new Error(message))).toBe(true)
   })
@@ -61,6 +66,32 @@ describe('isConnectivityError', () => {
       .json('https://example.test/x', { host: 'lrclib' })
       .catch((caught: unknown) => caught)
     expect(isConnectivityError(error)).toBe(true)
+  })
+
+  it('classifies a request that hit the HTTP client timeout', async () => {
+    vi.useFakeTimers()
+    const http = createHttpClient(
+      (_url, init) =>
+        new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(init.signal?.reason)
+          )
+        }),
+      Date.now,
+      async () => {}
+    )
+    const failure = http
+      .json('https://example.test/x', { host: 'youtube' })
+      .catch((caught: unknown) => caught)
+    await vi.advanceTimersByTimeAsync(15_000)
+    const error = await failure
+    expect(error).toMatchObject({ message: 'youtube: timeout' })
+    expect(isConnectivityError(error)).toBe(true)
+  })
+
+  it('does not take the word timeout from another source as an outage', () => {
+    expect(isConnectivityError(new Error('lyrics-server: timeout'))).toBe(false)
+    expect(isConnectivityError(new Error('Sync timeout exceeded'))).toBe(false)
   })
 
   it.each([
