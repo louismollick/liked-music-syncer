@@ -1,4 +1,4 @@
-import { readdir, rename, rm } from 'node:fs/promises'
+import { rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { ProcessError, run, runChecked } from '../platform/process'
 import type { ToolPaths } from '../platform/tools'
@@ -169,12 +169,5 @@ export async function validateAudio(
       '-',
     ],
     { signal }
-  )
-}
-
-export async function clearWorkDir(workDir: string): Promise<void> {
-  const entries = await readdir(workDir).catch(() => [])
-  await Promise.all(
-    entries.map((entry) => rm(path.join(workDir, entry), { force: true }))
   )
 }
