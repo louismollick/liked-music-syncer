@@ -48,30 +48,63 @@ const lyricSchema = z.object({
   lrc: z.object({ lyric: z.string().nullish() }).optional(),
 })
 
-/** Credit labels that give a line away even without a timestamp. */
-const CREDIT =
-  /^(?:(?:原曲|作词|作詞|作曲|编曲|編曲|制作人|制作|製作|监制|監製|混音|母带|母帶|录音|錄音|和声|和聲|吉他|贝斯|鼓|弦乐|出品|策划|词|曲|lyrics?|lyricist|words?|music|compos(?:ed|er)|arrange(?:d|r|ment)?|produc(?:ed|er|tion)|written|mix(?:ed|ing)?|master(?:ed|ing)?)(?:\s+by)?(?:\s*[:：]|\t)|\{"t":)/i
-const TIMESTAMP = /^(?:\[(\d+):(\d{2})(?:[.:]\d+)?\])+/
+/**
+ * The labels NetEase puts on the credit lines that open a lyric. Only these
+ * count, so a sung line like `She said: hello` is never taken for a credit.
+ */
+const CREDIT_LABELS = [
+  // Chinese (simplified, with traditional spellings)
+  '原曲',
+  '作词',
+  '作曲',
+  '编曲',
+  '制作人',
+  '制作',
+  '製作',
+  '版权支持',
+  '混音',
+  '和声',
+  '和聲',
+  '吉他',
+  '贝斯',
+  '鼓',
+  '录音',
+  '錄音',
+  '母带',
+  '母帶',
+  '监制',
+  '監製',
+  '出品',
+  '发行',
+  '词',
+  '曲',
+  // Japanese
+  '作詞',
+  '編曲',
+  // English
+  'Lyrics by',
+  'Composed by',
+  'Arranged by',
+  'Produced by',
+]
+// A known label, then `:` or a tab. `{"t":` starts NetEase's JSON credit lines.
+const CREDIT = new RegExp(
+  `^(?:(?:${CREDIT_LABELS.join('|')})\\s*(?:[:：]|\\t)|\\{"t":)`,
+  'i'
+)
 const NO_LYRICS = /纯音乐[，,]?\s*请欣赏|暂无歌词|没有填词的纯音乐/
 
-/**
- * A leading line is a credit when its label is a known one, or when it is a
- * short `label : value` line stamped in the first seconds (`版权支持 : ...`).
- */
+/** A leading line is a credit when its label (after any timestamp) is a known one. */
 function isCredit(line: string): boolean {
-  const stamp = TIMESTAMP.exec(line)
-  const body = line.slice(stamp?.[0].length ?? 0).trim()
-  if (CREDIT.test(body)) return true
-  const seconds = stamp ? Number(stamp[1]) * 60 + Number(stamp[2]) : Infinity
-  return seconds < 10 && /^[^:：\t]{1,20}(?:[:：]\s*|\t)\S/.test(body)
+  return CREDIT.test(line.replace(/^(?:\[[^\]]*\])+/, '').trim())
 }
 
-/** Drops the credit block before the first real lyric line. */
+/** Drops the credit lines before the first line that is not one. */
 export function stripNeteaseCredits(lrc: string): string | null {
   const lines = lrc.replace(/\r\n?/g, '\n').split('\n')
   const first = lines.findIndex((line) => {
     const body = line.replace(/^(?:\[[^\]]*\])+/, '').trim()
-    return body !== '' && !isCredit(line.trim())
+    return body !== '' && !isCredit(line)
   })
   if (first < 0) return null
   const text = lines.slice(first).join('\n').trim()

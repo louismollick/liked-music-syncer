@@ -212,6 +212,17 @@ describe('NetEase lyrics', () => {
     ).toBe('[00:12.000]Hello: world\n[00:05.000]作词 : kept')
   })
 
+  it('keeps a sung line that looks like a credit', () => {
+    expect(
+      stripNeteaseCredits(
+        '[00:00.000] 作词 : A\n[00:01.00]She said: hello\n[00:02.00]Produced by : kept'
+      )
+    ).toBe('[00:01.00]She said: hello\n[00:02.00]Produced by : kept')
+    expect(stripNeteaseCredits('[00:01.00]She said: hello')).toBe(
+      '[00:01.00]She said: hello'
+    )
+  })
+
   it('reports errors through the finder, after PetitLyrics', async () => {
     const hosts: string[] = []
     const http = createHttpClient(
