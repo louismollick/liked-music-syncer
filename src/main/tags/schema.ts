@@ -100,7 +100,13 @@ const LMS_CREDITS_KEY = 'LMS_ARTIST_CREDITS'
 const LMS_RELEASE_CREDITS_KEY = 'LMS_RELEASE_ARTIST_CREDITS'
 const LMS_MATCH_CONFIRMED_KEY = 'LMS_MATCH_CONFIRMED'
 /** Freeform atoms the app used to write; removed on rewrite. */
-const RETIRED_KEYS = ['ISRC', 'MusicBrainz Track Id']
+const RETIRED_KEYS = [
+  'LMS_SOUNDCLOUD_TRACK_ID',
+  'MusicBrainz Album Id',
+  'MusicBrainz Release Group Id',
+  'ISRC',
+  'MusicBrainz Track Id',
+]
 
 export function sha256(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest('hex')

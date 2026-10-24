@@ -122,11 +122,11 @@ describe('migrations', () => {
         .prepare('SELECT id, genre, genre_requested FROM tracks ORDER BY id')
         .all()
     ).toEqual([
-      { id: 'pending', genre: null, genre_requested: 1 },
-      { id: 'ready', genre: null, genre_requested: 1 },
-      { id: 'released', genre: null, genre_requested: 0 },
-      { id: 'unmatched', genre: null, genre_requested: 0 },
-      { id: 'unwanted', genre: null, genre_requested: 0 },
+      { id: 'pending', genre: 'rock', genre_requested: 1 },
+      { id: 'ready', genre: 'rock', genre_requested: 1 },
+      { id: 'released', genre: 'rock', genre_requested: 0 },
+      { id: 'unmatched', genre: 'rock', genre_requested: 0 },
+      { id: 'unwanted', genre: 'rock', genre_requested: 0 },
     ])
     const columns = (
       sqlite.pragma('table_info(tracks)') as { name: string }[]
