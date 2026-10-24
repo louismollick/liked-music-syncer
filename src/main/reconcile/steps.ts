@@ -23,6 +23,7 @@ import { readableDirectory } from '../inventory/inventory'
 import { pathKey, resolveCollision, sidecarPath } from '../inventory/layout'
 import {
   artistIdFor,
+  artistNameIsShared,
   canonicalArtist,
   canonicalTrackNames,
   linkTrackArtists,
@@ -46,7 +47,7 @@ import {
   uploads,
 } from '../library/schema'
 import { isInstrumentalTitle } from '../lyrics/query'
-import type { LyricsFinder } from '../lyrics/types'
+import type { LyricsFinder, LyricsSource } from '../lyrics/types'
 import {
   SpotifyMatchError,
   selectSpotifyCandidate,
@@ -58,6 +59,7 @@ import {
   type MatchInput,
   releaseIdentityKey,
 } from '../match/types'
+import { isConnectivityError } from '../net/connectivity'
 import type { HttpClient } from '../net/http'
 import type { ToolPaths } from '../platform/tools'
 import { withPathLocks } from '../remote/path-locks'
@@ -231,13 +233,18 @@ export function parseFields(row: FileRow): TagFields {
   return JSON.parse(row.tagFields) as TagFields
 }
 
-/** Decides the next Track Step from facts (plan: "Track states and steps"). */
+/**
+ * Decides the next Track Step from facts (plan: "Track states and steps").
+ * `deferred` holds enrichment lookups that failed since the last pass, keyed
+ * `<step>:<trackId>`; they wait for the next pass instead of looping.
+ */
 export function nextStep(
   db: Db,
   track: TrackRow,
   file: FileRow | undefined,
   upload: UploadRow | undefined,
-  settings: Settings
+  settings: Settings,
+  deferred: ReadonlySet<string> = new Set()
 ): StepKind | null {
   const match = parseMatch(track)
   if (!match || track.refreshRequested) return 'match'
@@ -253,7 +260,19 @@ export function nextStep(
   ) {
     return 'acquire'
   }
-  if (settings.lyricsEnabled && track.lyricsCheckedAt === null) return 'lyrics'
+  if (
+    settings.lyricsEnabled &&
+    track.lyricsCheckedAt === null &&
+    !deferred.has(`lyrics:${track.id}`)
+  )
+    return 'lyrics'
+  // A marked track gets its genre before it is rewritten and uploaded.
+  if (
+    track.genreRequested &&
+    settings.lastfmApiKey.trim() &&
+    !deferred.has(`genre:${track.id}`)
+  )
+    return 'genre'
   const desired = desiredFieldsFor(db, track)
   const sidecar = desiredSidecar(track)
   const sidecarSha = sidecar ? sha256(sidecar) : null
@@ -329,7 +348,11 @@ function betterLyrics(
   }
 }
 
-/** Shared by matching and lyrics-only work; provider failures still complete the lookup. */
+/**
+ * Shared by matching and lyrics-only work. A provider error with nothing found
+ * leaves the track unchecked so a later pass tries again; a clean miss is checked.
+ * `offline` is set when nothing was found and every failure was a lost connection.
+ */
 export async function lookUpLyrics(
   deps: StepDeps,
   track: TrackRow,
@@ -341,7 +364,9 @@ export async function lookUpLyrics(
   values.spotifyTrackId = spotifyId ?? values.spotifyTrackId
   const errors: Record<string, string> = {}
   const settings = deps.settings()
-  if (!settings.lyricsEnabled) return { values, errors }
+  if (!settings.lyricsEnabled) return { values, errors, offline: false }
+  let failed = false
+  let offline = false
   try {
     if (!isInstrumentalTitle(match.title)) {
       const original = match.artists.map((credit) => credit.name).join(', ')
@@ -377,6 +402,15 @@ export async function lookUpLyrics(
         { lyricsServerUrl: settings.lyricsServerUrl.trim() || null },
         run.signal
       )
+      failed = !found.lyrics && Object.keys(found.errors).length > 0
+      // Offline only when no provider answered: one unreachable optional
+      // provider next to clean misses is just that provider's failure.
+      const asked =
+        found.attempted ?? (Object.keys(found.errors) as LyricsSource[])
+      offline =
+        failed &&
+        asked.length > 0 &&
+        asked.every((source) => isConnectivityError(found.errors[source]))
       Object.assign(
         errors,
         Object.fromEntries(
@@ -403,22 +437,31 @@ export async function lookUpLyrics(
     }
   } catch (error) {
     if (run.signal.aborted) throw error
+    failed = true
+    offline = isConnectivityError(error)
     errors['lyrics:lookup'] =
       error instanceof Error ? error.message : String(error)
   }
-  values.lyricsCheckedAt = iso(deps)
-  return { values, errors }
+  if (!failed) values.lyricsCheckedAt = iso(deps)
+  return { values, errors, offline }
 }
 
+/**
+ * Returns false when providers failed and the track stays unchecked for a later
+ * pass. Throws a connectivity error when the network is down, so the lane waits
+ * (ADR 0010) instead of counting a miss.
+ */
 export async function runLyrics(
   deps: StepDeps,
   track: TrackRow,
   run: StepRun
-): Promise<void> {
+): Promise<boolean> {
   const match = parseMatch(track)
-  if (!match) return
+  if (!match) return true
   const lookup = await lookUpLyrics(deps, track, match, run)
   run.signal.throwIfAborted()
+  if (lookup.offline)
+    throw new Error(Object.values(lookup.errors)[0] ?? 'Offline')
   const current = deps.db
     .select()
     .from(tracks)
@@ -430,7 +473,7 @@ export async function runLyrics(
     current.state === 'no_longer_wanted' ||
     current.match !== track.match
   )
-    return
+    return true
   const errors = JSON.parse(current.enrichmentErrors) as Record<string, string>
   for (const key of Object.keys(errors))
     if (key.startsWith('lyrics:')) delete errors[key]
@@ -445,6 +488,83 @@ export async function runLyrics(
     .where(eq(tracks.id, track.id))
     .run()
   run.progress(1)
+  return lookup.values.lyricsCheckedAt !== null
+}
+
+/**
+ * Genres from Last.fm, used only when MusicBrainz has none. Looked up for the
+ * primary credited artist; null when no key is set or the artist has none.
+ * Last.fm identifies artists by name, so the lookup is skipped (genre left
+ * empty) for an Unidentified Artist and for a name that more than one Artist in
+ * the library shares (ADR 0001).
+ */
+async function lastfmGenre(
+  deps: StepDeps,
+  match: Match,
+  signal: AbortSignal
+): Promise<string | null> {
+  const apiKey = deps.settings().lastfmApiKey.trim()
+  const credit = match.artists[0]
+  if (!apiKey || !credit?.channelId) return null
+  if (artistNameIsShared(deps.db, credit.name)) return null
+  return deps.matcher.genre(
+    { id: artistIdFor(credit), name: credit.name },
+    apiKey,
+    signal
+  )
+}
+
+/**
+ * The one Last.fm lookup for a track marked by "Look up missing genres".
+ * Returns false when Last.fm failed and the track stays marked for a later pass;
+ * throws a connectivity error when the network is down.
+ */
+export async function runGenre(
+  deps: StepDeps,
+  track: TrackRow,
+  run: StepRun
+): Promise<boolean> {
+  const match = parseMatch(track)
+  if (!match) return true
+  let genre: string | null = null
+  let failure: string | null = null
+  try {
+    genre = await lastfmGenre(deps, match, run.signal)
+  } catch (error) {
+    if (run.signal.aborted) throw error
+    // A lost connection pauses the lane (ADR 0010) instead of counting as a failure.
+    if (isConnectivityError(error)) throw error
+    failure = error instanceof Error ? error.message : String(error)
+  }
+  run.signal.throwIfAborted()
+  const current = deps.db
+    .select()
+    .from(tracks)
+    .where(eq(tracks.id, track.id))
+    .get()
+  if (
+    !current ||
+    current.state === 'released' ||
+    current.state === 'no_longer_wanted' ||
+    current.match !== track.match
+  )
+    return true
+  const errors = JSON.parse(current.enrichmentErrors) as Record<string, string>
+  delete errors.lastfm
+  if (failure) errors.lastfm = failure
+  deps.db
+    .update(tracks)
+    .set({
+      // A genre MusicBrainz supplied meanwhile wins.
+      ...(genre && !current.genre ? { genre } : {}),
+      ...(failure ? {} : { genreRequested: false }),
+      enrichmentErrors: JSON.stringify(errors),
+      updatedAt: iso(deps),
+    })
+    .where(eq(tracks.id, track.id))
+    .run()
+  run.progress(1)
+  return failure === null
 }
 
 // ---------------------------------------------------------------- match
@@ -1179,6 +1299,21 @@ async function matchOnce(
     if (run.signal.aborted) throw error
     errors.musicbrainz = error instanceof Error ? error.message : String(error)
   }
+  // Last.fm fills in only when MusicBrainz has no genre. A pending
+  // "Look up missing genres" request stays until Last.fm has been asked.
+  let genreAsked = Boolean(enrichment.genre)
+  if (!enrichment.genre && deps.settings().lastfmApiKey.trim()) {
+    try {
+      const genre = await lastfmGenre(deps, match, run.signal)
+      enrichment = { ...enrichment, genre }
+      genreAsked = true
+    } catch (error) {
+      if (run.signal.aborted) throw error
+      errors.lastfm = error instanceof Error ? error.message : String(error)
+      // Never strip a genre the track already has.
+      enrichment = { ...enrichment, genre: (recording ?? track).genre }
+    }
+  }
   run.progress(0.6)
   const lyrics = await lookUpLyrics(
     deps,
@@ -1322,6 +1457,7 @@ async function matchOnce(
             ? ((target ?? current).durationSeconds ?? match.durationSeconds)
             : match.durationSeconds,
         genre: enrichment.genre,
+        genreRequested: (target ?? current).genreRequested && !genreAsked,
         isrc: enrichment.isrc,
         mbRecordingId: enrichment.mbRecordingId,
         ...betterLyrics(

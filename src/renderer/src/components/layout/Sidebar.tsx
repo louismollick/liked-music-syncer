@@ -22,6 +22,7 @@ import { IconButton } from '../ui/Button'
 const STAGE_LABEL = {
   matching: 'Matching',
   lyrics: 'Finding lyrics',
+  genres: 'Finding genres',
   downloading: 'Downloading',
   uploading: 'Uploading',
 } as const
@@ -166,6 +167,7 @@ function stageFraction(current: ActivityTrackView | null): number {
   const [base, weight] = {
     matching: [0, 0.15],
     lyrics: [0.15, 0.7],
+    genres: [0.15, 0.7],
     downloading: [0.15, 0.7],
     uploading: [0.85, 0.15],
   }[current.stage]

@@ -1,3 +1,4 @@
+import { createLastfmGenres } from './lastfm'
 import { enrichMusicBrainz } from './musicbrainz'
 import {
   catalogContribution,
@@ -10,11 +11,13 @@ import type { Matcher, MatcherDeps } from './types'
 export function createMatcher(deps: MatcherDeps): Matcher {
   const genreCache = new Map<string, string[]>()
   const spotify = createSpotifyCache()
+  const lastfm = createLastfmGenres(deps.http)
   return {
     resetCache: () => {
       spotify.albums.clear()
       spotify.nativeNames.clear()
       spotify.originalTitles.clear()
+      lastfm.clear()
     },
     async match(input, signal) {
       if (input.kind === 'spotify')
@@ -40,5 +43,6 @@ export function createMatcher(deps: MatcherDeps): Matcher {
     enrich(match, signal) {
       return enrichMusicBrainz(deps.http, match, signal, genreCache)
     },
+    genre: lastfm.lookup,
   }
 }

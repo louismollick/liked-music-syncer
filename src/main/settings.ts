@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   remoteFolder: '',
   lyricsEnabled: true,
   lyricsServerUrl: '',
+  lastfmApiKey: '',
   selectedAccountId: null,
 }
 

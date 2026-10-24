@@ -67,6 +67,7 @@ import {
   REWRITE_AUDIO,
   RetryLaterError,
   runAcquire,
+  runGenre,
   runLyrics,
   runMatch,
   runMove,
@@ -94,6 +95,7 @@ const NETWORK_STEPS: ReadonlySet<StepKind> = new Set([
 const STAGE_WEIGHTS: Record<ActivityStage, [number, number]> = {
   matching: [0, 0.15],
   lyrics: [0.15, 0.7],
+  genres: [0.15, 0.7],
   downloading: [0.15, 0.7],
   uploading: [0.85, 0.15],
 }
@@ -217,6 +219,8 @@ export class Reconciler {
   private emitTimer: NodeJS.Timeout | null = null
   private checkTimer: NodeJS.Timeout | null = null
   private sourceErrors = new Map<string, string>()
+  /** Failed enrichment lookups (`<step>:<trackId>`) that wait for the next check pass. */
+  private readonly deferred = new Set<string>()
   private loopPromise: Promise<unknown> | null = null
   /** Cached Activity lists, rebuilt only when track states change. */
   private lists: ActivityLists | null = null
@@ -437,6 +441,8 @@ export class Reconciler {
       return
     }
     this.deps.matcher.resetCache?.()
+    // A check is the normal pass: lookups that failed earlier are due again.
+    this.deferred.clear()
     this.checking = true
     this.emitSoon()
     const accountId = this.deps.session.accountId()
@@ -655,6 +661,17 @@ export class Reconciler {
     this.markDirty()
   }
 
+  /** Marks tracks without a genre for one Last.fm lookup; manual only, like lyrics. */
+  recheckGenres(): void {
+    this.db
+      .update(tracks)
+      .set({ genreRequested: true })
+      .where(sql`${tracks.genre} IS NULL OR ${tracks.genre} = ''`)
+      .run()
+    this.deps.onLibraryChanged(null)
+    this.markDirty()
+  }
+
   retry(trackId: string): void {
     this.db
       .update(tracks)
@@ -843,7 +860,8 @@ export class Reconciler {
         track,
         fileRows.get(track.id),
         uploadRows.get(track.id),
-        settings
+        settings,
+        this.deferred
       )
       if (step) planned.set(track.id, step)
       if (step && track.state !== 'pending') toPending.push(track.id)
@@ -1055,7 +1073,8 @@ export class Reconciler {
           track,
           file,
           upload,
-          this.deps.settings()
+          this.deps.settings(),
+          this.deferred
         )
         if (!step) {
           this.db
@@ -1114,7 +1133,11 @@ export class Reconciler {
                 .run()
             }
           } else if (step === 'lyrics') {
-            await runLyrics(this.deps, track, run)
+            if (!(await runLyrics(this.deps, track, run)))
+              this.deferred.add(`lyrics:${trackId}`)
+          } else if (step === 'genre') {
+            if (!(await runGenre(this.deps, track, run)))
+              this.deferred.add(`genre:${trackId}`)
           } else if (step === 'acquire') {
             await runAcquire(this.deps, track, run)
           } else if (step === 'retag') await runRetag(this.deps, track, run)
@@ -1477,11 +1500,11 @@ function mergeCatalogRequests(
   return [...new Set([...a, ...b])]
 }
 
-/** Lyrics-only work last; otherwise newest likes, then newest catalog releases. */
+/** Lyrics and genre-only work last; otherwise newest likes, then newest catalog releases. */
 function queueOrder() {
   return [
     asc(sql`CASE WHEN ${tracks.match} IS NOT NULL
-      AND ${tracks.lyricsCheckedAt} IS NULL AND ${tracks.refreshRequested} = 0
+      AND (${tracks.lyricsCheckedAt} IS NULL OR ${tracks.genreRequested} = 1) AND ${tracks.refreshRequested} = 0
       AND EXISTS (SELECT 1 FROM files f WHERE f.track_id = ${tracks.id}
         AND (f.audio_video_id IS NULL OR f.audio_video_id = json_extract(${tracks.match}, '$.catalogVideoId')))
       THEN 1 ELSE 0 END`),

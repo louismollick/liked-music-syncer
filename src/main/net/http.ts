@@ -11,6 +11,8 @@ export type HostPolicyName =
   | 'musicbrainz'
   | 'lrclib'
   | 'petitlyrics'
+  | 'netease'
+  | 'lastfm'
   | 'spotify'
   | 'lyrics-server'
   | 'youtube'
@@ -43,6 +45,16 @@ const POLICIES: Record<HostPolicyName, HostPolicy> = {
   },
   petitlyrics: {
     minIntervalMs: 750,
+    timeoutMs: 15_000,
+    retryDelaysMs: METADATA_RETRIES,
+  },
+  netease: {
+    minIntervalMs: 1_000,
+    timeoutMs: 15_000,
+    retryDelaysMs: METADATA_RETRIES,
+  },
+  lastfm: {
+    minIntervalMs: 250,
     timeoutMs: 15_000,
     retryDelaysMs: METADATA_RETRIES,
   },

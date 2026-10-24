@@ -1,6 +1,7 @@
 import { type ClassifiedLyrics, classifyLyricsText } from './classify'
 import { detectLyricsLanguage } from './language'
 import { lrclibLyrics } from './lrclib'
+import { neteaseLyrics } from './netease'
 import { petitLyrics } from './petitlyrics'
 import { prepareLyricsQuery } from './query'
 import { createSpotifyClient } from './spotify'
@@ -39,8 +40,10 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
           lyrics: null,
           spotifyTrackId: query.spotifyTrackId,
           errors: {},
+          attempted: [],
         }
       const errors: LyricsResult['errors'] = {}
+      const attempted: LyricsSource[] = []
       let spotifyTrackId = query.spotifyTrackId
       let firstPlain: { text: string; source: LyricsSource } | null = null
 
@@ -48,6 +51,7 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
         source: LyricsSource,
         fetch: () => Promise<string | null>
       ) {
+        attempted.push(source)
         try {
           const classified: ClassifiedLyrics | null = classifyLyricsText(
             await fetch()
@@ -108,6 +112,10 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
         synced = await consider('petitlyrics', () =>
           petitLyrics(deps.http, lookup, signal)
         )
+      if (!synced)
+        synced = await consider('netease', () =>
+          neteaseLyrics(deps.http, lookup, signal)
+        )
       const selected = synced ?? firstPlain
       let language: string | null = null
       if (selected) {
@@ -129,6 +137,7 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
           : null,
         spotifyTrackId,
         errors,
+        attempted,
       }
     },
   }

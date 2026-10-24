@@ -40,6 +40,10 @@ export const tracks = sqliteTable(
     lyricsSource: text('lyrics_source'),
     lyricsText: text('lyrics_text'),
     lyricsCheckedAt: text('lyrics_checked_at'),
+    /** A "Look up missing genres" request waiting for its one Last.fm lookup. */
+    genreRequested: integer('genre_requested', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     spotifyTrackId: text('spotify_track_id'),
     enrichmentErrors: text('enrichment_errors').notNull().default('{}'),
     coverUrl: text('cover_url'),

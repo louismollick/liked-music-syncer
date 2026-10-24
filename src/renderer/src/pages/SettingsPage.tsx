@@ -205,7 +205,7 @@ export function SettingsPage() {
         </Row>
         <Row
           label="Spotify lyrics server"
-          help="Optional. Then YouTube Music, LRCLIB, PetitLyrics"
+          help="Optional. Then YouTube Music, LRCLIB, PetitLyrics, NetEase"
         >
           <TextInput
             value={settings.lyricsServerUrl}
@@ -215,6 +215,16 @@ export function SettingsPage() {
           <Button onClick={() => void invoke('settings:recheckLyrics')}>
             Recheck lyrics
           </Button>
+          <Button onClick={() => void invoke('settings:recheckGenres')}>
+            Look up missing genres
+          </Button>
+        </Row>
+        <Row label="Last.fm API key" help="For genres MusicBrainz doesn't have">
+          <TextInput
+            value={settings.lastfmApiKey}
+            mono
+            onCommit={(v) => void updateSettings({ lastfmApiKey: v })}
+          />
         </Row>
       </div>
     </div>

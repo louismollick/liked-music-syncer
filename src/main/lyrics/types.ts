@@ -7,6 +7,7 @@ export type LyricsSource =
   | 'youtube-music'
   | 'lrclib'
   | 'petitlyrics'
+  | 'netease'
 
 export interface LyricsQuery {
   title: string
@@ -38,6 +39,12 @@ export interface LyricsResult {
   spotifyTrackId: string | null
   /** One message per provider that failed; failures never throw. */
   errors: Partial<Record<LyricsSource, string>>
+  /**
+   * Providers actually asked (not skipped), so callers can tell a failed one from
+   * one that answered. The finder always sets it; when absent, only providers
+   * with an error count as asked.
+   */
+  attempted?: LyricsSource[]
 }
 
 export interface LyricsOptions {
@@ -48,7 +55,7 @@ export interface LyricsOptions {
 export interface LyricsFinder {
   /**
    * Looks for synced lyrics first (Spotify via the lyrics server, then YouTube
-   * Music, then LRCLIB), then plain lyrics in the same order.
+   * Music, LRCLIB, PetitLyrics, NetEase), then plain lyrics in the same order.
    */
   find(
     query: LyricsQuery,

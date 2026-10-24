@@ -24,6 +24,7 @@ export type TrackState =
 export type StepKind =
   | 'match'
   | 'lyrics'
+  | 'genre'
   | 'acquire'
   | 'retag'
   | 'move'
@@ -32,6 +33,7 @@ export type StepKind =
 export function stageForStep(step: StepKind): ActivityStage {
   if (step === 'match') return 'matching'
   if (step === 'lyrics') return 'lyrics'
+  if (step === 'genre') return 'genres'
   if (step === 'upload') return 'uploading'
   return 'downloading'
 }

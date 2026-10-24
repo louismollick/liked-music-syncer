@@ -1,0 +1,14 @@
+{
+  "toptags": {
+    "tag": [
+      { "name": "rock", "count": 100, "url": "https://www.last.fm/tag/rock" },
+      { "name": "japanese", "count": 90, "url": "https://www.last.fm/tag/japanese" },
+      { "name": "J-Rock", "count": 80, "url": "https://www.last.fm/tag/J-Rock" },
+      { "name": "seen live", "count": 70, "url": "https://www.last.fm/tag/seen+live" },
+      { "name": "post punk", "count": 40, "url": "https://www.last.fm/tag/post+punk" },
+      { "name": "indie rock", "count": 12, "url": "https://www.last.fm/tag/indie+rock" },
+      { "name": "math rock", "count": 9, "url": "https://www.last.fm/tag/math+rock" }
+    ],
+    "@attr": { "artist": "tricot" }
+  }
+}

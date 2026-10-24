@@ -254,9 +254,16 @@ async function main() {
       } else {
         reconciler.markDirty()
       }
+      // A new key fills in the genres MusicBrainz lacks.
+      if (
+        patch.lastfmApiKey?.trim() &&
+        patch.lastfmApiKey.trim() !== before.lastfmApiKey.trim()
+      )
+        reconciler.recheckGenres()
       return next
     },
     'settings:recheckLyrics': () => reconciler.recheckLyrics(),
+    'settings:recheckGenres': () => reconciler.recheckGenres(),
     'settings:chooseFolder': () => chooseFolder(),
     'spotify:get': () => spotifySession.view(),
     'spotify:signIn': async () => {
