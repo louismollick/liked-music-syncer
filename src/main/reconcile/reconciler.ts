@@ -14,6 +14,7 @@ import {
   sql,
 } from 'drizzle-orm'
 import type {
+  ActivityLive,
   ActivityStage,
   ActivityTrackView,
   ActivityView,
@@ -39,6 +40,7 @@ import {
   unmanagedFiles,
   uploads,
 } from '../library/schema'
+import { isConnectivityError } from '../net/connectivity'
 import { errorKindOf } from '../net/http'
 import type { SpotifyLibrary } from '../spotify/library'
 import { readTags, sha256 } from '../tags/schema'
@@ -72,14 +74,23 @@ import {
   runUpload,
   type StepDeps,
   type StepKind,
+  type StepRun,
 } from './steps'
 
 const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000]
 const CHECK_INTERVAL_MS = 30 * 60_000
 const CATALOG_INTERVAL_MS = 24 * 60 * 60_000
 const RECENT_WINDOW_MS = 7 * 24 * 60 * 60_000
-const STOP_WAIT_MS = 5_000
 const MAX_WAIT_MS = 6 * 60 * 60_000
+/** Source-error key for a failed Remote Library audit. */
+const REMOTE_AUDIT = 'remote-audit'
+/** Steps that need the network; only they show a lane is back online. */
+const NETWORK_STEPS: ReadonlySet<StepKind> = new Set([
+  'match',
+  'lyrics',
+  'acquire',
+  'upload',
+])
 const STAGE_WEIGHTS: Record<ActivityStage, [number, number]> = {
   matching: [0, 0.15],
   lyrics: [0.15, 0.7],
@@ -98,25 +109,107 @@ export interface SessionInfo {
   likedCountChanged?(accountId: string, count: number): void
 }
 
+/** Timing the app keeps fixed; tests shorten it. */
+export interface Tuning {
+  /** Uploads that may run at once. */
+  uploadConcurrency: number
+  /** Waits before probing a lane that lost its connection; the last repeats. */
+  probeBackoffMs: readonly number[]
+  /** How long stop() waits for running work before giving up on it. */
+  stopWaitMs: number
+}
+
+const DEFAULT_TUNING: Tuning = {
+  uploadConcurrency: 3,
+  probeBackoffMs: [60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000],
+  // Aborting a child process is SIGTERM, then SIGKILL after 5s.
+  stopWaitMs: 8_000,
+}
+
 export interface ReconcilerDeps extends StepDeps {
   session: SessionInfo
   spotify?: { session: SessionInfo; library: SpotifyLibrary }
   coverUrl: (coverPath: string | null, fallback: string | null) => string | null
   onActivity: (view: ActivityView) => void
+  /** Frequent progress ticks; when absent, ticks go through onActivity. */
+  onProgress?: (live: ActivityLive) => void
   onLibraryChanged: (trackIds: string[] | null) => void
+  tuning?: Partial<Tuning>
 }
 
-interface CurrentWork {
+/**
+ * Track work runs in two lanes. The acquire lane (match, lyrics, download,
+ * retag, move) takes one track at a time; the upload lane runs several uploads
+ * at once. A track is in at most one lane and one step at a time.
+ */
+type Lane = 'acquire' | 'upload'
+
+const laneOf = (step: StepKind): Lane =>
+  step === 'upload' ? 'upload' : 'acquire'
+
+/** A track being worked on right now. */
+interface Flight {
   trackId: string
-  step: StepKind
+  lane: Lane
+  step: StepKind | null
   fraction: number
+  /** Shown in Activity; loaded when the step starts. */
+  row: ActivityRow | null
+  controller: AbortController
 }
+
+/** A lane that lost its connection waits until `until`, then probes again. */
+interface Pause {
+  until: number
+  failures: number
+}
+
+/** The columns Activity shows for a track. */
+const ACTIVITY_COLUMNS = {
+  id: tracks.id,
+  title: tracks.title,
+  artist: tracks.artist,
+  coverPath: tracks.coverPath,
+  coverUrl: tracks.coverUrl,
+  completedAt: tracks.completedAt,
+  state: tracks.state,
+}
+type ActivityRow = {
+  [K in keyof typeof ACTIVITY_COLUMNS]: (typeof tracks.$inferSelect)[K]
+}
+
+/** The parts of Activity that change only when track states change. */
+type ActivityLists = Omit<
+  ActivityView,
+  | 'current'
+  | 'uploading'
+  | 'working'
+  | 'checking'
+  | 'remoteUnreachable'
+  | 'offline'
+>
 
 export class Reconciler {
   private running = false
-  private wake: (() => void) | null = null
-  private controller: AbortController | null = null
-  private current: CurrentWork | null = null
+  /** Wakes every sleeping lane loop. */
+  private readonly wakers = new Set<() => void>()
+  /** Tracks being worked on, by track ID: the one-step-per-track guard. */
+  private readonly flights = new Map<string, Flight>()
+  /** Aborts work that belongs to no track (tombstones, audits). */
+  private readonly background = new Set<AbortController>()
+  /** Running track work, so a library folder change can wait for it. */
+  private readonly works = new Set<Promise<void>>()
+  private readonly pauses: Record<Lane, Pause | null> = {
+    acquire: null,
+    upload: null,
+  }
+  /** Each track's next step as of the last plan; picks the lane for pending tracks. */
+  private planned = new Map<string, StepKind>()
+  /** Remote object sizes from the last audit of the current remote. */
+  private remoteListing: Map<string, number> | null = null
+  /** Bumped when the remote target changes, so an old audit's result is dropped. */
+  private remoteGeneration = 0
+  private probing: Promise<void> | null = null
   private checking = false
   private queuedCheck: CatalogRequest | null = null
   private planDirty = true
@@ -124,13 +217,19 @@ export class Reconciler {
   private emitTimer: NodeJS.Timeout | null = null
   private checkTimer: NodeJS.Timeout | null = null
   private sourceErrors = new Map<string, string>()
-  private loopPromise: Promise<void> | null = null
-  private workPromise: Promise<void> | null = null
+  private loopPromise: Promise<unknown> | null = null
+  /** Cached Activity lists, rebuilt only when track states change. */
+  private lists: ActivityLists | null = null
+  /** Observers owe a full update. Cleared by the emit, not by reading a snapshot. */
+  private listsDirty = true
   private folderChangePromise: Promise<void> | null = null
   /** Checks and audits still touching the database; stop() waits for them. */
   private readonly inFlight = new Set<Promise<unknown>>()
+  private readonly tuning: Tuning
 
-  constructor(private readonly deps: ReconcilerDeps) {}
+  constructor(private readonly deps: ReconcilerDeps) {
+    this.tuning = { ...DEFAULT_TUNING, ...deps.tuning }
+  }
 
   private get db(): Db {
     return this.deps.db
@@ -141,9 +240,14 @@ export class Reconciler {
     if (this.running) return
     this.running = true
     await this.prepareLibrary()
-    // The remote may be slow or unreachable; don't hold up the worker for it.
+    // The remote may be slow or unreachable; don't hold up the workers for it.
     void this.auditRemote()
-    this.loopPromise = this.loop()
+    this.loopPromise = Promise.all([
+      this.laneLoop('acquire'),
+      ...Array.from({ length: this.tuning.uploadConcurrency }, () =>
+        this.laneLoop('upload')
+      ),
+    ])
     this.checkTimer = setInterval(() => void this.check(), CHECK_INTERVAL_MS)
     void this.check()
   }
@@ -155,18 +259,26 @@ export class Reconciler {
       clearTimeout(this.emitTimer)
       this.emitTimer = null
     }
-    this.controller?.abort(new Error('stopping'))
-    this.wake?.()
-    await this.loopPromise?.catch(() => undefined)
-    // Don't let a hung network request hold up quitting.
+    this.abortAll(new Error('stopping'))
+    this.wakeAll()
+    // A hung process or request must not hold up quitting.
     let timer: NodeJS.Timeout | undefined
     await Promise.race([
-      Promise.allSettled([...this.inFlight]),
+      Promise.allSettled([this.loopPromise, ...this.inFlight]),
       new Promise((resolve) => {
-        timer = setTimeout(resolve, STOP_WAIT_MS)
+        timer = setTimeout(resolve, this.tuning.stopWaitMs)
       }),
     ])
     clearTimeout(timer)
+  }
+
+  private abortAll(reason: Error): void {
+    for (const flight of this.flights.values()) flight.controller.abort(reason)
+    for (const controller of this.background) controller.abort(reason)
+  }
+
+  private wakeAll(): void {
+    for (const wake of [...this.wakers]) wake()
   }
 
   private track<T>(promise: Promise<T>): Promise<T> {
@@ -182,6 +294,12 @@ export class Reconciler {
    */
   remoteTargetChanged(): void {
     this.db.delete(uploads).run()
+    // Nothing learned about the old remote applies to the new one.
+    this.remoteGeneration += 1
+    this.remoteListing = null
+    this.pauses.upload = null
+    this.sourceErrors.delete(REMOTE_AUDIT)
+    void this.auditRemote()
     this.markDirty()
   }
 
@@ -189,10 +307,9 @@ export class Reconciler {
   async libraryFolderChanged(): Promise<void> {
     if (this.folderChangePromise) await this.folderChangePromise
     const change = (async () => {
-      this.controller?.abort(new Error('library folder changed'))
-      await this.workPromise
+      this.abortAll(new Error('library folder changed'))
+      await Promise.allSettled([...this.works])
       await this.prepareLibrary()
-      await this.auditRemote()
       this.markDirty()
     })()
     this.folderChangePromise = change
@@ -203,16 +320,68 @@ export class Reconciler {
     }
   }
 
+  /**
+   * Checks the Remote Library against the upload records. It runs at startup,
+   * when the remote target changes and when probing a lost connection, never
+   * as part of a like check. A failure shows in Activity.
+   */
   private auditRemote(): Promise<void> {
     return this.track(this.runAudit())
   }
 
   private async runAudit(): Promise<void> {
+    const generation = this.remoteGeneration
+    const controller = new AbortController()
+    this.background.add(controller)
     try {
-      if ((await auditRemote(this.deps)).length) this.markDirty()
+      const result = await auditRemote(this.deps, controller.signal)
+      if (generation !== this.remoteGeneration) return
+      if (result) {
+        this.remoteListing = result.listing
+        if (result.stale.length) this.markDirty()
+      }
+      this.sourceErrors.delete(REMOTE_AUDIT)
+      this.clearPause('upload')
     } catch (error) {
+      // Stopped, aborted by a folder change, or superseded: not a failure.
+      if (controller.signal.aborted || generation !== this.remoteGeneration)
+        return
       console.warn('[reconciler] remote audit', error)
+      this.sourceErrors.set(
+        REMOTE_AUDIT,
+        error instanceof Error ? error.message : String(error)
+      )
+      // An unreachable remote pauses uploads; any other failure leaves each
+      // track to fail on its own.
+      if (isConnectivityError(error)) this.pauseLane('upload')
+      else this.clearPause('upload')
+    } finally {
+      this.background.delete(controller)
+      this.emitSoon()
     }
+  }
+
+  /** A lane lost its connection: wait, with growing delays, before trying again. */
+  private pauseLane(lane: Lane): void {
+    const current = this.pauses[lane]
+    // Several uploads fail together; that is one outage.
+    if (current && Date.now() < current.until) return
+    const failures = (current?.failures ?? 0) + 1
+    const { probeBackoffMs } = this.tuning
+    this.pauses[lane] = {
+      until:
+        Date.now() +
+        probeBackoffMs[Math.min(failures, probeBackoffMs.length) - 1],
+      failures,
+    }
+    this.emitSoon()
+  }
+
+  private clearPause(lane: Lane): void {
+    if (!this.pauses[lane]) return
+    this.pauses[lane] = null
+    this.wakeAll()
+    this.emitSoon()
   }
 
   private async prepareLibrary(): Promise<void> {
@@ -242,8 +411,13 @@ export class Reconciler {
 
   markDirty(): void {
     this.planDirty = true
-    this.wake?.()
+    this.wakeAll()
     this.emitSoon()
+  }
+
+  /** Audits the Remote Library now, e.g. after it is turned on. */
+  checkRemote(): Promise<void> {
+    return this.auditRemote()
   }
 
   /** Checks liked songs (and due full-discography catalogs), then plans work. */
@@ -373,7 +547,6 @@ export class Reconciler {
       linkContributions(this.db, this.deps.now)
       claimAdoptedFiles(this.db, this.deps.now)
       this.refreshWantedStates()
-      await this.auditRemote()
     } finally {
       this.checking = false
       this.deps.onLibraryChanged(null)
@@ -519,8 +692,13 @@ export class Reconciler {
       .all()
       .map((row) => row.id)
     if (ids.length) this.deps.onLibraryChanged(ids.length > 500 ? null : ids)
+    // The user asked to try again now, so a lane that is waiting tries at once.
+    this.pauses.acquire = null
+    this.pauses.upload = null
     this.markDirty()
-    if (this.sourceErrors.size) void this.check()
+    if (this.sourceErrors.has(REMOTE_AUDIT)) void this.auditRemote()
+    if ([...this.sourceErrors.keys()].some((key) => key !== REMOTE_AUDIT))
+      void this.check()
   }
 
   /** Outside Edit: restore the app's version of the file. */
@@ -579,8 +757,7 @@ export class Reconciler {
   stopManaging(trackId: string): void {
     const at = this.deps.now().toISOString()
     // Abort its running step; a file it still manages to place is kept as Unmanaged.
-    if (this.current?.trackId === trackId)
-      this.controller?.abort(new Error('stopped managing'))
+    this.flights.get(trackId)?.controller.abort(new Error('stopped managing'))
     this.db.transaction((tx) => {
       const db = tx as unknown as Db
       const file = db
@@ -623,6 +800,9 @@ export class Reconciler {
 
   delete(trackIds: string[], where: 'local' | 'remote' | 'both'): string[] {
     const deleted = deleteTracks(this.deps, trackIds, where)
+    // A step still running on a deleted track must not outlive the delete.
+    for (const trackId of deleted)
+      this.flights.get(trackId)?.controller.abort(new Error('deleting'))
     this.deps.onLibraryChanged(null)
     this.markDirty()
     return deleted
@@ -630,7 +810,7 @@ export class Reconciler {
 
   // ------------------------------------------------------------ worker
 
-  /** Sets state from facts for every track that is not paused. */
+  /** Sets state from facts for every track that is not paused or being worked on. */
   private plan(): void {
     this.planDirty = false
     const settings = this.deps.settings()
@@ -653,10 +833,11 @@ export class Reconciler {
         .all()
         .map((row) => [row.trackId, row])
     )
+    const planned = new Map<string, StepKind>()
     const toPending: string[] = []
     const toDone: string[] = []
     for (const track of rows) {
-      if (track.id === this.current?.trackId) continue
+      if (this.flights.has(track.id)) continue
       const step = nextStep(
         this.db,
         track,
@@ -664,9 +845,11 @@ export class Reconciler {
         uploadRows.get(track.id),
         settings
       )
+      if (step) planned.set(track.id, step)
       if (step && track.state !== 'pending') toPending.push(track.id)
       if (!step && track.state !== 'done') toDone.push(track.id)
     }
+    this.planned = planned
     const chunked = (ids: string[], state: 'pending' | 'done') => {
       for (let i = 0; i < ids.length; i += 500) {
         this.db
@@ -680,10 +863,11 @@ export class Reconciler {
     chunked(toDone, 'done')
   }
 
-  private nextTrack() {
+  /** The next due, pending track for this lane that nothing is working on. */
+  private nextTrack(lane: Lane): string | undefined {
     const now = this.deps.now().toISOString()
-    return this.db
-      .select()
+    const due = this.db
+      .select({ id: tracks.id })
       .from(tracks)
       .where(
         and(
@@ -695,44 +879,96 @@ export class Reconciler {
         )
       )
       .orderBy(...queueOrder())
-      .limit(1)
-      .get()
+      .all()
+    return due.find(({ id }) => {
+      if (this.flights.has(id)) return false
+      // A track with no plan yet starts in the acquire lane, which hands it on.
+      const step = this.planned.get(id)
+      return (step ? laneOf(step) : 'acquire') === lane
+    })?.id
   }
 
-  private async loop(): Promise<void> {
+  /** One worker: takes the next track for its lane, runs it, repeats. */
+  private async laneLoop(lane: Lane): Promise<void> {
     while (this.running) {
       if (this.folderChangePromise) await this.folderChangePromise
       const root = this.deps.settings().libraryFolder
       if (!root || !(await readableDirectory(root))) {
         // Nothing can be written until a folder is chosen and available (e.g. the
         // drive is mounted); wait instead of failing tracks.
-        this.current = null
         this.emitSoon()
         await this.idle(60_000)
-        if (root && (await readableDirectory(root))) await this.prepareLibrary()
+        if (lane === 'acquire' && root && (await readableDirectory(root)))
+          await this.prepareLibrary()
         continue
       }
-      if (this.planDirty) this.plan()
-      const track = this.nextTrack()
-      if (!track) {
-        this.current = null
-        this.emitSoon()
-        try {
-          this.controller = new AbortController()
-          await processTombstones(this.deps, this.controller.signal)
-        } catch (error) {
-          console.warn('[reconciler] tombstones', error)
+      const pause = this.pauses[lane]
+      if (pause) {
+        const wait = pause.until - Date.now()
+        if (wait > 0) {
+          await this.idle(wait)
+          continue
         }
-        await this.idle(this.nextWakeDelay())
-        continue
+        // The upload lane probes the VPS with an audit; the acquire lane
+        // probes with its next step. A probe that neither renewed nor lifted
+        // the pause (it was aborted) just ends it.
+        if (lane === 'upload') {
+          this.probing ??= this.auditRemote().finally(() => {
+            this.probing = null
+          })
+          await this.probing
+          const renewed = this.pauses.upload
+          if (renewed && renewed.until <= Date.now()) this.clearPause('upload')
+          else if (renewed) continue
+        }
       }
-      const work = this.work(track.id)
-      this.workPromise = work
       try {
-        await work
-      } finally {
-        if (this.workPromise === work) this.workPromise = null
+        if (this.planDirty) this.plan()
+        const trackId = this.nextTrack(lane)
+        if (!trackId) {
+          // Nothing is waiting, so a lost connection has nothing to retry.
+          this.clearPause(lane)
+          if (lane === 'acquire') await this.runTombstones()
+          await this.idle(this.nextWakeDelay())
+          continue
+        }
+        const flight: Flight = {
+          trackId,
+          lane,
+          step: null,
+          fraction: 0,
+          row: null,
+          controller: new AbortController(),
+        }
+        this.flights.set(trackId, flight)
+        this.db
+          .update(tracks)
+          .set({ state: 'working' })
+          .where(eq(tracks.id, trackId))
+          .run()
+        const work = this.work(flight)
+        this.works.add(work)
+        try {
+          await work
+        } finally {
+          this.works.delete(work)
+        }
+      } catch (error) {
+        console.error(`[reconciler] ${lane} lane`, error)
+        await this.idle(5_000)
       }
+    }
+  }
+
+  private async runTombstones(): Promise<void> {
+    const controller = new AbortController()
+    this.background.add(controller)
+    try {
+      await processTombstones(this.deps, controller.signal)
+    } catch (error) {
+      console.warn('[reconciler] tombstones', error)
+    } finally {
+      this.background.delete(controller)
     }
   }
 
@@ -754,147 +990,206 @@ export class Reconciler {
     // stop() may have run while the loop was between awaits; don't sleep then.
     if (!this.running) return Promise.resolve()
     return new Promise((resolve) => {
-      const timer = setTimeout(done, ms)
-      function done() {
+      const done = () => {
         clearTimeout(timer)
+        this.wakers.delete(done)
         resolve()
       }
-      this.wake = () => {
-        this.wake = null
-        done()
-      }
+      const timer = setTimeout(done, ms)
+      this.wakers.add(done)
     })
   }
 
-  private async work(initialTrackId: string): Promise<void> {
-    let trackId = initialTrackId
-    this.controller = new AbortController()
-    const signal = this.controller.signal
-    this.db
-      .update(tracks)
-      .set({ state: 'working' })
-      .where(eq(tracks.id, trackId))
-      .run()
-    let worked = false
-    for (let guard = 0; guard < 8 && this.running; guard += 1) {
-      const track = this.db
-        .select()
+  private activityRow(trackId: string): ActivityRow | null {
+    return (
+      this.db
+        .select(ACTIVITY_COLUMNS)
         .from(tracks)
         .where(eq(tracks.id, trackId))
-        .get()
-      if (
-        !track ||
-        track.state === 'no_longer_wanted' ||
-        track.state === 'released' ||
-        signal.aborted
-      ) {
-        this.current = null
-        return
-      }
-      const file = this.db
-        .select()
-        .from(files)
-        .where(eq(files.trackId, trackId))
-        .get()
-      const upload = this.db
-        .select()
-        .from(uploads)
-        .where(eq(uploads.trackId, trackId))
-        .get()
-      const step = nextStep(this.db, track, file, upload, this.deps.settings())
-      if (!step) {
-        this.db
-          .update(tracks)
-          .set({
-            state: 'done',
-            currentStep: null,
-            attempts: 0,
-            nextAttemptAt: null,
-            lastError: null,
-            ...(worked ? { completedAt: this.deps.now().toISOString() } : {}),
-          })
-          .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
-          .run()
-        this.current = null
-        this.deps.onLibraryChanged([trackId])
-        this.emitSoon()
-        return
-      }
-      this.current = { trackId, step, fraction: 0 }
-      this.db
-        .update(tracks)
-        .set({ currentStep: step })
-        .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
-        .run()
-      this.emitSoon()
-      const run = {
-        signal,
-        progress: (fraction: number) => {
-          if (this.current) this.current.fraction = fraction
-          this.emitSoon()
-        },
-      }
-      try {
-        if (step === 'match') {
-          const outcome = await runMatch(this.deps, track, run)
-          if (outcome.trackId !== trackId) {
-            trackId = outcome.trackId
-            this.db
-              .update(tracks)
-              .set({ state: 'working' })
-              .where(eq(tracks.id, trackId))
-              .run()
-          }
-        } else if (step === 'lyrics') {
-          await runLyrics(this.deps, track, run)
-        } else if (step === 'acquire') {
-          await runAcquire(this.deps, track, run)
-        } else if (step === 'retag') await runRetag(this.deps, track, run)
-        else if (step === 'move') await runMove(this.deps, track, run)
-        else if (step === 'upload') await runUpload(this.deps, track, run)
-        worked = true
-        // Retries count consecutive failures; a step that worked (after a
-        // wait, say) starts the count again.
-        this.db
-          .update(tracks)
-          .set({ attempts: 0 })
-          .where(and(eq(tracks.id, trackId), sql`${tracks.attempts} > 0`))
-          .run()
-      } catch (error) {
-        if (!this.running || signal.aborted) {
-          this.db
-            .update(tracks)
-            .set({ state: 'pending', currentStep: null })
-            .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
-            .run()
-          this.current = null
-          return
-        }
-        if (error instanceof OutsideEditError) {
-          // The file changed outside the app: pause the track (shown in Needs Attention).
-          this.db
-            .update(tracks)
-            .set({ state: 'done', currentStep: null })
-            .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
-            .run()
-          this.current = null
-          this.deps.onLibraryChanged([trackId])
-          this.emitSoon()
-          return
-        }
-        this.fail(trackId, step, error)
-        return
-      }
-    }
+        .get() ?? null
+    )
+  }
+
+  /** The track's next step belongs to the other lane: queue it there. */
+  private handOff(flight: Flight, step: StepKind): void {
     this.db
       .update(tracks)
       .set({ state: 'pending', currentStep: null })
-      .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
+      .where(and(eq(tracks.id, flight.trackId), eq(tracks.state, 'working')))
       .run()
+    this.planned.set(flight.trackId, step)
+    this.wakeAll()
+  }
+
+  /** Runs a track's steps in this lane until it is done or its next step belongs elsewhere. */
+  private async work(flight: Flight): Promise<void> {
+    const signal = flight.controller.signal
+    let worked = false
+    try {
+      for (let guard = 0; guard < 8 && this.running; guard += 1) {
+        const trackId = flight.trackId
+        const track = this.db
+          .select()
+          .from(tracks)
+          .where(eq(tracks.id, trackId))
+          .get()
+        if (
+          !track ||
+          track.state === 'no_longer_wanted' ||
+          track.state === 'released' ||
+          signal.aborted
+        )
+          return
+        const file = this.db
+          .select()
+          .from(files)
+          .where(eq(files.trackId, trackId))
+          .get()
+        const upload = this.db
+          .select()
+          .from(uploads)
+          .where(eq(uploads.trackId, trackId))
+          .get()
+        const step = nextStep(
+          this.db,
+          track,
+          file,
+          upload,
+          this.deps.settings()
+        )
+        if (!step) {
+          this.db
+            .update(tracks)
+            .set({
+              state: 'done',
+              currentStep: null,
+              attempts: 0,
+              nextAttemptAt: null,
+              lastError: null,
+              ...(worked ? { completedAt: this.deps.now().toISOString() } : {}),
+            })
+            .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
+            .run()
+          this.deps.onLibraryChanged([trackId])
+          return
+        }
+        if (laneOf(step) !== flight.lane) {
+          this.handOff(flight, step)
+          return
+        }
+        flight.step = step
+        flight.fraction = 0
+        flight.row = this.activityRow(trackId)
+        this.db
+          .update(tracks)
+          .set({ currentStep: step })
+          .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
+          .run()
+        this.emitSoon()
+        const run: StepRun = {
+          signal,
+          progress: (fraction: number) => {
+            flight.fraction = fraction
+            this.emitSoon(false)
+          },
+          remoteListing: this.remoteListing,
+        }
+        try {
+          if (step === 'match') {
+            const outcome = await runMatch(this.deps, track, run)
+            if (outcome.trackId !== trackId) {
+              // Merged into another track; carry on with the survivor, unless
+              // another lane is already working it.
+              if (this.flights.has(outcome.trackId)) {
+                this.markDirty()
+                return
+              }
+              this.flights.delete(trackId)
+              flight.trackId = outcome.trackId
+              this.flights.set(outcome.trackId, flight)
+              this.db
+                .update(tracks)
+                .set({ state: 'working' })
+                .where(eq(tracks.id, outcome.trackId))
+                .run()
+            }
+          } else if (step === 'lyrics') {
+            await runLyrics(this.deps, track, run)
+          } else if (step === 'acquire') {
+            await runAcquire(this.deps, track, run)
+          } else if (step === 'retag') await runRetag(this.deps, track, run)
+          else if (step === 'move') await runMove(this.deps, track, run)
+          else if (step === 'upload') await runUpload(this.deps, track, run)
+          worked = true
+          // Retries count consecutive failures; a step that worked (after a
+          // wait, say) starts the count again.
+          this.db
+            .update(tracks)
+            .set({ attempts: 0 })
+            .where(
+              and(eq(tracks.id, flight.trackId), sql`${tracks.attempts} > 0`)
+            )
+            .run()
+          if (NETWORK_STEPS.has(step)) this.clearPause(flight.lane)
+        } catch (error) {
+          if (!this.running || signal.aborted) {
+            this.db
+              .update(tracks)
+              .set({ state: 'pending', currentStep: null })
+              .where(
+                and(eq(tracks.id, flight.trackId), eq(tracks.state, 'working'))
+              )
+              .run()
+            return
+          }
+          if (error instanceof OutsideEditError) {
+            // The file changed outside the app: pause the track (shown in Needs Attention).
+            this.db
+              .update(tracks)
+              .set({ state: 'done', currentStep: null })
+              .where(
+                and(eq(tracks.id, flight.trackId), eq(tracks.state, 'working'))
+              )
+              .run()
+            this.deps.onLibraryChanged([flight.trackId])
+            return
+          }
+          if (
+            errorKindOf(error) !== 'permanent' &&
+            isConnectivityError(error)
+          ) {
+            // Not this track's fault: it keeps its retries and the lane waits.
+            this.db
+              .update(tracks)
+              .set({ state: 'pending', currentStep: null })
+              .where(
+                and(eq(tracks.id, flight.trackId), eq(tracks.state, 'working'))
+              )
+              .run()
+            this.planned.set(flight.trackId, step)
+            this.pauseLane(flight.lane)
+            return
+          }
+          this.fail(flight.trackId, step, error)
+          return
+        }
+      }
+      this.db
+        .update(tracks)
+        .set({ state: 'pending', currentStep: null })
+        .where(and(eq(tracks.id, flight.trackId), eq(tracks.state, 'working')))
+        .run()
+    } finally {
+      if (this.flights.get(flight.trackId) === flight)
+        this.flights.delete(flight.trackId)
+      this.emitSoon()
+    }
   }
 
   private fail(trackId: string, step: StepKind, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error)
+    // Wherever the retry happens, it starts at the step that failed.
+    this.planned.set(trackId, step)
     if (error instanceof RetryLaterError) {
       // Not a failure, so never Needs Attention; but each wait doubles, up to
       // a few hours, so a delete that never finishes can't cause a lookup a minute.
@@ -919,8 +1214,6 @@ export class Reconciler {
         })
         .where(and(eq(tracks.id, trackId), eq(tracks.state, 'working')))
         .run()
-      this.current = null
-      this.emitSoon()
       return
     }
     const kind = errorKindOf(error)
@@ -929,10 +1222,7 @@ export class Reconciler {
       .from(tracks)
       .where(eq(tracks.id, trackId))
       .get()
-    if (track?.state === 'no_longer_wanted') {
-      this.current = null
-      return
-    }
+    if (track?.state === 'no_longer_wanted') return
     const attempts = (track?.attempts ?? 0) + 1
     const giveUp = kind === 'permanent' || attempts > BACKOFF_MS.length
     console.warn(
@@ -957,55 +1247,92 @@ export class Reconciler {
       })
       .where(eq(tracks.id, trackId))
       .run()
-    this.current = null
     this.deps.onLibraryChanged([trackId])
-    this.emitSoon()
   }
 
   // ------------------------------------------------------------ activity
 
-  private emitSoon(): void {
+  /**
+   * Schedules an update to the UI, at most one per 100 ms. Pass false for a
+   * progress tick, which skips rebuilding the lists.
+   */
+  private emitSoon(listsChanged = true): void {
+    if (listsChanged) this.listsDirty = true
     if (this.emitTimer || !this.running) return
     const wait = Math.max(0, 100 - (Date.now() - this.lastEmit))
     this.emitTimer = setTimeout(() => {
       this.emitTimer = null
       this.lastEmit = Date.now()
-      this.deps.onActivity(this.activity())
+      if (!this.listsDirty && this.deps.onProgress)
+        this.deps.onProgress(this.liveView())
+      else {
+        const full = this.buildActivity(this.listsDirty)
+        // Only a full emit pays the debt; a snapshot read (`activity()`) does not.
+        this.listsDirty = false
+        this.deps.onActivity(full)
+      }
     }, wait)
   }
 
   activity(): ActivityView {
-    const cover = this.deps.coverUrl
-    const toView = (
-      row: typeof tracks.$inferSelect,
-      extra: Partial<ActivityTrackView> = {}
-    ): ActivityTrackView => ({
+    return this.buildActivity(true)
+  }
+
+  private trackView(
+    row: ActivityRow,
+    extra: Partial<ActivityTrackView> = {}
+  ): ActivityTrackView {
+    return {
       id: row.id,
       title: row.title,
       artist: row.artist,
-      coverUrl: cover(row.coverPath, row.coverUrl),
+      coverUrl: this.deps.coverUrl(row.coverPath, row.coverUrl),
       stage: null,
       progress: 0,
       completedAt: row.completedAt,
       failed: row.state === 'needs_attention',
       ...extra,
-    })
-    let current: ActivityTrackView | null = null
-    if (this.current) {
-      const row = this.db
-        .select()
-        .from(tracks)
-        .where(eq(tracks.id, this.current.trackId))
-        .get()
-      if (row) {
-        const stage = stageForStep(this.current.step)
-        const [base, weight] = STAGE_WEIGHTS[stage]
-        current = toView(row, {
-          stage,
-          progress: Math.min(1, base + weight * this.current.fraction),
-        })
-      }
     }
+  }
+
+  /** The tracks being worked on, with progress. */
+  private liveView(): ActivityLive {
+    let current: ActivityTrackView | null = null
+    const uploading: ActivityTrackView[] = []
+    for (const flight of this.flights.values()) {
+      if (!flight.row || !flight.step) continue
+      const stage = stageForStep(flight.step)
+      const [base, weight] = STAGE_WEIGHTS[stage]
+      const view = this.trackView(flight.row, {
+        stage,
+        progress: Math.min(1, base + weight * flight.fraction),
+      })
+      if (flight.lane === 'upload') uploading.push(view)
+      else current = view
+    }
+    return { current, uploading }
+  }
+
+  private buildActivity(rebuildLists: boolean): ActivityView {
+    if (rebuildLists || !this.lists) {
+      this.lists = this.computeLists()
+    }
+    const lists = this.lists
+    const live = this.liveView()
+    return {
+      working: this.flights.size > 0 || lists.upNextCount > 0,
+      checking: this.checking,
+      remoteUnreachable: this.pauses.upload !== null,
+      offline: this.pauses.acquire !== null,
+      ...live,
+      ...lists,
+      upNext: lists.upNext.filter((row) => !this.flights.has(row.id)),
+    }
+  }
+
+  /** Reads only the columns Activity shows. */
+  private computeLists(): ActivityLists {
+    const cover = this.deps.coverUrl
     const now = this.deps.now()
     const pendingWhere = and(
       eq(tracks.state, 'pending'),
@@ -1014,21 +1341,22 @@ export class Reconciler {
         lte(tracks.nextAttemptAt, now.toISOString())
       )
     )
-    const upNextRows = this.db
-      .select()
+    const upNext = this.db
+      .select(ACTIVITY_COLUMNS)
       .from(tracks)
       .where(pendingWhere)
       .orderBy(...queueOrder())
       .limit(40)
       .all()
+      .map((row) => this.trackView(row))
     const upNextCount =
       this.db
         .select({ n: sql<number>`count(*)` })
         .from(tracks)
         .where(pendingWhere)
         .get()?.n ?? 0
-    const recentRows = this.db
-      .select()
+    const recent = this.db
+      .select(ACTIVITY_COLUMNS)
       .from(tracks)
       .where(
         and(
@@ -1046,8 +1374,17 @@ export class Reconciler {
       .all()
       // Newest 400, shown oldest-first above the current row.
       .reverse()
+      .map((row) => this.trackView(row))
     const attention: AttentionItemView[] = this.db
-      .select()
+      .select({
+        id: tracks.id,
+        title: tracks.title,
+        artist: tracks.artist,
+        coverPath: tracks.coverPath,
+        coverUrl: tracks.coverUrl,
+        lastError: tracks.lastError,
+        lastErrorStep: tracks.lastErrorStep,
+      })
       .from(tracks)
       .where(eq(tracks.state, 'needs_attention'))
       .orderBy(desc(tracks.updatedAt))
@@ -1062,29 +1399,39 @@ export class Reconciler {
         coverUrl: cover(row.coverPath, row.coverUrl),
       }))
     const edited = this.db
-      .select({ track: tracks, file: files })
+      .select({
+        id: tracks.id,
+        title: tracks.title,
+        artist: tracks.artist,
+        coverPath: tracks.coverPath,
+        coverUrl: tracks.coverUrl,
+        outsideEdit: files.outsideEdit,
+      })
       .from(files)
       .innerJoin(tracks, eq(tracks.id, files.trackId))
       .where(isNotNull(files.outsideEdit))
       .limit(100)
       .all()
-      .map(({ track, file }) => ({
-        id: track.id,
+      .map((row) => ({
+        id: row.id,
         kind: 'outside_edit' as const,
-        title: track.title,
-        subtitle: track.artist,
-        reason: `Changed outside the app (${(JSON.parse(file.outsideEdit!) as string[]).join(', ')}). Rewrite it or stop managing it.`,
-        coverUrl: cover(track.coverPath, track.coverUrl),
+        title: row.title,
+        subtitle: row.artist,
+        reason: `Changed outside the app (${(JSON.parse(row.outsideEdit ?? '[]') as string[]).join(', ')}). Rewrite it or stop managing it.`,
+        coverUrl: cover(row.coverPath, row.coverUrl),
       }))
     const sources = [...this.sourceErrors.entries()].map(
       ([source, message]) => ({
         id: source,
         kind: 'source' as const,
-        title: source.startsWith('spotify')
-          ? 'Spotify liked songs check'
-          : source.startsWith('liked:')
-            ? 'Liked songs check'
-            : 'Full Discography catalog',
+        title:
+          source === REMOTE_AUDIT
+            ? 'Remote Library check'
+            : source.startsWith('spotify')
+              ? 'Spotify liked songs check'
+              : source.startsWith('liked:')
+                ? 'Liked songs check'
+                : 'Full Discography catalog',
         subtitle: null,
         reason: message,
         coverUrl: null,
@@ -1101,25 +1448,17 @@ export class Reconciler {
       .map(
         (source) =>
           this.db
-            .select()
+            .select({ at: sourceSnapshots.lastSuccessAt })
             .from(sourceSnapshots)
             .where(eq(sourceSnapshots.source, source))
-            .get()?.lastSuccessAt
+            .get()?.at
       )
       .filter((at): at is string => Boolean(at))
-    const lastChecked = successes.sort().at(-1) ?? null
     return {
-      working: Boolean(current) || upNextCount > 0,
-      checking: this.checking,
-      lastCheckedAt: lastChecked,
-      current,
-      upNext: upNextRows
-        .filter((row) => row.id !== current?.id)
-        .map((row) => toView(row)),
-      upNextCount: Math.max(0, upNextCount - (current ? 0 : 0)),
-      recent: recentRows
-        .filter((row) => row.id !== current?.id)
-        .map((row) => toView(row)),
+      lastCheckedAt: successes.sort().at(-1) ?? null,
+      upNext,
+      upNextCount,
+      recent,
       needsAttention: [...sources, ...edited, ...attention],
     }
   }

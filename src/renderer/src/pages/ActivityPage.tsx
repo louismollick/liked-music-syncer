@@ -63,7 +63,10 @@ export function ActivityPage() {
     }, 800)
   }, [])
 
-  const current = activity?.current ?? null
+  // Uploads run beside downloads; the first live track gets the highlighted row.
+  const uploading = activity?.uploading ?? []
+  const current = activity?.current ?? uploading[0] ?? null
+  const alsoUploading = uploading.filter((track) => track.id !== current?.id)
   // Remember whether the current row is visible before the list re-renders.
   const measureVisibility = () => {
     const scroller = scrollRef.current
@@ -238,6 +241,21 @@ export function ActivityPage() {
               )}
             </div>
           )}
+          {alsoUploading.map((track) => (
+            <div key={track.id} className="h-14 flex items-center gap-3 px-4">
+              <div className="flex-1 min-w-0">
+                <div className="truncate text-[15px] text-zinc-300">
+                  {track.title}
+                </div>
+                <div className="truncate text-[12px] text-zinc-600">
+                  {track.artist}
+                </div>
+              </div>
+              <span className="shrink-0 text-[12px] text-zinc-400 tabular-nums">
+                Uploading · {stagePercent(track)}%
+              </span>
+            </div>
+          ))}
           {upNext.map((track, index) => (
             <div
               key={track.id}

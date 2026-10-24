@@ -66,13 +66,23 @@ export interface AttentionItemView {
 export interface ActivityView {
   working: boolean
   checking: boolean
+  /** The Remote Library cannot be reached; uploads wait and retry. */
+  remoteUnreachable: boolean
+  /** The internet cannot be reached; downloads wait and retry. */
+  offline: boolean
   lastCheckedAt: string | null
+  /** The track the download pipeline (match, lyrics, download, tags) is on. */
   current: ActivityTrackView | null
+  /** Tracks uploading now; several can upload at once. */
+  uploading: ActivityTrackView[]
   upNext: ActivityTrackView[]
   upNextCount: number
   recent: ActivityTrackView[]
   needsAttention: AttentionItemView[]
 }
+
+/** The part of Activity that changes with progress, sent between full updates. */
+export type ActivityLive = Pick<ActivityView, 'current' | 'uploading'>
 
 export type LyricsFilter = 'synced' | 'plain' | 'none'
 export type RemoteState =
@@ -288,6 +298,7 @@ export type InvokeChannel = keyof InvokeMap
 /** Event channels pushed from main. */
 export interface EventMap {
   'activity:changed': ActivityView
+  'activity:progress': ActivityLive
   'library:changed': { trackIds: string[] | null }
   'spotify:changed': SpotifySessionView
   'session:changed': SessionView

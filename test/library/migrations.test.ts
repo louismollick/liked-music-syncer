@@ -1,7 +1,10 @@
+import { existsSync, readdirSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
-import { migrate } from '../../src/main/library/db'
+import { migrate, openDatabase } from '../../src/main/library/db'
 import { MIGRATIONS } from '../../src/main/library/migrations'
+import { tempDir } from '../helpers/audio'
 
 describe('migrations', () => {
   it('preserves contributions and indexes while permitting Spotify rows without a video ID', () => {
@@ -176,5 +179,88 @@ describe('migrations', () => {
         .get('t')
     ).toEqual({ replacement_track_id: null, expected_sha256: null })
     sqlite.close()
+  })
+
+  it('indexes tracks by album so album lookups do not scan the table', () => {
+    const sqlite = new Database(':memory:')
+    migrate(sqlite)
+    const plan = sqlite
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT cover_path FROM tracks t2 WHERE t2.album = 'a' AND t2.album_artist = 'b' AND t2.cover_path IS NOT NULL LIMIT 1`
+      )
+      .all() as Array<{ detail: string }>
+    expect(plan.map((row) => row.detail).join(' ')).toContain(
+      'USING INDEX tracks_album'
+    )
+    sqlite.close()
+  })
+})
+
+describe('backup before migrating', () => {
+  /** A database file left at an older schema version, with one track. */
+  function oldDatabase(dir: string, version: number): string {
+    const file = path.join(dir, 'library.db')
+    const sqlite = new Database(file)
+    for (const migration of MIGRATIONS.slice(0, version)) sqlite.exec(migration)
+    sqlite.pragma(`user_version = ${version}`)
+    sqlite.exec(
+      "INSERT INTO tracks (id, title, created_at, updated_at) VALUES ('t', 'Song', 'now', 'now')"
+    )
+    sqlite.close()
+    return file
+  }
+  const backups = (dir: string) =>
+    readdirSync(dir)
+      .filter((name) => name.includes('.before-v'))
+      .sort()
+
+  it('copies an existing database before upgrading it', () => {
+    const dir = tempDir('lms-backup-')
+    const file = oldDatabase(dir, 4)
+
+    openDatabase(file).$client.close()
+
+    const backup = `${file}.before-v${MIGRATIONS.length}`
+    const copy = new Database(backup, { readonly: true })
+    expect(copy.pragma('user_version', { simple: true })).toBe(4)
+    expect(copy.prepare('SELECT title FROM tracks').all()).toEqual([
+      { title: 'Song' },
+    ])
+    copy.close()
+    const upgraded = new Database(file, { readonly: true })
+    expect(upgraded.pragma('user_version', { simple: true })).toBe(
+      MIGRATIONS.length
+    )
+    upgraded.close()
+  })
+
+  it('skips the backup for a new database and for one already up to date', () => {
+    const dir = tempDir('lms-backup-')
+    const file = path.join(dir, 'library.db')
+    openDatabase(file).$client.close()
+    expect(backups(dir)).toEqual([])
+    openDatabase(file).$client.close()
+    expect(backups(dir)).toEqual([])
+  })
+
+  it('keeps the newest three and leaves other files alone', () => {
+    const dir = tempDir('lms-backup-')
+    const file = oldDatabase(dir, 4)
+    for (const name of [
+      'library.db.before-v1',
+      'library.db.before-v2',
+      'library.db.before-v3',
+      'library.db.before-error-fixes',
+    ])
+      writeFileSync(path.join(dir, name), 'x')
+
+    openDatabase(file).$client.close()
+
+    expect(backups(dir)).toEqual([
+      'library.db.before-v2',
+      'library.db.before-v3',
+      `library.db.before-v${MIGRATIONS.length}`,
+    ])
+    expect(existsSync(`${file}.before-error-fixes`)).toBe(true)
   })
 })

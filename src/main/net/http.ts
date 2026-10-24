@@ -67,7 +67,9 @@ export class HttpError extends Error {
     message: string,
     readonly kind: ErrorKind,
     readonly status: number | null,
-    readonly retryAfterMs: number | null = null
+    readonly retryAfterMs: number | null = null,
+    /** 'ETIMEDOUT' when our own request timeout fired (see isConnectivityError). */
+    readonly code: string | null = null
   ) {
     super(message)
     this.name = 'HttpError'
@@ -86,6 +88,14 @@ export interface HttpClient {
   json<T = unknown>(url: string, options: RequestOptions): Promise<T>
   text(url: string, options: RequestOptions): Promise<string>
   bytes(url: string, options: RequestOptions): Promise<Uint8Array>
+}
+
+/** fetch failures say only "fetch failed"; the cause's code (ENOTFOUND, ...) says why. */
+function describeNetworkError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const cause = error instanceof Error ? error.cause : undefined
+  const code = (cause as { code?: unknown } | undefined)?.code
+  return typeof code === 'string' ? `${message} (${code})` : message
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
@@ -153,8 +163,12 @@ export function createHttpClient(
     const { host, signal, retryable: _retryable, ...init } = options
     await waitForSlot(host, deadline, signal)
     const controller = new AbortController()
+    let timedOut = false
     const timeout = setTimeout(
-      () => controller.abort(new Error('timeout')),
+      () => {
+        timedOut = true
+        controller.abort(new Error('timeout'))
+      },
       Math.max(1, Math.min(POLICIES[host].timeoutMs, deadline - now()))
     )
     const onAbort = () => controller.abort(signal?.reason)
@@ -165,8 +179,13 @@ export function createHttpClient(
         response = await fetchImpl(url, { ...init, signal: controller.signal })
       } catch (error) {
         if (signal?.aborted) throw error
-        const message = error instanceof Error ? error.message : String(error)
-        throw new HttpError(`${host}: ${message}`, 'transient', null)
+        throw new HttpError(
+          `${host}: ${describeNetworkError(error)}`,
+          'transient',
+          null,
+          null,
+          timedOut ? 'ETIMEDOUT' : null
+        )
       }
       if (!response.ok) {
         const retryAfterMs = parseRetryAfter(
@@ -186,7 +205,13 @@ export function createHttpClient(
       } catch (error) {
         if (signal?.aborted) throw error
         const message = error instanceof Error ? error.message : String(error)
-        throw new HttpError(`${host}: ${message}`, 'transient', null)
+        throw new HttpError(
+          `${host}: ${message}`,
+          'transient',
+          null,
+          null,
+          timedOut ? 'ETIMEDOUT' : null
+        )
       }
     } finally {
       clearTimeout(timeout)

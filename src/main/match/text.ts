@@ -9,9 +9,6 @@ export function normalizeText(value: string): string {
     .replace(/^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu, '')
     .replace(/\s+/gu, ' ')
 }
-export function normalizedPrimaryArtist(value: string): string {
-  return value ? normalizeText(value.split(',')[0].trim()) : ''
-}
 const bracketAdornment =
   /[([{（【][^)\]}）】]*(?:official|music\s*video|official\s*mv|mv|pv|lyrics?|audio|visualizer|visualiser|hd|hq|4k|sub(?:bed|titles?)?)[^)\]}）】]*[)\]}）】]/giu
 const bracketEnding =

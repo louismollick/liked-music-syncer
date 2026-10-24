@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, utimesSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { createRclone, type RemoteTarget } from '../../src/main/remote/rclone'
@@ -22,11 +22,14 @@ function cryptTarget(): RemoteTarget {
   }
 }
 
-function localFile(content: string): string {
-  const dir = tempDir('lms-src-')
-  const file = path.join(dir, 'song.m4a')
-  writeFileSync(file, content)
-  return file
+/** A local library folder holding the given files; returns the folder. */
+function localTree(files: Record<string, string>): string {
+  const root = tempDir('lms-src-')
+  for (const [relative, content] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(root, relative)), { recursive: true })
+    writeFileSync(path.join(root, relative), content)
+  }
+  return root
 }
 
 describe('rclone remote', () => {
@@ -39,10 +42,13 @@ describe('rclone remote', () => {
 
   it('uploads, verifies with a common hash, lists, moves and deletes', async () => {
     const target = localTarget()
-    const file = localFile('hello audio')
+    const root = localTree({ 'A/B/01 x.m4a': 'hello audio' })
     const progress: number[] = []
-    const uploaded = await rclone.upload(target, file, 'A/B/01 x.m4a', (f) =>
-      progress.push(f)
+    const [uploaded] = await rclone.upload(
+      target,
+      root,
+      ['A/B/01 x.m4a'],
+      (f) => progress.push(f)
     )
     expect(uploaded.hashAlgo).toBe('md5')
     expect(uploaded.size).toBe(11)
@@ -63,12 +69,50 @@ describe('rclone remote', () => {
 
   it('verifies by downloading when the backend has no hash', async () => {
     const target = cryptTarget()
-    const file = localFile('crypted audio')
-    const uploaded = await rclone.upload(target, file, 'x.m4a', () => {})
+    const root = localTree({ 'x.m4a': 'crypted audio' })
+    const file = path.join(root, 'x.m4a')
+    const [uploaded] = await rclone.upload(target, root, ['x.m4a'], () => {})
     expect(uploaded.hashAlgo).toBeNull()
     expect(await rclone.verify(target, file, 'x.m4a')).not.toBeNull()
     writeFileSync(file, 'changed locally!!')
     expect(await rclone.verify(target, file, 'x.m4a')).toBeNull()
+  })
+
+  it('uploads files from different folders in one run and verifies each', async () => {
+    const target = localTarget()
+    const root = localTree({
+      'A/B/01 x.m4a': 'audio bytes',
+      'A/B/01 x.lrc': '[00:01.00]words',
+      'C/02 y.m4a': 'other audio',
+    })
+    const paths = ['A/B/01 x.m4a', 'A/B/01 x.lrc', 'C/02 y.m4a']
+    const uploaded = await rclone.upload(target, root, paths, () => {})
+    expect(uploaded.map((item) => item.size)).toEqual([11, 15, 11])
+    expect(uploaded.every((item) => item.hash)).toBe(true)
+    expect([...(await rclone.list(target, {})).keys()].sort()).toEqual(
+      [...paths].sort()
+    )
+    expect(await rclone.upload(target, root, [], () => {})).toEqual([])
+  })
+
+  it('fails the batch when one file does not verify', async () => {
+    const target = localTarget()
+    const root = localTree({
+      'A/01 x.m4a': 'audio bytes',
+      'A/01 x.lrc': '[00:01.00]words',
+    })
+    // rclone skips a remote file with the same size and time, so this stale
+    // copy with different bytes survives the copy and must fail verification.
+    const lrc = path.join(root, 'A/01 x.lrc')
+    const stale = path.join(target.folder, 'A/01 x.lrc')
+    mkdirSync(path.dirname(stale), { recursive: true })
+    writeFileSync(stale, '[00:01.00]WORDS')
+    const time = new Date('2026-01-01T00:00:00Z')
+    utimesSync(lrc, time, time)
+    utimesSync(stale, time, time)
+    await expect(
+      rclone.upload(target, root, ['A/01 x.m4a', 'A/01 x.lrc'], () => {})
+    ).rejects.toThrow(/verification failed for A\/01 x\.lrc$/)
   })
 
   it('returns an empty listing for a missing folder and unicode paths in NFC', async () => {

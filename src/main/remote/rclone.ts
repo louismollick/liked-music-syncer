@@ -79,14 +79,18 @@ export interface Rclone {
     hashAlgo: HashAlgo | null,
     signal?: AbortSignal
   ): Promise<RemoteObject | null>
-  /** Uploads and verifies one object. Throws if verification fails. */
+  /**
+   * Uploads files (paths relative to `localRoot`, mirrored under the target) in
+   * one rclone run, then verifies them all with one hashed listing. Returns
+   * one result per path, in order. Throws if any file fails verification.
+   */
   upload(
     target: RemoteTarget,
-    localPath: string,
-    relativePath: string,
+    localRoot: string,
+    relativePaths: string[],
     onProgress: (fraction: number) => void,
     signal?: AbortSignal
-  ): Promise<VerifiedUpload>
+  ): Promise<VerifiedUpload[]>
   /** Verifies an existing remote object against a local file (crash recovery). */
   verify(
     target: RemoteTarget,
@@ -158,20 +162,34 @@ export function createRclone(binary: string): Rclone {
       }))
   }
 
-  async function stat(
+  /** Lists the given objects (missing ones are absent) with one rclone run. */
+  async function statMany(
     target: RemoteTarget,
-    relativePath: string,
+    relativePaths: string[],
     hashAlgo: HashAlgo | null,
     signal?: AbortSignal
-  ): Promise<RemoteObject | null> {
-    const args = ['lsjson', remoteSpec(target, relativePath)]
+  ): Promise<Map<string, RemoteObject>> {
+    // An empty --files-from list would list everything.
+    if (relativePaths.length === 0) return new Map()
+    const args = [
+      'lsjson',
+      '--recursive',
+      '--files-only',
+      '--files-from-raw',
+      '-',
+      '--no-traverse',
+      remoteSpec(target),
+    ]
     if (hashAlgo) args.push('--hash', '--hash-type', hashAlgo)
-    const result = await run(binary, args, { signal })
+    const result = await run(binary, args, {
+      signal,
+      input: relativePaths.join('\n'),
+    })
     if (
       result.code === 3 ||
       (result.code !== 0 && MISSING_OBJECT.test(result.stderr))
     ) {
-      return null
+      return new Map()
     }
     if (result.code !== 0) {
       throw new ProcessError(
@@ -179,19 +197,31 @@ export function createRclone(binary: string): Rclone {
         result
       )
     }
-    const [item] = parseObjects(result.stdout, hashAlgo)
+    return new Map(
+      parseObjects(result.stdout, hashAlgo).map((item) => [item.path, item])
+    )
+  }
+
+  async function stat(
+    target: RemoteTarget,
+    relativePath: string,
+    hashAlgo: HashAlgo | null,
+    signal?: AbortSignal
+  ): Promise<RemoteObject | null> {
+    const found = await statMany(target, [relativePath], hashAlgo, signal)
+    const [item] = found.values()
     return item ? { ...item, path: relativePath } : null
   }
 
-  async function verify(
+  /** Compares a listed remote object with the local file; null when they differ. */
+  async function compare(
     target: RemoteTarget,
+    object: RemoteObject,
     localPath: string,
     relativePath: string,
+    caps: RemoteCapabilities,
     signal?: AbortSignal
   ): Promise<VerifiedUpload | null> {
-    const caps = await capabilities(target)
-    const object = await stat(target, relativePath, caps.hashAlgo, signal)
-    if (!object) return null
     // Different size: not our copy, and no need to hash or download it.
     if (object.size !== (await fsStat(localPath)).size) return null
     if (caps.hashAlgo && object.hash) {
@@ -229,6 +259,18 @@ export function createRclone(binary: string): Rclone {
     }
   }
 
+  async function verify(
+    target: RemoteTarget,
+    localPath: string,
+    relativePath: string,
+    signal?: AbortSignal
+  ): Promise<VerifiedUpload | null> {
+    const caps = await capabilities(target)
+    const object = await stat(target, relativePath, caps.hashAlgo, signal)
+    if (!object) return null
+    return compare(target, object, localPath, relativePath, caps, signal)
+  }
+
   return {
     capabilities,
     async list(target, options, signal) {
@@ -255,13 +297,18 @@ export function createRclone(binary: string): Rclone {
     },
     stat,
     verify,
-    async upload(target, localPath, relativePath, onProgress, signal) {
+    async upload(target, localRoot, relativePaths, onProgress, signal) {
+      if (relativePaths.length === 0) return []
+      const caps = await capabilities(target)
       await runChecked(
         binary,
         [
-          'copyto',
-          localPath,
-          remoteSpec(target, relativePath),
+          'copy',
+          localRoot,
+          remoteSpec(target),
+          '--files-from-raw',
+          '-',
+          '--no-traverse',
           '--stats',
           '500ms',
           '--stats-one-line',
@@ -269,6 +316,7 @@ export function createRclone(binary: string): Rclone {
         ],
         {
           signal,
+          input: relativePaths.join('\n'),
           onLine(line) {
             const match = line.match(/,\s*(\d{1,3})%/)
             if (match) onProgress(Math.min(1, Number(match[1]) / 100))
@@ -276,16 +324,38 @@ export function createRclone(binary: string): Rclone {
         }
       )
       onProgress(1)
-      const verified = await verify(target, localPath, relativePath, signal)
-      if (!verified) {
+      const listed = await statMany(
+        target,
+        relativePaths,
+        caps.hashAlgo,
+        signal
+      )
+      const listedByNfc = new Map(
+        [...listed].map(([key, object]) => [key.normalize('NFC'), object])
+      )
+      const results = await Promise.all(
+        relativePaths.map(async (relativePath) => {
+          const object = listedByNfc.get(relativePath.normalize('NFC'))
+          return object
+            ? compare(
+                target,
+                object,
+                path.join(localRoot, relativePath),
+                relativePath,
+                caps,
+                signal
+              )
+            : null
+        })
+      )
+      const failed = relativePaths.filter((_, index) => !results[index])
+      if (failed.length) {
         throw Object.assign(
-          new Error(`Upload verification failed for ${relativePath}`),
-          {
-            kind: 'transient' as const,
-          }
+          new Error(`Upload verification failed for ${failed.join(', ')}`),
+          { kind: 'transient' as const }
         )
       }
-      return verified
+      return results as VerifiedUpload[]
     },
     async move(target, fromRelative, toRelative, signal) {
       await runChecked(

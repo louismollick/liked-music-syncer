@@ -102,10 +102,6 @@ export async function copyToStaging(
   await copyFile(source, target)
 }
 
-export async function removeIfExists(file: string): Promise<void> {
-  await rm(file, { force: true })
-}
-
 /** Removes empty directories from `dir` up to (not including) `root`. */
 export async function pruneEmptyDirs(root: string, dir: string): Promise<void> {
   let current = dir

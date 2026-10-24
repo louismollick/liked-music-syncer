@@ -121,7 +121,7 @@ A user request to look up the Match again for one song, album, artist, or the wh
 _Avoid_: Reprocess, resync, rerun
 
 **Needs Attention**:
-The state of a Desired Track whose Track Step failed permanently or used up its automatic retries. It waits for the user to retry.
+The state of a Desired Track whose Track Step failed permanently or used up its automatic retries. It waits for the user to retry. A lost connection to the VPS or the internet does not count: the affected lane waits and the track keeps its retries.
 _Avoid_: Failed job, error queue
 
 ### Authentication
