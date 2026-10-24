@@ -79,6 +79,12 @@ export interface ActivityView {
   offline: boolean
   /** Syncing is paused until resumed (kept in memory only). */
   paused: boolean
+  /**
+   * Work can actually proceed now: a step or check is running, or queued steps
+   * sit in a lane that is not waiting out an outage and has what it needs (a
+   * library folder that is available, and for uploads a Remote Library).
+   */
+  runnable: boolean
   lastCheckedAt: string | null
   /** The track the download pipeline (match, lyrics, download, tags) is on. */
   current: ActivityTrackView | null

@@ -38,16 +38,10 @@ export function menuLines(
 }
 
 /**
- * The Mac must stay awake only while there is work to do. Waiting out an
- * outage is not work: offline, or only uploads queued with the VPS unreachable.
+ * The Mac must stay awake only while work can actually run: a step or check is
+ * in flight, or queued work is not blocked by an outage, a missing library
+ * folder or a missing remote (the reconciler decides, as `runnable`).
  */
 export function needsAwake(activity: ActivityView): boolean {
-  return (
-    !activity.paused &&
-    !activity.offline &&
-    (activity.checking ||
-      activity.current !== null ||
-      activity.uploading.length > 0 ||
-      (activity.upNextCount > 0 && !activity.remoteUnreachable))
-  )
+  return !activity.paused && activity.runnable
 }

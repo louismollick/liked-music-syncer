@@ -66,6 +66,7 @@ import {
   processTombstones,
   REWRITE_AUDIO,
   RetryLaterError,
+  remoteTarget,
   runAcquire,
   runGenre,
   runLyrics,
@@ -181,6 +182,7 @@ type ActivityLists = Omit<
   | 'working'
   | 'checking'
   | 'paused'
+  | 'runnable'
   | 'remoteUnreachable'
   | 'offline'
 >
@@ -219,6 +221,10 @@ export class Reconciler {
   private loopPromise: Promise<unknown> | null = null
   /** Cached Activity lists, rebuilt only when track states change. */
   private lists: ActivityLists | null = null
+  /** Which lanes have due, pending tracks, as of the last lists rebuild. */
+  private queued: Record<Lane, boolean> = { acquire: false, upload: false }
+  /** The lane loops found the library folder set and readable (for `runnable`). */
+  private libraryReady = false
   /** Observers owe a full update. Cleared by the emit, not by reading a snapshot. */
   private listsDirty = true
   private folderChangePromise: Promise<void> | null = null
@@ -925,7 +931,12 @@ export class Reconciler {
     while (this.running) {
       if (this.folderChangePromise) await this.folderChangePromise
       const root = this.deps.settings().libraryFolder
-      if (!root || !(await readableDirectory(root))) {
+      const readable = Boolean(root) && (await readableDirectory(root))
+      if (readable !== this.libraryReady) {
+        this.libraryReady = readable
+        this.emitSoon()
+      }
+      if (!root || !readable) {
         // Nothing can be written until a folder is chosen and available (e.g. the
         // drive is mounted); wait instead of failing tracks.
         this.emitSoon()
@@ -1359,11 +1370,13 @@ export class Reconciler {
   private buildActivity(rebuildLists: boolean): ActivityView {
     if (rebuildLists || !this.lists) {
       this.lists = this.computeLists()
+      this.queued = this.queuedLanes()
     }
     const lists = this.lists
     const live = this.liveView()
     return {
       working: this.flights.size > 0 || lists.upNextCount > 0,
+      runnable: this.runnable(),
       checking: this.checking,
       paused: this.isPaused,
       remoteUnreachable: this.pauses.upload !== null,
@@ -1372,6 +1385,47 @@ export class Reconciler {
       ...lists,
       upNext: lists.upNext.filter((row) => !this.flights.has(row.id)),
     }
+  }
+
+  /** Which lanes have a due, pending track waiting (the lane `nextTrack` would use). */
+  private queuedLanes(): Record<Lane, boolean> {
+    const now = this.deps.now().toISOString()
+    const queued = { acquire: false, upload: false }
+    for (const { id } of this.db
+      .select({ id: tracks.id })
+      .from(tracks)
+      .where(
+        and(
+          eq(tracks.state, 'pending'),
+          or(
+            sql`${tracks.nextAttemptAt} IS NULL`,
+            lte(tracks.nextAttemptAt, now)
+          )
+        )
+      )
+      .all()) {
+      const step = this.planned.get(id)
+      queued[step ? laneOf(step) : 'acquire'] = true
+    }
+    return queued
+  }
+
+  /**
+   * Whether work can proceed now, for deciding to keep the Mac awake: anything
+   * in flight or being checked, or queued work in a lane that is not waiting
+   * out an outage and has its prerequisites. Pending tracks alone do not count,
+   * since a missing library folder or an unreachable VPS leaves them waiting.
+   */
+  private runnable(): boolean {
+    if (this.flights.size > 0 || this.checking) return true
+    const hasRemote = remoteTarget(this.deps.settings()) !== null
+    return (['acquire', 'upload'] as const).some(
+      (lane) =>
+        this.queued[lane] &&
+        this.pauses[lane] === null &&
+        this.libraryReady &&
+        (lane === 'acquire' || hasRemote)
+    )
   }
 
   /** Reads only the columns Activity shows. */

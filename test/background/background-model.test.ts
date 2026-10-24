@@ -14,6 +14,7 @@ function activity(patch: Partial<ActivityView> = {}): ActivityView {
     working: false,
     checking: false,
     paused: false,
+    runnable: false,
     remoteUnreachable: false,
     offline: false,
     lastCheckedAt: new Date(now - 4 * 60_000).toISOString(),
@@ -152,30 +153,29 @@ describe('trayAppearance', () => {
 })
 
 describe('needsAwake', () => {
-  it('holds only while there is work and not paused', () => {
+  it('holds only while the reconciler can run work and syncing is not paused', () => {
     expect(needsAwake(activity())).toBe(false)
-    expect(needsAwake(activity({ checking: true }))).toBe(true)
-    expect(needsAwake(activity({ current: track() }))).toBe(true)
-    expect(needsAwake(activity({ upNextCount: 2 }))).toBe(true)
-    expect(needsAwake(activity({ upNextCount: 2, paused: true }))).toBe(false)
+    expect(needsAwake(activity({ runnable: true }))).toBe(true)
+    expect(needsAwake(activity({ runnable: true, paused: true }))).toBe(false)
   })
 
-  it('counts a running upload as work', () => {
-    expect(needsAwake(activity({ uploading: [track()] }))).toBe(true)
-  })
-
-  it('does not hold while waiting out an outage', () => {
-    expect(needsAwake(activity({ upNextCount: 2, offline: true }))).toBe(false)
-    expect(needsAwake(activity({ checking: true, offline: true }))).toBe(false)
-    // Queued tracks wait on the VPS, but a running download is still work.
+  it('does not hold for queued tracks that cannot run', () => {
+    // E.g. no library folder, or the VPS is unreachable: runnable is false.
+    expect(needsAwake(activity({ upNextCount: 5 }))).toBe(false)
     expect(
       needsAwake(activity({ upNextCount: 2, remoteUnreachable: true }))
     ).toBe(false)
+  })
+
+  it('holds for a running step even while a lane waits out an outage', () => {
     expect(
-      needsAwake(activity({ current: track(), remoteUnreachable: true }))
-    ).toBe(true)
-    expect(
-      needsAwake(activity({ uploading: [track()], remoteUnreachable: true }))
+      needsAwake(
+        activity({
+          runnable: true,
+          offline: true,
+          uploading: [track({ stage: 'uploading' })],
+        })
+      )
     ).toBe(true)
   })
 })
