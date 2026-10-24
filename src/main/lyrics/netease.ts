@@ -84,10 +84,15 @@ export function stripNeteaseCredits(lrc: string): string | null {
  * title omits, so they may only add qualifiers the query already has.
  */
 function sameRecording(query: LyricsLookup, song: NeteaseSong): boolean {
-  const names = new Set(
+  // The primary artist or one of its known names must be credited: a guest's own
+  // song with the same title and length is not this recording. Variants join all
+  // credits ("A, B"), so with several credits only the first part is the primary's.
+  const primary = new Set(
     [
-      ...query.artists.map((credit) => credit.name),
-      ...query.artistNames.flatMap((name) => [name, ...name.split(', ')]),
+      ...query.artists.slice(0, 1).map((credit) => credit.name),
+      ...query.artistNames.map((name) =>
+        query.artists.length > 1 ? name.split(', ')[0] : name
+      ),
     ].map(normalizeLyricsName)
   )
   return (
@@ -99,7 +104,7 @@ function sameRecording(query: LyricsLookup, song: NeteaseSong): boolean {
     versionQualifiers(song.album?.name ?? '').every((kind) =>
       query.qualifiers.includes(kind)
     ) &&
-    song.artists.some((artist) => names.has(normalizeLyricsName(artist.name)))
+    song.artists.some((artist) => primary.has(normalizeLyricsName(artist.name)))
   )
 }
 

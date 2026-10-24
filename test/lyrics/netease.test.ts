@@ -120,6 +120,44 @@ describe('NetEase lyrics', () => {
     }
   })
 
+  it("rejects a guest's own song for a collaboration query", async () => {
+    const collab = prepareLyricsQuery({
+      ...query,
+      artists: [
+        { name: 'Alpha', channelId: null },
+        { name: 'Beta', channelId: null },
+      ],
+      artistVariants: ['Alpha, Beta'],
+    })
+    const serve = (credited: string) =>
+      createHttpClient(
+        async (raw) =>
+          Response.json(
+            raw.includes('/search/')
+              ? {
+                  code: 200,
+                  result: {
+                    songs: [
+                      {
+                        id: 1,
+                        name: query.title,
+                        artists: [{ name: credited }],
+                        duration: 261_000,
+                      },
+                    ],
+                  },
+                }
+              : lyric
+          ),
+        Date.now,
+        async () => {}
+      )
+    // Beta's solo song, same title and length.
+    expect(await neteaseLyrics(serve('Beta'), collab)).toBeNull()
+    // The primary artist credited alone still matches.
+    expect(await neteaseLyrics(serve('Alpha'), collab)).toBe(expected)
+  })
+
   it('protects recording versions in the title, alias and album', async () => {
     // A studio query must not take a live title, nor an Instrumental alias.
     for (const id of [6, 7]) {
