@@ -206,10 +206,10 @@ export class FakeMatcher implements Matcher {
   genres = new Map<string, string>()
   genreError: Error | null = null
   genreCalls: string[] = []
-  async genre(artist: string) {
-    this.genreCalls.push(artist)
+  async genre(artist: { id: string; name: string }) {
+    this.genreCalls.push(artist.name)
     if (this.genreError) throw this.genreError
-    return this.genres.get(artist) ?? null
+    return this.genres.get(artist.name) ?? null
   }
 }
 

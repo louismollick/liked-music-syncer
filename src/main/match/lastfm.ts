@@ -43,29 +43,33 @@ export function lastfmGenres(payload: unknown): string | null {
   return genres.size ? [...genres].slice(0, GENRE_LIMIT).join('; ') : null
 }
 
-/** Genres for an artist from Last.fm top tags, cached by artist name until cleared. */
+/**
+ * Genres for an artist from Last.fm top tags, cached by our trusted artist ID
+ * until cleared. Last.fm only takes a name, so callers must not ask for artists
+ * whose name is ambiguous or unidentified, and autocorrect stays off so Last.fm
+ * never swaps in a differently spelled artist.
+ */
 export function createLastfmGenres(http: HttpClient) {
   const cache = new Map<string, string | null>()
   return {
     clear: () => cache.clear(),
     async lookup(
-      artist: string,
+      artist: { id: string; name: string },
       apiKey: string,
       signal?: AbortSignal
     ): Promise<string | null> {
-      const key = artist.trim().toLowerCase()
-      const cached = cache.get(key)
+      const cached = cache.get(artist.id)
       if (cached !== undefined) return cached
       const url = new URL('https://ws.audioscrobbler.com/2.0/')
       url.searchParams.set('method', 'artist.gettoptags')
-      url.searchParams.set('artist', artist)
+      url.searchParams.set('artist', artist.name)
       url.searchParams.set('api_key', apiKey)
-      url.searchParams.set('autocorrect', '1')
+      url.searchParams.set('autocorrect', '0')
       url.searchParams.set('format', 'json')
       const genre = lastfmGenres(
         await http.json<unknown>(url.toString(), { host: 'lastfm', signal })
       )
-      cache.set(key, genre)
+      cache.set(artist.id, genre)
       return genre
     },
   }

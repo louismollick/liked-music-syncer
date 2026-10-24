@@ -23,6 +23,7 @@ import { readableDirectory } from '../inventory/inventory'
 import { pathKey, resolveCollision, sidecarPath } from '../inventory/layout'
 import {
   artistIdFor,
+  artistNameIsShared,
   canonicalArtist,
   canonicalTrackNames,
   linkTrackArtists,
@@ -493,6 +494,9 @@ export async function runLyrics(
 /**
  * Genres from Last.fm, used only when MusicBrainz has none. Looked up for the
  * primary credited artist; null when no key is set or the artist has none.
+ * Last.fm identifies artists by name, so the lookup is skipped (genre left
+ * empty) for an Unidentified Artist and for a name that more than one Artist in
+ * the library shares (ADR 0001).
  */
 async function lastfmGenre(
   deps: StepDeps,
@@ -500,8 +504,14 @@ async function lastfmGenre(
   signal: AbortSignal
 ): Promise<string | null> {
   const apiKey = deps.settings().lastfmApiKey.trim()
-  const artist = match.artists[0]?.name
-  return apiKey && artist ? deps.matcher.genre(artist, apiKey, signal) : null
+  const credit = match.artists[0]
+  if (!apiKey || !credit?.channelId) return null
+  if (artistNameIsShared(deps.db, credit.name)) return null
+  return deps.matcher.genre(
+    { id: artistIdFor(credit), name: credit.name },
+    apiKey,
+    signal
+  )
 }
 
 /**

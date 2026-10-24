@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { files, tracks } from '../../src/main/library/schema'
+import { artists, files, tracks } from '../../src/main/library/schema'
 import { nextStep, runGenre } from '../../src/main/reconcile/steps'
 import { readTags } from '../../src/main/tags/schema'
 import { Harness, song } from './harness'
@@ -56,6 +56,52 @@ describe('Last.fm genre fallback', () => {
     await h.idle()
     expect(h.rows()[0].genre).toBe('rock')
     expect(JSON.parse(h.rows()[0].enrichmentErrors).lastfm).toContain('29')
+  })
+})
+
+describe('Last.fm artist identity', () => {
+  it('passes the trusted artist ID along with the name', async () => {
+    const h = harness()
+    h.catalog.likes = [song('track')]
+    const genre = vi.spyOn(h.matcher, 'genre')
+    await h.start()
+    expect(genre).toHaveBeenCalledWith(
+      { id: 'channel:artist-1', name: 'Test Artist' },
+      'key',
+      expect.anything()
+    )
+  })
+
+  it('skips an Unidentified Artist, which has a name but no trusted ID', async () => {
+    const h = harness()
+    h.matcher.genres.set('Nameless', 'rock')
+    h.catalog.likes = [
+      {
+        ...song('track'),
+        artists: [{ name: 'Nameless', channelId: null }],
+      },
+    ]
+    await h.start()
+    expect(h.matcher.genreCalls).toEqual([])
+    expect(h.rows()[0].genre).toBeNull()
+  })
+
+  it('skips a name that two different artists share in the library', async () => {
+    const h = harness()
+    h.matcher.genres.set('Test Artist', 'rock')
+    // Another artist with the same name, up to case, already in the library.
+    h.db
+      .insert(artists)
+      .values({
+        id: 'channel:artist-2',
+        name: 'TEST ARTIST',
+        channelId: 'artist-2',
+      })
+      .run()
+    h.catalog.likes = [song('track')]
+    await h.start()
+    expect(h.matcher.genreCalls).toEqual([])
+    expect(h.rows()[0].genre).toBeNull()
   })
 })
 

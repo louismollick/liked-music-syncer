@@ -5,10 +5,32 @@ import { parseMatch, trackCredits } from '../reconcile/desired'
 import type { Db } from './db'
 import { artists, type TrackRow, trackArtists, tracks } from './schema'
 
+/** Normalized display name, for grouping Unidentified Artists and spotting shared names. */
+export function artistNameKey(name: string): string {
+  return name.normalize('NFKC').toLowerCase().trim()
+}
+
 export function artistIdFor(credit: ArtistCredit): string {
   return credit.channelId
     ? `channel:${credit.channelId}`
-    : `name:${credit.name.normalize('NFKC').toLowerCase().trim()}`
+    : `name:${artistNameKey(credit.name)}`
+}
+
+/**
+ * Whether more than one Artist in the library has this normalized name. A name
+ * alone cannot say which of them an outside service means (ADR 0001).
+ */
+export function artistNameIsShared(db: Db, name: string): boolean {
+  const key = artistNameKey(name)
+  const ids = new Set(
+    db
+      .select({ id: artists.id, aliasOf: artists.aliasOf, name: artists.name })
+      .from(artists)
+      .all()
+      .filter((row) => artistNameKey(row.name) === key)
+      .map((row) => row.aliasOf ?? row.id)
+  )
+  return ids.size > 1
 }
 
 /** Alias pointers are always direct, including when the survivor changes. */

@@ -33,7 +33,7 @@ describe('Last.fm genres', () => {
     ).toThrow('Last.fm error 10')
   })
 
-  it('asks once per artist with the API key and autocorrect', async () => {
+  it('asks once per artist ID with the API key and no autocorrect', async () => {
     const urls: URL[] = []
     const http = createHttpClient(
       async (raw) => {
@@ -44,18 +44,38 @@ describe('Last.fm genres', () => {
       async () => {}
     )
     const genres = createLastfmGenres(http)
-    expect(await genres.lookup('tricot', 'key')).toBe('rock; j-rock; post-punk')
-    expect(await genres.lookup('Tricot', 'key')).toBe('rock; j-rock; post-punk')
+    const tricot = { id: 'channel:UC-tricot', name: 'tricot' }
+    expect(await genres.lookup(tricot, 'key')).toBe('rock; j-rock; post-punk')
+    // Another spelling of the same trusted artist hits the cache.
+    expect(await genres.lookup({ ...tricot, name: 'Tricot' }, 'key')).toBe(
+      'rock; j-rock; post-punk'
+    )
     expect(urls).toHaveLength(1)
     expect(Object.fromEntries(urls[0].searchParams)).toEqual({
       method: 'artist.gettoptags',
       artist: 'tricot',
       api_key: 'key',
-      autocorrect: '1',
+      autocorrect: '0',
       format: 'json',
     })
     genres.clear()
-    await genres.lookup('tricot', 'key')
+    await genres.lookup(tricot, 'key')
+    expect(urls).toHaveLength(2)
+  })
+
+  it('does not share a cached answer between artists with the same name', async () => {
+    const urls: URL[] = []
+    const http = createHttpClient(
+      async (raw) => {
+        urls.push(new URL(raw))
+        return Response.json(toptags)
+      },
+      Date.now,
+      async () => {}
+    )
+    const genres = createLastfmGenres(http)
+    await genres.lookup({ id: 'channel:a', name: 'Echo' }, 'key')
+    await genres.lookup({ id: 'channel:b', name: 'Echo' }, 'key')
     expect(urls).toHaveLength(2)
   })
 
@@ -68,8 +88,9 @@ describe('Last.fm genres', () => {
       async () => {}
     )
     const genres = createLastfmGenres(http)
-    await expect(genres.lookup('tricot', 'key')).rejects.toThrow('HTTP 500')
+    const tricot = { id: 'channel:UC-tricot', name: 'tricot' }
+    await expect(genres.lookup(tricot, 'key')).rejects.toThrow('HTTP 500')
     fail = false
-    expect(await genres.lookup('tricot', 'key')).toBe('rock; j-rock; post-punk')
+    expect(await genres.lookup(tricot, 'key')).toBe('rock; j-rock; post-punk')
   })
 })
