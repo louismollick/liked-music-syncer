@@ -42,12 +42,10 @@ describe('metadata HTTP retries', () => {
       throw new Error('network unavailable')
     })
     await expect(
-      http.json('https://musicbrainz.org/ws/2/recording/', {
-        host: 'musicbrainz',
-      })
+      http.json('https://lrclib.net/api/get', { host: 'lrclib' })
     ).rejects.toMatchObject({ kind: 'transient', status: null })
     expect(calls).toBe(3)
-    expect(waits).toEqual([1000, 100, 3000])
+    expect(waits).toEqual([1000, 3000])
   })
 
   it('honors Retry-After in addition to backoff', async () => {

@@ -51,8 +51,6 @@ export function desiredTagFields(
     date: track.date ?? (track.year ? String(track.year) : null),
     genre: track.genre ?? null,
     language: track.language ?? null,
-    isrc: track.isrc ?? null,
-    mbRecordingId: track.mbRecordingId ?? null,
     lyrics: track.lyricsText?.trim() || null,
     coverSha256,
     lms: {

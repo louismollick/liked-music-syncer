@@ -10,7 +10,7 @@ import type { SpotifyLikedTrack } from '../spotify/library'
 
 /**
  * Matcher: turns a Source Contribution into a Match (see CONTEXT.md).
- * Only the catalog decision is required; MusicBrainz enrichment is separate
+ * Only the catalog decision is required; the Last.fm genre lookup is separate
  * and its failures never block acquisition.
  */
 
@@ -89,18 +89,9 @@ export const RESOLUTION_METHODS: readonly ResolutionMethod[] = [
   'standalone',
 ]
 
-export interface Enrichment {
-  mbRecordingId: string | null
-  /** Up to MUSICBRAINZ_GENRE_LIMIT genres joined with "; ", title-cased as today. */
-  genre: string | null
-  isrc: string | null
-}
-
 export interface Matcher {
   resetCache?(): void
   match(input: MatchInput, signal?: AbortSignal): Promise<Match>
-  /** MusicBrainz lookup. Throws on network errors; callers record them as enrichment errors. */
-  enrich(match: Match, signal?: AbortSignal): Promise<Enrichment>
   /**
    * Last.fm genres for an Artist ("a; b; c"), null when it has none. The name
    * is only the query; the trusted `id` keys the cache. Throws on provider errors.

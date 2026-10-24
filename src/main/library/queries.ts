@@ -438,7 +438,7 @@ export class LibraryQueries {
         releaseYear: match?.release?.year ?? null,
         resolution: match?.resolutionMethod ?? null,
         genre: (full.genre as string | null) ?? null,
-        genreSource: full.genre ? 'MusicBrainz' : null,
+        genreSource: full.genre ? 'Last.fm' : null,
       },
       lyrics: {
         status: row.lyrics_status,
@@ -524,9 +524,7 @@ function humanField(field: string): string {
     trackTotal: 'track count',
     discNumber: 'disc number',
     discTotal: 'disc count',
-    mbRecordingId: 'MusicBrainz ID',
     coverSha256: 'artwork',
-    isrc: 'ISRC',
   }
   if (field.startsWith('lms.')) return field.slice(4)
   return names[field] ?? field

@@ -53,8 +53,6 @@ export async function runSmokeTest(
         date: '2026-09',
         genre: null,
         language: null,
-        isrc: null,
-        mbRecordingId: null,
         lyrics: null,
         coverSha256: null,
         lms: { ...emptyLmsFields(), sourceVideoId: 'smoke' },

@@ -6,7 +6,7 @@ server with rclone. Playback belongs to other apps (Navidrome, Plex, Apple
 Music); this app builds the library.
 
 - Sign in to YouTube Music inside the app, choose a folder, and new likes
-  download, get tagged (MusicBrainz genre, synced lyrics, square cover art), and
+  download, get tagged (Last.fm genre, synced lyrics, square cover art), and
   appear in Activity with live progress.
 - Star an artist to download their whole Official Main Catalog.
 - Turn on the remote to upload new and changed songs to any rclone remote. The

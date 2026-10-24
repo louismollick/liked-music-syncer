@@ -199,9 +199,6 @@ export class FakeMatcher implements Matcher {
       resolutionMethod: 'standalone',
     }
   }
-  async enrich() {
-    return { mbRecordingId: null, genre: null, isrc: null }
-  }
   /** Last.fm genre by artist name; null when the artist has none. */
   genres = new Map<string, string>()
   genreError: Error | null = null

@@ -228,4 +228,13 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE tracks ADD COLUMN genre_requested INTEGER NOT NULL DEFAULT 0;
   `,
+  // 9: MusicBrainz is gone and Last.fm is the only genre source. Drop its columns
+  // and mark every wanted track so the genre step refreshes all genres from Last.fm.
+  `
+  ALTER TABLE tracks DROP COLUMN isrc;
+  ALTER TABLE tracks DROP COLUMN mb_recording_id;
+  UPDATE tracks SET genre = NULL;
+  UPDATE tracks SET genre_requested = 1
+  WHERE match IS NOT NULL AND state NOT IN ('released', 'no_longer_wanted');
+  `,
 ]

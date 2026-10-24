@@ -38,18 +38,13 @@ describe('second review fixes', () => {
   it('keeps genre and lyrics when providers fail during a Refresh', async () => {
     const h = harness()
     h.lyricsText = '[00:01.00]Hello'
-    vi.spyOn(h.deps.matcher, 'enrich').mockResolvedValue({
-      mbRecordingId: 'mb-1',
-      genre: 'Rock',
-      isrc: 'ISRC1',
-    })
+    h.settings.lastfmApiKey = 'key'
+    h.matcher.genres.set('Test Artist', 'Rock')
     h.catalog.likes = [song('keep', 'Keep')]
     await h.start()
     const track = h.rows()[0]
     const before = readFileSync(absoluteFile(h, track.id))
-    vi.spyOn(h.deps.matcher, 'enrich').mockRejectedValue(
-      new Error('MusicBrainz 503')
-    )
+    h.matcher.genreError = new Error('Last.fm 503')
     vi.spyOn(h.deps.lyrics, 'find').mockResolvedValue({
       lyrics: null,
       spotifyTrackId: null,
@@ -59,7 +54,6 @@ describe('second review fixes', () => {
     await h.idle()
     const after = h.rows()[0]
     expect(after.genre).toBe('Rock')
-    expect(after.isrc).toBe('ISRC1')
     expect(after.lyricsText).toBe('[00:01.00]Hello')
     expect(readFileSync(absoluteFile(h, track.id)).equals(before)).toBe(true)
   })

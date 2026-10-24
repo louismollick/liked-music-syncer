@@ -44,7 +44,7 @@ async function addSpotify(h: Harness, track = spotify) {
 }
 const run = () => ({ signal: new AbortController().signal, progress: () => {} })
 
-it('enriches the YouTube Music Match for a Spotify-only track', async () => {
+it('looks up the genre for the YouTube Music Match of a Spotify-only track', async () => {
   const h = harness()
   const album = release('album', song('audio', 'A Song'))
   const match = {
@@ -52,19 +52,12 @@ it('enriches the YouTube Music Match for a Spotify-only track', async () => {
     sourceVideoId: null,
   }
   h.matcher.matches.set('spotify', match)
-  const enrich = vi.spyOn(h.deps.matcher, 'enrich').mockResolvedValue({
-    genre: 'Rock',
-    isrc: 'USABC2600001',
-    mbRecordingId: 'recording',
-  })
+  h.settings.lastfmApiKey = 'key'
+  h.matcher.genres.set(credit.name, 'Rock')
   await addSpotify(h)
   await runMatch(h.deps, h.rows()[0], run())
-  expect(enrich.mock.calls[0][0]).toEqual(match)
-  expect(h.rows()[0]).toMatchObject({
-    genre: 'Rock',
-    isrc: 'USABC2600001',
-    mbRecordingId: 'recording',
-  })
+  expect(h.matcher.genreCalls).toEqual([credit.name])
+  expect(h.rows()[0].genre).toBe('Rock')
 })
 
 it('joins the exact requested album among compatible existing Library matches', async () => {

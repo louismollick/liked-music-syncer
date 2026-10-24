@@ -492,8 +492,8 @@ export async function runLyrics(
 }
 
 /**
- * Genres from Last.fm, used only when MusicBrainz has none. Looked up for the
- * primary credited artist; null when no key is set or the artist has none.
+ * Genres from Last.fm, the only genre source. Looked up for the primary
+ * credited artist; null when no key is set or the artist has none.
  * Last.fm identifies artists by name, so the lookup is skipped (genre left
  * empty) for an Unidentified Artist and for a name that more than one Artist in
  * the library shares (ADR 0001).
@@ -555,9 +555,8 @@ export async function runGenre(
   deps.db
     .update(tracks)
     .set({
-      // A genre MusicBrainz supplied meanwhile wins.
-      ...(genre && !current.genre ? { genre } : {}),
-      ...(failure ? {} : { genreRequested: false }),
+      // A failed lookup never strips a genre the track already has.
+      ...(failure ? {} : { genre, genreRequested: false }),
       enrichmentErrors: JSON.stringify(errors),
       updatedAt: iso(deps),
     })
@@ -1287,31 +1286,17 @@ async function matchOnce(
   if (refreshed) return STALE
   run.progress(0.4)
   const errors: Record<string, string> = {}
-  // A provider outage must never strip what the track already has.
-  let enrichment = {
-    mbRecordingId: (recording ?? track).mbRecordingId,
-    genre: (recording ?? track).genre,
-    isrc: (recording ?? track).isrc,
-  }
-  try {
-    enrichment = await deps.matcher.enrich(match, run.signal)
-  } catch (error) {
-    if (run.signal.aborted) throw error
-    errors.musicbrainz = error instanceof Error ? error.message : String(error)
-  }
-  // Last.fm fills in only when MusicBrainz has no genre. A pending
-  // "Look up missing genres" request stays until Last.fm has been asked.
-  let genreAsked = Boolean(enrichment.genre)
-  if (!enrichment.genre && deps.settings().lastfmApiKey.trim()) {
+  // A failed lookup, or no Last.fm key, never strips what the track already has.
+  // A pending "Look up missing genres" request stays until Last.fm has been asked.
+  let genre = (recording ?? track).genre
+  let genreAsked = false
+  if (deps.settings().lastfmApiKey.trim()) {
     try {
-      const genre = await lastfmGenre(deps, match, run.signal)
-      enrichment = { ...enrichment, genre }
+      genre = await lastfmGenre(deps, match, run.signal)
       genreAsked = true
     } catch (error) {
       if (run.signal.aborted) throw error
       errors.lastfm = error instanceof Error ? error.message : String(error)
-      // Never strip a genre the track already has.
-      enrichment = { ...enrichment, genre: (recording ?? track).genre }
     }
   }
   run.progress(0.6)
@@ -1456,10 +1441,8 @@ async function matchOnce(
           parseMatch(target ?? current)?.catalogVideoId === match.catalogVideoId
             ? ((target ?? current).durationSeconds ?? match.durationSeconds)
             : match.durationSeconds,
-        genre: enrichment.genre,
+        genre,
         genreRequested: (target ?? current).genreRequested && !genreAsked,
-        isrc: enrichment.isrc,
-        mbRecordingId: enrichment.mbRecordingId,
         ...betterLyrics(
           lyricsForRecording(target ?? current, match),
           lyrics.values

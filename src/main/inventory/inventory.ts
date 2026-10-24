@@ -272,8 +272,6 @@ export async function adoptFiles(
       year: yearFromDate(read.fields.date),
       durationSeconds: read.durationSeconds,
       genre: read.fields.genre,
-      isrc: read.fields.isrc,
-      mbRecordingId: read.fields.mbRecordingId,
       language: read.fields.language,
       lyricsStatus,
       lyricsCheckedAt: at,

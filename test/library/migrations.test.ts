@@ -102,6 +102,40 @@ describe('migrations', () => {
     sqlite.close()
   })
 
+  it('drops the MusicBrainz columns and marks wanted matched tracks for a Last.fm genre refresh', () => {
+    const sqlite = new Database(':memory:')
+    // Migration 5 calls this; migrate() registers the real one.
+    sqlite.function('lyrics_instrumental', (_title: string) => 0)
+    for (const migration of MIGRATIONS.slice(0, 8)) sqlite.exec(migration)
+    sqlite.pragma('user_version = 8')
+    const insert = sqlite.prepare(
+      `INSERT INTO tracks (id, title, genre, isrc, mb_recording_id, match, state, created_at, updated_at) VALUES (?, ?, 'rock', 'isrc', 'mbid', ?, ?, 'now', 'now')`
+    )
+    insert.run('ready', 'A', '{}', 'ready')
+    insert.run('pending', 'B', '{}', 'pending')
+    insert.run('unmatched', 'C', null, 'pending')
+    insert.run('released', 'D', '{}', 'released')
+    insert.run('unwanted', 'E', '{}', 'no_longer_wanted')
+    migrate(sqlite)
+    expect(
+      sqlite
+        .prepare('SELECT id, genre, genre_requested FROM tracks ORDER BY id')
+        .all()
+    ).toEqual([
+      { id: 'pending', genre: null, genre_requested: 1 },
+      { id: 'ready', genre: null, genre_requested: 1 },
+      { id: 'released', genre: null, genre_requested: 0 },
+      { id: 'unmatched', genre: null, genre_requested: 0 },
+      { id: 'unwanted', genre: null, genre_requested: 0 },
+    ])
+    const columns = (
+      sqlite.pragma('table_info(tracks)') as { name: string }[]
+    ).map((column) => column.name)
+    expect(columns).not.toContain('isrc')
+    expect(columns).not.toContain('mb_recording_id')
+    sqlite.close()
+  })
+
   it('keeps existing artist IDs and schedules page backfill through null checkpoints', () => {
     const sqlite = new Database(':memory:')
     for (const migration of MIGRATIONS.slice(0, 3)) sqlite.exec(migration)
