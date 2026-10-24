@@ -273,6 +273,7 @@ export class Harness {
     lyricsServerUrl: '',
     lastfmApiKey: '',
     selectedAccountId: 'account-a',
+    openAtLogin: false,
   }
   reconciler: Reconciler
   deps: ReconcilerDeps

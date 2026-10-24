@@ -5,27 +5,34 @@ import {
   ChevronRight,
   Disc3,
   Music2,
+  Play,
   RefreshCw,
   Settings,
   User,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { ActivityTrackView } from '../../../../shared/ipc'
-import { hasSignedInAccount } from '../../lib/accounts'
+import { hasSignedInAccount } from '../../../../shared/accounts'
+import {
+  outageText,
+  STAGE_LABEL,
+  type SyncState,
+  stageFraction,
+  syncStatus,
+} from '../../../../shared/status'
 import { invoke } from '../../lib/api'
 import { useActivity, useAppState } from '../../lib/app-state'
-import { cx, plural, timeAgo } from '../../lib/format'
+import { cx, plural } from '../../lib/format'
 import { useTabLinkSearch } from '../../lib/tabs'
 import { Artwork } from '../ui/Artwork'
 import { IconButton } from '../ui/Button'
 
-const STAGE_LABEL = {
-  matching: 'Matching',
-  lyrics: 'Finding lyrics',
-  genres: 'Finding genres',
-  downloading: 'Downloading',
-  uploading: 'Uploading',
-} as const
+const DOT: Record<SyncState, string> = {
+  signed_out: 'bg-zinc-600',
+  paused: 'bg-zinc-600',
+  checking: 'bg-sky-400',
+  syncing: 'bg-sky-400',
+  idle: 'bg-emerald-400',
+}
 
 function useNow(intervalMs = 30_000): number {
   const [now, setNow] = useState(Date.now())
@@ -46,31 +53,10 @@ function StatusSection() {
   const current = activity?.current ?? activity?.uploading[0] ?? null
   const onActivity = pathname.startsWith('/activity')
   const busy = Boolean(current) && !onActivity
-  const working = Boolean(activity?.working || activity?.checking)
   const upNext = activity?.upNextCount ?? 0
   const signedIn = hasSignedInAccount(session, spotify)
-
-  const remaining =
-    upNext + (activity?.current ? 1 : 0) + (activity?.uploading.length ?? 0)
-  const checked = activity?.lastCheckedAt ?? null
-  const title = !signedIn
-    ? 'Not signed in'
-    : activity?.checking
-      ? 'Checking likes…'
-      : working
-        ? remaining > 0
-          ? `Syncing ${plural(remaining, 'song')}`
-          : 'Syncing'
-        : 'Up to date'
-  const detail = !signedIn
-    ? 'Sign in from Settings'
-    : activity?.offline
-      ? 'Offline'
-      : activity?.remoteUnreachable
-        ? "Can't reach the VPS"
-        : !checked
-          ? 'Not checked yet'
-          : `${activity?.checking ? 'Last checked' : 'Checked'} ${timeAgo(checked, now)}`
+  const paused = Boolean(activity?.paused)
+  const { state, title, detail } = syncStatus(activity, signedIn, now)
 
   const check = () => {
     setSpinning(true)
@@ -110,27 +96,14 @@ function StatusSection() {
             />
           </div>
           <div className="mt-2 text-[11px] text-zinc-500">
-            {activity?.offline
-              ? 'Offline'
-              : activity?.remoteUnreachable
-                ? "Can't reach the VPS"
-                : `${plural(upNext, 'song')} up next`}
+            {outageText(activity) ?? `${plural(upNext, 'song')} up next`}
           </div>
         </div>
       ) : (
         <div className="flex items-center gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 text-[13px]">
-              <span
-                className={cx(
-                  'w-1.5 h-1.5 rounded-[1px]',
-                  !signedIn
-                    ? 'bg-zinc-600'
-                    : working
-                      ? 'bg-sky-400'
-                      : 'bg-emerald-400'
-                )}
-              />
+              <span className={cx('w-1.5 h-1.5 rounded-[1px]', DOT[state])} />
               <span className="truncate tabular-nums">{title}</span>
             </div>
             <div className="text-[11px] text-zinc-500 mt-1 truncate">
@@ -139,39 +112,32 @@ function StatusSection() {
           </div>
           <button
             type="button"
-            title="Check liked songs now"
-            disabled={!signedIn}
+            title={paused ? 'Resume syncing' : 'Check liked songs now'}
+            disabled={!paused && !signedIn}
             onClick={(event) => {
               event.preventDefault()
               event.stopPropagation()
-              check()
+              if (paused) void invoke('activity:resume')
+              else check()
             }}
             className="w-10 h-10 shrink-0 rounded-md border border-line flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/10 disabled:opacity-30"
           >
-            <RefreshCw
-              className={cx(
-                'w-[18px] h-[18px]',
-                (spinning || activity?.checking) && 'spin'
-              )}
-              strokeWidth={1.8}
-            />
+            {paused ? (
+              <Play className="w-[18px] h-[18px]" strokeWidth={1.8} />
+            ) : (
+              <RefreshCw
+                className={cx(
+                  'w-[18px] h-[18px]',
+                  (spinning || activity?.checking) && 'spin'
+                )}
+                strokeWidth={1.8}
+              />
+            )}
           </button>
         </div>
       )}
     </Link>
   )
-}
-
-function stageFraction(current: ActivityTrackView | null): number {
-  if (!current?.stage) return 0
-  const [base, weight] = {
-    matching: [0, 0.15],
-    lyrics: [0.15, 0.7],
-    genres: [0.15, 0.7],
-    downloading: [0.15, 0.7],
-    uploading: [0.85, 0.15],
-  }[current.stage]
-  return Math.max(0, Math.min(1, (current.progress - base) / weight))
 }
 
 const NAV = [

@@ -1,11 +1,13 @@
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
+import { hasSignedInAccount } from '../shared/accounts'
 import { createAudioDownloader } from './acquire/audio'
 import { createPotProvider } from './acquire/pot-provider'
 import { createYtDlpBinary } from './acquire/ytdlp-binary'
 import { createArtistImages } from './artist-images'
 import { createArtistPages } from './artist-pages'
+import { type Background, startBackground } from './background'
 import { createYouTubeMusicCatalog } from './catalog/catalog'
 import { broadcast, chooseFolder, registerIpc, showInFinder } from './ipc'
 import { openDatabase } from './library/db'
@@ -41,7 +43,7 @@ const isSmokeTest = process.argv.includes('--smoke-test')
 const isPrimaryInstance = isSmokeTest || app.requestSingleInstanceLock()
 if (!isPrimaryInstance) app.quit()
 
-function createWindow(): BrowserWindow {
+function createWindow(route?: '/activity'): BrowserWindow {
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -67,10 +69,14 @@ function createWindow(): BrowserWindow {
     if (/^https:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // The renderer routes by URL hash.
+  const hash = route ? `#${route}` : ''
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void window.loadURL(process.env.ELECTRON_RENDERER_URL + hash)
   } else {
-    void window.loadFile(path.join(__dirname, '../renderer/index.html'))
+    void window.loadFile(path.join(__dirname, '../renderer/index.html'), {
+      hash: route,
+    })
   }
   return window
 }
@@ -113,17 +119,22 @@ async function main() {
   const settings = new SettingsStore(db)
   const http = createHttpClient()
   let reconcilerRef: Reconciler | null = null
+  let background: Background | null = null
   const session = new GoogleSession({
     http,
     settings,
     isPackaged: app.isPackaged,
-    onChange: (view) => broadcast('session:changed', view),
+    onChange: (view) => {
+      broadcast('session:changed', view)
+      background?.refresh()
+    },
     onRecovered: () => void reconcilerRef?.check(),
   })
   const spotifySession = new SpotifySession({
     http,
     onChange: (view) => {
       broadcast('spotify:changed', view)
+      background?.refresh()
       reconcilerRef?.markDirty()
     },
   })
@@ -210,8 +221,14 @@ async function main() {
       },
     },
     coverUrl: coverUrlFor,
-    onActivity: (view) => broadcast('activity:changed', view),
-    onProgress: (live) => broadcast('activity:progress', live),
+    onActivity: (view) => {
+      broadcast('activity:changed', view)
+      background?.onActivity(view)
+    },
+    onProgress: (live) => {
+      broadcast('activity:progress', live)
+      background?.onProgress(live)
+    },
     onLibraryChanged: (trackIds) => {
       broadcast('library:changed', { trackIds })
       scheduleArtistImages()
@@ -294,8 +311,10 @@ async function main() {
     },
     'activity:get': () => reconciler.activity(),
     'activity:check': () => {
-      void reconciler.check()
+      if (!reconciler.paused) void reconciler.check()
     },
+    'activity:pause': () => reconciler.pause(),
+    'activity:resume': () => reconciler.resume(),
     'activity:refreshCatalogs': () => {
       void reconciler.check({ catalogs: 'all' })
     },
@@ -322,18 +341,11 @@ async function main() {
     'app:showInFinder': (absolutePath) => showInFinder(absolutePath),
   })
 
-  createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-  app.on('second-instance', () => {
-    const [window] = BrowserWindow.getAllWindows()
-    if (window) {
-      if (window.isMinimized()) window.restore()
-      window.focus()
-    } else {
-      createWindow()
-    }
+  background = startBackground({
+    reconciler,
+    settings,
+    isSignedIn: () => hasSignedInAccount(session.view(), spotifySession.view()),
+    createWindow,
   })
 
   let quitting = false

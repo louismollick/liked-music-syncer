@@ -19,6 +19,8 @@ extraResources:
     filter:
       - '**/*'
       - '!README.txt'
+  - from: resources/tray
+    to: tray
 mac:
   category: public.app-category.music
   target:

@@ -411,6 +411,73 @@ describe('outages', () => {
   })
 })
 
+describe('runnable work', () => {
+  it.each([
+    ['no library folder is set', ''],
+    ['the library folder is unavailable', '/nonexistent/lms-library'],
+  ])('is false for pending tracks when %s', async (_name, folder) => {
+    const h = harness()
+    h.settings.libraryFolder = folder
+    h.catalog.likes = [song('waiting')]
+    await h.reconciler.start()
+    await until(
+      () =>
+        !h.reconciler.activity().checking &&
+        h.reconciler.activity().lastCheckedAt !== null
+    )
+    const view = h.reconciler.activity()
+    expect(view.upNextCount).toBe(1)
+    expect(view.runnable).toBe(false)
+  })
+
+  it('is false when only uploads are queued and the VPS is unreachable', async () => {
+    const h = harness({ probeBackoffMs: [60_000] })
+    const spy = instrument(h)
+    spy.uploadDown = true
+    h.catalog.likes = [song('queued')]
+    await h.reconciler.start()
+    await until(() => {
+      const view = h.reconciler.activity()
+      return (
+        view.remoteUnreachable &&
+        !view.checking &&
+        view.current === null &&
+        view.uploading.length === 0
+      )
+    })
+    const view = h.reconciler.activity()
+    expect(view.upNextCount).toBe(1)
+    expect(view.runnable).toBe(false)
+  })
+
+  it('stays true while an upload runs even though the internet is out', async () => {
+    const h = harness({ probeBackoffMs: [60_000] })
+    const spy = instrument(h)
+    let release!: () => void
+    spy.gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const downloadReal = h.deps.downloader.download
+    h.deps.downloader = {
+      download: async (id, ...rest) => {
+        if (id === 'offline-b')
+          throw new Error(
+            'yt-dlp failed: ERROR: Unable to download webpage: <urlopen error [Errno 8] nodename nor servname provided, or not known>'
+          )
+        return downloadReal(id, ...rest)
+      },
+    }
+    h.catalog.likes = [song('ok-a', 'a', 0), song('offline-b', 'b', 1)]
+    await h.reconciler.start()
+    await until(() => {
+      const view = h.reconciler.activity()
+      return view.offline && view.uploading.length === 1
+    })
+    expect(h.reconciler.activity().runnable).toBe(true)
+    release()
+  })
+})
+
 describe('remote audit', () => {
   it('runs at startup and when the target changes, never as part of a check', async () => {
     const h = harness()

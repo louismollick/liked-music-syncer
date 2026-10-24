@@ -1,5 +1,5 @@
 import { FolderOpen, LogIn } from 'lucide-react'
-import { hasSignedInAccount } from '../lib/accounts'
+import { hasSignedInAccount } from '../../../shared/accounts'
 import { invoke } from '../lib/api'
 import { useAppState } from '../lib/app-state'
 import { Button } from './ui/Button'

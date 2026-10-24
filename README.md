@@ -11,6 +11,9 @@ Music); this app builds the library.
 - Star an artist to download their whole Official Main Catalog.
 - Turn on the remote to upload new and changed songs to any rclone remote. The
   app verifies every upload; nothing needs to be installed on the server.
+- Closing the window keeps syncing from the menu bar, where you can pause,
+  check now, or quit. The app opens at login unless you turn that off in
+  Settings.
 - Unliked songs are never deleted automatically. They show up under
   Songs → No longer wanted, where you can delete them.
 

@@ -15,12 +15,12 @@ import {
 } from 'drizzle-orm'
 import type {
   ActivityLive,
-  ActivityStage,
   ActivityTrackView,
   ActivityView,
   AttentionItemView,
   RefreshScope,
 } from '../../shared/ipc'
+import { STAGE_WEIGHTS } from '../../shared/status'
 import { stageForStep } from '../domain'
 import { sha256File } from '../inventory/files'
 import {
@@ -66,6 +66,7 @@ import {
   processTombstones,
   REWRITE_AUDIO,
   RetryLaterError,
+  remoteTarget,
   runAcquire,
   runGenre,
   runLyrics,
@@ -92,13 +93,6 @@ const NETWORK_STEPS: ReadonlySet<StepKind> = new Set([
   'acquire',
   'upload',
 ])
-const STAGE_WEIGHTS: Record<ActivityStage, [number, number]> = {
-  matching: [0, 0.15],
-  lyrics: [0.15, 0.7],
-  genres: [0.15, 0.7],
-  downloading: [0.15, 0.7],
-  uploading: [0.85, 0.15],
-}
 
 export interface SessionInfo {
   /** Selected YouTube Music Account ID, or null when signed out. */
@@ -187,6 +181,8 @@ type ActivityLists = Omit<
   | 'uploading'
   | 'working'
   | 'checking'
+  | 'paused'
+  | 'runnable'
   | 'remoteUnreachable'
   | 'offline'
 >
@@ -213,6 +209,7 @@ export class Reconciler {
   private remoteGeneration = 0
   private probing: Promise<void> | null = null
   private checking = false
+  private isPaused = false
   private queuedCheck: CatalogRequest | null = null
   private planDirty = true
   private lastEmit = 0
@@ -224,6 +221,10 @@ export class Reconciler {
   private loopPromise: Promise<unknown> | null = null
   /** Cached Activity lists, rebuilt only when track states change. */
   private lists: ActivityLists | null = null
+  /** Which lanes have due, pending tracks, as of the last lists rebuild. */
+  private queued: Record<Lane, boolean> = { acquire: false, upload: false }
+  /** The lane loops found the library folder set and readable (for `runnable`). */
+  private libraryReady = false
   /** Observers owe a full update. Cleared by the emit, not by reading a snapshot. */
   private listsDirty = true
   private folderChangePromise: Promise<void> | null = null
@@ -252,8 +253,27 @@ export class Reconciler {
         this.laneLoop('upload')
       ),
     ])
-    this.checkTimer = setInterval(() => void this.check(), CHECK_INTERVAL_MS)
+    this.checkTimer = setInterval(() => {
+      if (!this.isPaused) void this.check()
+    }, CHECK_INTERVAL_MS)
     void this.check()
+  }
+
+  /** Syncing is paused: no lane starts a new Track Step. Not persisted. */
+  get paused(): boolean {
+    return this.isPaused
+  }
+
+  /** Steps already running finish; both lanes then wait for resume(). */
+  pause(): void {
+    this.isPaused = true
+    this.emitSoon()
+  }
+
+  resume(): void {
+    this.isPaused = false
+    this.wakeAll()
+    this.emitSoon()
   }
 
   async stop(): Promise<void> {
@@ -911,13 +931,22 @@ export class Reconciler {
     while (this.running) {
       if (this.folderChangePromise) await this.folderChangePromise
       const root = this.deps.settings().libraryFolder
-      if (!root || !(await readableDirectory(root))) {
+      const readable = Boolean(root) && (await readableDirectory(root))
+      if (readable !== this.libraryReady) {
+        this.libraryReady = readable
+        this.emitSoon()
+      }
+      if (!root || !readable) {
         // Nothing can be written until a folder is chosen and available (e.g. the
         // drive is mounted); wait instead of failing tracks.
         this.emitSoon()
         await this.idle(60_000)
         if (lane === 'acquire' && root && (await readableDirectory(root)))
           await this.prepareLibrary()
+        continue
+      }
+      if (this.isPaused) {
+        await this.idle(60_000)
         continue
       }
       const pause = this.pauses[lane]
@@ -1096,6 +1125,8 @@ export class Reconciler {
           this.handOff(flight, step)
           return
         }
+        // Pausing lets the step in flight finish but starts no further step.
+        if (this.isPaused) break
         flight.step = step
         flight.fraction = 0
         flight.row = this.activityRow(trackId)
@@ -1339,18 +1370,62 @@ export class Reconciler {
   private buildActivity(rebuildLists: boolean): ActivityView {
     if (rebuildLists || !this.lists) {
       this.lists = this.computeLists()
+      this.queued = this.queuedLanes()
     }
     const lists = this.lists
     const live = this.liveView()
     return {
       working: this.flights.size > 0 || lists.upNextCount > 0,
+      runnable: this.runnable(),
       checking: this.checking,
+      paused: this.isPaused,
       remoteUnreachable: this.pauses.upload !== null,
       offline: this.pauses.acquire !== null,
       ...live,
       ...lists,
       upNext: lists.upNext.filter((row) => !this.flights.has(row.id)),
     }
+  }
+
+  /** Which lanes have a due, pending track waiting (the lane `nextTrack` would use). */
+  private queuedLanes(): Record<Lane, boolean> {
+    const now = this.deps.now().toISOString()
+    const queued = { acquire: false, upload: false }
+    for (const { id } of this.db
+      .select({ id: tracks.id })
+      .from(tracks)
+      .where(
+        and(
+          eq(tracks.state, 'pending'),
+          or(
+            sql`${tracks.nextAttemptAt} IS NULL`,
+            lte(tracks.nextAttemptAt, now)
+          )
+        )
+      )
+      .all()) {
+      const step = this.planned.get(id)
+      queued[step ? laneOf(step) : 'acquire'] = true
+    }
+    return queued
+  }
+
+  /**
+   * Whether work can proceed now, for deciding to keep the Mac awake: anything
+   * in flight or being checked, or queued work in a lane that is not waiting
+   * out an outage and has its prerequisites. Pending tracks alone do not count,
+   * since a missing library folder or an unreachable VPS leaves them waiting.
+   */
+  private runnable(): boolean {
+    if (this.flights.size > 0 || this.checking) return true
+    const hasRemote = remoteTarget(this.deps.settings()) !== null
+    return (['acquire', 'upload'] as const).some(
+      (lane) =>
+        this.queued[lane] &&
+        this.pauses[lane] === null &&
+        this.libraryReady &&
+        (lane === 'acquire' || hasRemote)
+    )
   }
 
   /** Reads only the columns Activity shows. */

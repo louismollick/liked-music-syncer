@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lyricsServerUrl: '',
   lastfmApiKey: '',
   selectedAccountId: null,
+  openAtLogin: true,
 }
 
 type Listener = (settings: Settings) => void

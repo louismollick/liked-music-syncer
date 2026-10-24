@@ -1,4 +1,4 @@
-import type { SessionView } from '../../../shared/ipc'
+import type { SessionView } from './ipc'
 
 export function hasSignedInAccount(
   youtube: Pick<SessionView, 'state'> | null,

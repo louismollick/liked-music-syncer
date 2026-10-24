@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasSignedInAccount } from '../../src/renderer/src/lib/accounts'
+import { hasSignedInAccount } from '../../src/shared/accounts'
 
 describe('liked-music account gate', () => {
   const states = [null, 'signed_out', 'checking', 'error', 'signed_in'] as const
