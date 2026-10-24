@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { File, type Mpeg4AppleTag, TagTypes } from 'node-taglib-sharp'
 import { describe, expect, it } from 'vitest'
 import {
   emptyLmsFields,
@@ -24,8 +25,6 @@ function sampleFields(overrides: Partial<TagFields> = {}): TagFields {
     date: '2020-05',
     genre: 'Math Rock; J-Rock',
     language: 'ja',
-    isrc: 'JPU902000001',
-    mbRecordingId: '318f5894-23cc-42ca-88a0-bfa492af7f05',
     lyrics: '[00:01.16]line one\n[00:05.25]line two',
     coverSha256: sha256(TINY_JPEG),
     lms: {
@@ -112,7 +111,6 @@ describe('tag schema', () => {
     writeTags(
       file,
       sampleFields({
-        isrc: null,
         lyrics: null,
         genre: null,
         coverSha256: null,
@@ -120,10 +118,33 @@ describe('tag schema', () => {
       null
     )
     const read = readTags(file)
-    expect(read.fields.isrc).toBeNull()
     expect(read.fields.lyrics).toBeNull()
     expect(read.fields.genre).toBeNull()
     expect(read.fields.coverSha256).toBeNull()
+  })
+
+  it('removes the retired ISRC and MusicBrainz atoms when a file is rewritten', () => {
+    const file = makeM4a(path.join(tempDir(), 'retired.m4a'))
+    const atoms = () => {
+      const tags = File.createFromPath(file)
+      try {
+        const apple = tags.getTag(TagTypes.Apple, true) as Mpeg4AppleTag
+        return ['ISRC', 'MusicBrainz Track Id'].map((name) =>
+          apple.getFirstItunesString('com.apple.iTunes', name)
+        )
+      } finally {
+        tags.dispose()
+      }
+    }
+    const tags = File.createFromPath(file)
+    const apple = tags.getTag(TagTypes.Apple, true) as Mpeg4AppleTag
+    apple.setItunesStrings('com.apple.iTunes', 'ISRC', 'JPU902000001')
+    apple.setItunesStrings('com.apple.iTunes', 'MusicBrainz Track Id', 'id')
+    tags.save()
+    tags.dispose()
+    expect(atoms()).toEqual(['JPU902000001', 'id'])
+    writeTags(file, sampleFields(), null)
+    expect(atoms()).toEqual([undefined, undefined])
   })
 
   it('reports untagged files as having no LMS schema version', () => {

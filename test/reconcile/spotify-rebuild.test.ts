@@ -63,7 +63,7 @@ it.each([
 ])('a Spotify like claims its confirmed restored file without matching or downloading, likes checked before adoption: %s', async (before) => {
   const source = await spotifyBuilt()
   expect(tags(source)).toMatchObject({
-    schemaVersion: 8,
+    schemaVersion: 9,
     sourceVideoId: null,
     spotifyTrackId: spotify.trackId,
     sourceOrigin: 'spotify_liked',

@@ -228,7 +228,7 @@ export function SettingsPage() {
             Look up missing genres
           </Button>
         </Row>
-        <Row label="Last.fm API key" help="For genres MusicBrainz doesn't have">
+        <Row label="Last.fm API key" help="Source of genres">
           <TextInput
             value={settings.lastfmApiKey}
             mono

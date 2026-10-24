@@ -271,7 +271,7 @@ async function main() {
       } else {
         reconciler.markDirty()
       }
-      // A new key fills in the genres MusicBrainz lacks.
+      // A new key looks up genres for tracks that have none.
       if (
         patch.lastfmApiKey?.trim() &&
         patch.lastfmApiKey.trim() !== before.lastfmApiKey.trim()

@@ -8,7 +8,6 @@ import { setTimeout as delay } from 'node:timers/promises'
 
 export type HostPolicyName =
   | 'youtube-music'
-  | 'musicbrainz'
   | 'lrclib'
   | 'petitlyrics'
   | 'netease'
@@ -31,11 +30,6 @@ const POLICIES: Record<HostPolicyName, HostPolicy> = {
   'youtube-music': {
     minIntervalMs: 250,
     timeoutMs: 20_000,
-    retryDelaysMs: METADATA_RETRIES,
-  },
-  musicbrainz: {
-    minIntervalMs: 1_100,
-    timeoutMs: 15_000,
     retryDelaysMs: METADATA_RETRIES,
   },
   lrclib: {

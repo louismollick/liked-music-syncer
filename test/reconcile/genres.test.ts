@@ -18,25 +18,15 @@ afterEach(async () => {
   for (const h of open.splice(0)) await h.close()
 })
 
-const mbGenre = (genre: string | null) => ({
-  mbRecordingId: null,
-  genre,
-  isrc: null,
-})
 const run = () => ({ signal: new AbortController().signal, progress: () => {} })
 
-describe('Last.fm genre fallback', () => {
-  it('asks Last.fm for the primary artist only when MusicBrainz has no genre', async () => {
+describe('Last.fm genres', () => {
+  it('asks Last.fm for the primary artist when a track is acquired', async () => {
     const h = harness()
-    h.catalog.likes = [song('empty', 'empty', 0), song('mb', 'mb', 1)]
+    h.catalog.likes = [song('track')]
     h.matcher.genres.set('Test Artist', 'j-rock; math rock')
-    vi.spyOn(h.deps.matcher, 'enrich').mockImplementation(async (match) =>
-      mbGenre(match.title === 'mb' ? 'shoegaze' : null)
-    )
     await h.start()
-    const byTitle = Object.fromEntries(h.rows().map((row) => [row.title, row]))
-    expect(byTitle.empty.genre).toBe('j-rock; math rock')
-    expect(byTitle.mb.genre).toBe('shoegaze')
+    expect(h.rows()[0].genre).toBe('j-rock; math rock')
     expect(h.matcher.genreCalls).toEqual(['Test Artist'])
   })
 
@@ -51,7 +41,6 @@ describe('Last.fm genre fallback', () => {
     h.settings.lastfmApiKey = 'key'
     h.matcher.genreError = new Error('Last.fm error 29')
     h.db.update(tracks).set({ genre: 'rock' }).run()
-    vi.spyOn(h.deps.matcher, 'enrich').mockResolvedValue(mbGenre(null))
     h.reconciler.refresh({ kind: 'all' })
     await h.idle()
     expect(h.rows()[0].genre).toBe('rock')
@@ -226,17 +215,60 @@ describe('Look up missing genres', () => {
     })
   })
 
-  it('keeps a genre MusicBrainz supplied meanwhile', async () => {
+  it('replaces an existing genre after a successful lookup, and clears it on a clean miss', async () => {
     const h = harness()
     h.catalog.likes = [song('track')]
     h.settings.lastfmApiKey = ''
     await h.start()
     h.settings.lastfmApiKey = 'key'
     h.matcher.genres.set('Test Artist', 'pop')
+    h.db.update(tracks).set({ genre: 'jazz', genreRequested: true }).run()
+    await runGenre(h.deps, h.rows()[0], run())
+    expect(h.rows()[0]).toMatchObject({ genre: 'pop', genreRequested: false })
+
+    h.matcher.genres.clear()
     h.db.update(tracks).set({ genreRequested: true }).run()
-    const stale = h.rows()[0]
-    h.db.update(tracks).set({ genre: 'jazz' }).run()
-    await runGenre(h.deps, stale, run())
-    expect(h.rows()[0]).toMatchObject({ genre: 'jazz', genreRequested: false })
+    await runGenre(h.deps, h.rows()[0], run())
+    expect(h.rows()[0]).toMatchObject({ genre: null, genreRequested: false })
+  })
+
+  it('keeps an existing genre when the lookup fails', async () => {
+    const h = harness()
+    h.catalog.likes = [song('track')]
+    h.settings.lastfmApiKey = ''
+    await h.start()
+    h.settings.lastfmApiKey = 'key'
+    h.matcher.genreError = new Error('down')
+    h.db.update(tracks).set({ genre: 'jazz', genreRequested: true }).run()
+    expect(await runGenre(h.deps, h.rows()[0], run())).toBe(false)
+    expect(h.rows()[0]).toMatchObject({ genre: 'jazz', genreRequested: true })
+  })
+})
+
+describe('retiring MusicBrainz tags', () => {
+  it('retags a file whose record still has an ISRC or MusicBrainz ID, but not one with nulls', async () => {
+    const h = harness()
+    h.catalog.likes = [song('track')]
+    await h.start()
+    const track = h.rows()[0]
+    const file = h.file(track.id)!
+    const stepFor = (extra: Record<string, unknown>) =>
+      nextStep(
+        h.db,
+        track,
+        {
+          ...file,
+          tagFields: JSON.stringify({
+            ...JSON.parse(file.tagFields),
+            ...extra,
+          }),
+        },
+        h.upload(track.id),
+        h.settings
+      )
+    expect(stepFor({})).toBeNull()
+    expect(stepFor({ isrc: null, mbRecordingId: null })).toBeNull()
+    expect(stepFor({ isrc: 'USABC2600001' })).toBe('retag')
+    expect(stepFor({ mbRecordingId: 'recording' })).toBe('retag')
   })
 })

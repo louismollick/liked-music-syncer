@@ -33,8 +33,6 @@ export const tracks = sqliteTable(
     year: integer('year'),
     durationSeconds: real('duration_seconds'),
     genre: text('genre'),
-    isrc: text('isrc'),
-    mbRecordingId: text('mb_recording_id'),
     language: text('language'),
     lyricsStatus: text('lyrics_status').notNull().default('none'),
     lyricsSource: text('lyrics_source'),

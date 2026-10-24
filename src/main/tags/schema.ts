@@ -18,7 +18,7 @@ import { type ArtistCredit, normalizeArtistCredits } from '../domain'
  * exactly what the writer put there.
  */
 
-export const LMS_TAG_SCHEMA_VERSION = 8
+export const LMS_TAG_SCHEMA_VERSION = 9
 const ITUNES = 'com.apple.iTunes'
 
 export interface LmsFields {
@@ -55,8 +55,6 @@ export interface TagFields {
   date: string | null
   genre: string | null
   language: string | null
-  isrc: string | null
-  mbRecordingId: string | null
   /** Embedded lyrics text (synced LRC text or plain), trimmed. */
   lyrics: string | null
   /** SHA-256 of the embedded cover image bytes, or null when there is none. */
@@ -101,11 +99,13 @@ const LMS_KEYS: Record<
 const LMS_CREDITS_KEY = 'LMS_ARTIST_CREDITS'
 const LMS_RELEASE_CREDITS_KEY = 'LMS_RELEASE_ARTIST_CREDITS'
 const LMS_MATCH_CONFIRMED_KEY = 'LMS_MATCH_CONFIRMED'
-/** Freeform atoms v5 wrote that the app no longer writes; removed on rewrite. */
+/** Freeform atoms the app used to write; removed on rewrite. */
 const RETIRED_KEYS = [
   'LMS_SOUNDCLOUD_TRACK_ID',
   'MusicBrainz Album Id',
   'MusicBrainz Release Group Id',
+  'ISRC',
+  'MusicBrainz Track Id',
 ]
 
 export function sha256(bytes: Uint8Array | string): string {
@@ -166,15 +166,6 @@ export function emptyLmsFields(): LmsFields {
   }
 }
 
-/** Legacy files stored the YouTube URL in the comment instead of LMS tags. */
-function legacyVideoId(comment: string | null): string | null {
-  if (!comment) return null
-  const match = comment.match(
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{6,})/
-  )
-  return match ? match[1] : null
-}
-
 export function readTags(path: string): ReadResult {
   const file = File.createFromPath(path)
   try {
@@ -184,8 +175,6 @@ export function readTags(path: string): ReadResult {
     const lms = emptyLmsFields()
     let date: string | null = null
     let language: string | null = null
-    let isrc: string | null = null
-    let mbRecordingId: string | null = null
     if (apple) {
       const version = freeform(apple, LMS_KEYS.schemaVersion)
       lms.schemaVersion =
@@ -205,11 +194,7 @@ export function readTags(path: string): ReadResult {
       lms.matchConfirmed = freeform(apple, LMS_MATCH_CONFIRMED_KEY) === '1'
       date = blank(apple.getFirstQuickTimeString(Mpeg4BoxType.DAY))
       language = freeform(apple, 'LANGUAGE')
-      isrc = freeform(apple, 'ISRC')
-      mbRecordingId = freeform(apple, 'MusicBrainz Track Id')
     }
-    if (!lms.sourceVideoId)
-      lms.sourceVideoId = legacyVideoId(blank(tag.comment))
     if (!lms.resolvedVideoId) lms.resolvedVideoId = lms.sourceVideoId
     const props = file.properties
     return {
@@ -233,8 +218,6 @@ export function readTags(path: string): ReadResult {
         date,
         genre: blank(tag.genres.join('; ')),
         language,
-        isrc,
-        mbRecordingId,
         lyrics: apple
           ? quickTimeText(apple, Mpeg4BoxType.LYR)
           : blank(tag.lyrics),
@@ -284,8 +267,6 @@ export function writeTags(
     if (fields.date) apple.setQuickTimeString(Mpeg4BoxType.DAY, fields.date)
     else apple.setQuickTimeStrings(Mpeg4BoxType.DAY, [])
     setFreeform(apple, 'LANGUAGE', fields.language)
-    setFreeform(apple, 'ISRC', fields.isrc)
-    setFreeform(apple, 'MusicBrainz Track Id', fields.mbRecordingId)
     for (const key of RETIRED_KEYS) apple.setItunesStrings(ITUNES, key)
 
     const lms = fields.lms

@@ -113,7 +113,7 @@ What the app is doing now and did recently, shown per track with the reason the 
 _Avoid_: Sync Job, run, queue, run history
 
 **Match**:
-The saved decision behind a Desired Track: which source track, Release, MusicBrainz recording, and lyrics the app chose. Audio and tags always come from a YouTube Music Release Track, even for a Spotify like; the Spotify track only guides the search. The app writes tags from the Match and only looks it up again on Refresh. A Full Discography catalog names its exact Release Track, so a track a catalog wants is always looked up from that catalog, even when it is also liked. Otherwise a YouTube Music like, which names a specific video, decides the Match before a Spotify like.
+The saved decision behind a Desired Track: which source track, Release, and lyrics the app chose. Audio and tags always come from a YouTube Music Release Track, even for a Spotify like; the Spotify track only guides the search. The app writes tags from the Match and only looks it up again on Refresh. A Full Discography catalog names its exact Release Track, so a track a catalog wants is always looked up from that catalog, even when it is also liked. Otherwise a YouTube Music like, which names a specific video, decides the Match before a Spotify like.
 _Avoid_: Resolution, candidate, lookup result
 
 **Refresh**:

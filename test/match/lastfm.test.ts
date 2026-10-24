@@ -11,7 +11,7 @@ const toptags = JSON.parse(
 )
 
 describe('Last.fm genres', () => {
-  it('keeps real genres with enough votes, top three, in MusicBrainz spelling', () => {
+  it('keeps real genres with enough votes, top three, in list spelling', () => {
     // "japanese" and "seen live" are not genres; "math rock" has 9 votes.
     expect(lastfmGenres(toptags)).toBe('rock; j-rock; post-punk')
     expect(

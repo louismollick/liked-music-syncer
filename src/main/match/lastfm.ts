@@ -7,9 +7,9 @@ const GENRE_LIMIT = 3
 const NOT_FOUND = 6
 
 /**
- * The MusicBrainz genre list (`/ws/2/genre/all?fmt=txt`, vendored). Last.fm
- * tags are free text ("seen live", "japanese"), so only these count as genres.
- * Keyed without spaces and hyphens so "post punk" finds MusicBrainz's "post-punk".
+ * The vendored list of recognized genre names (genres.txt). Last.fm tags are
+ * free text ("seen live", "japanese"), so only these count as genres. Keyed
+ * without spaces and hyphens so "post punk" finds "post-punk".
  */
 const GENRES = new Map(
   genreList
@@ -28,7 +28,7 @@ const topTagsSchema = z.union([
   z.object({ error: z.number(), message: z.string().optional() }),
 ])
 
-/** Up to three real genres with enough votes, lowercased and joined like MusicBrainz's. */
+/** Up to three real genres with enough votes, lowercased and joined with "; ". */
 export function lastfmGenres(payload: unknown): string | null {
   const parsed = topTagsSchema.parse(payload)
   if ('error' in parsed) {
