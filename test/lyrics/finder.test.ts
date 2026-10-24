@@ -540,7 +540,12 @@ describe('recording-aware lyrics matching', () => {
           catalogCalls
         ),
       }).find({ ...query, title }, lyricServer)
-    ).toEqual({ lyrics: null, spotifyTrackId: 'known', errors: {} })
+    ).toEqual({
+      lyrics: null,
+      spotifyTrackId: 'known',
+      errors: {},
+      attempted: [],
+    })
     expect(calls).toEqual([])
     expect(catalogCalls).toEqual([])
   })

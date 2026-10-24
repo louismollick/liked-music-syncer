@@ -505,6 +505,24 @@ describe('failed lyrics lookups', () => {
     expect(h.rows()[0].lyricsCheckedAt).toBeNull()
   })
 
+  it('does not pause the lane when one optional provider is unreachable but the others answered', async () => {
+    const h = harness()
+    const { track } = await seed(h, 'track')
+    file(h, track.id)
+    vi.spyOn(h.deps.lyrics, 'find').mockResolvedValue({
+      lyrics: null,
+      spotifyTrackId: null,
+      // YouTube Music, LRCLIB and PetitLyrics cleanly missed; NetEase is down.
+      errors: { netease: 'netease: fetch failed (ENOTFOUND)' },
+      attempted: ['youtube-music', 'lrclib', 'petitlyrics', 'netease'],
+    })
+    expect(await runLyrics(h.deps, h.rows()[0], run())).toBe(false)
+    expect(h.rows()[0].lyricsCheckedAt).toBeNull()
+    expect(JSON.parse(h.rows()[0].enrichmentErrors)).toMatchObject({
+      'lyrics:netease': expect.stringContaining('ENOTFOUND'),
+    })
+  })
+
   it('throws a connectivity error when every provider is unreachable', async () => {
     const h = harness()
     const { track } = await seed(h, 'track')
@@ -512,7 +530,11 @@ describe('failed lyrics lookups', () => {
     vi.spyOn(h.deps.lyrics, 'find').mockResolvedValue({
       lyrics: null,
       spotifyTrackId: null,
-      errors: { netease: 'netease: fetch failed (ENOTFOUND)' },
+      errors: {
+        lrclib: 'lrclib: fetch failed (ENOTFOUND)',
+        netease: 'netease: fetch failed (ENOTFOUND)',
+      },
+      attempted: ['lrclib', 'netease'],
     })
     await expect(runLyrics(h.deps, h.rows()[0], run())).rejects.toSatisfy(
       isConnectivityError

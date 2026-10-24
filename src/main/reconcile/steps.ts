@@ -46,7 +46,7 @@ import {
   uploads,
 } from '../library/schema'
 import { isInstrumentalTitle } from '../lyrics/query'
-import type { LyricsFinder } from '../lyrics/types'
+import type { LyricsFinder, LyricsSource } from '../lyrics/types'
 import {
   SpotifyMatchError,
   selectSpotifyCandidate,
@@ -401,9 +401,15 @@ export async function lookUpLyrics(
         { lyricsServerUrl: settings.lyricsServerUrl.trim() || null },
         run.signal
       )
-      const failures = Object.values(found.errors)
-      failed = !found.lyrics && failures.length > 0
-      offline = failed && failures.every(isConnectivityError)
+      failed = !found.lyrics && Object.keys(found.errors).length > 0
+      // Offline only when no provider answered: one unreachable optional
+      // provider next to clean misses is just that provider's failure.
+      const asked =
+        found.attempted ?? (Object.keys(found.errors) as LyricsSource[])
+      offline =
+        failed &&
+        asked.length > 0 &&
+        asked.every((source) => isConnectivityError(found.errors[source]))
       Object.assign(
         errors,
         Object.fromEntries(

@@ -40,8 +40,10 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
           lyrics: null,
           spotifyTrackId: query.spotifyTrackId,
           errors: {},
+          attempted: [],
         }
       const errors: LyricsResult['errors'] = {}
+      const attempted: LyricsSource[] = []
       let spotifyTrackId = query.spotifyTrackId
       let firstPlain: { text: string; source: LyricsSource } | null = null
 
@@ -49,6 +51,7 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
         source: LyricsSource,
         fetch: () => Promise<string | null>
       ) {
+        attempted.push(source)
         try {
           const classified: ClassifiedLyrics | null = classifyLyricsText(
             await fetch()
@@ -134,6 +137,7 @@ export function createLyricsFinder(deps: LyricsDeps): LyricsFinder {
           : null,
         spotifyTrackId,
         errors,
+        attempted,
       }
     },
   }

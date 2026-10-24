@@ -198,6 +198,12 @@ describe('NetEase lyrics', () => {
     })
     expect(found.lyrics).toBeNull()
     expect(found.errors.netease).toContain('HTTP 500')
+    expect(found.attempted).toEqual([
+      'youtube-music',
+      'lrclib',
+      'petitlyrics',
+      'netease',
+    ])
     expect(hosts.indexOf('music.163.com')).toBeGreaterThan(
       hosts.lastIndexOf('p0.petitlyrics.com')
     )
