@@ -9,7 +9,6 @@
       "!**/*.css",
       "!test/fixtures",
       "!resources/bin",
-      "!docs/plans/wireframes-v4.html",
       "!release"
     ]
   },

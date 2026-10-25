@@ -18,7 +18,7 @@ Music); this app builds the library.
   Songs → No longer wanted, where you can delete them.
 
 Domain terms are defined in [`CONTEXT.md`](CONTEXT.md); design decisions are in
-[`docs/adr/`](docs/adr) and [`docs/plans/overhaul.md`](docs/plans/overhaul.md).
+[`docs/adr/`](docs/adr).
 
 ## Development
 
